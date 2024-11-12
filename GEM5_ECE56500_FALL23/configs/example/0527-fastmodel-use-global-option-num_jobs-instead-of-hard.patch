@@ -1,0 +1,35 @@
+From fb173e4d2c8708db4a2e39a90d6b16b57bd743d4 Mon Sep 17 00:00:00 2001
+From: Chia-You Chen <hortune@google.com>
+Date: Thu, 7 Apr 2022 01:53:07 +0000
+Subject: [PATCH 527/757] fastmodel: use global option 'num_jobs' instead of
+ hardcoded number
+
+Change-Id: I2d3f0855c8475cd44b1012fddf6b695621b2347f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58689
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index bfe7e97..23ddb84 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -363,10 +363,11 @@ class ArmFastModelComponent(object):
+         self.rpaths = [simgen_dir, project_file_dir]
+         self.log = gen_dir.File('build_%s.log' % tlc)
+         self.simgen_cmd = env.subst('${CONF["SIMGEN"]} -p %s '
+-            '--configuration %s -b --verbose off --num-build-cpus 100 '
++            '--configuration %s -b --verbose off --num-build-cpus %d '
+             '--build-dir %s >%s') % \
+             (shlex.quote(project_file.srcnode().abspath),
+              shlex.quote(config_name),
++             GetOption('num_jobs'),
+              shlex.quote(simgen_dir.abspath),
+              shlex.quote(self.log.abspath))
+ 
+-- 
+1.8.3.1
+

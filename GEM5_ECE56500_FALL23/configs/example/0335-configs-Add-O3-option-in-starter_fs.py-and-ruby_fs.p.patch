@@ -1,0 +1,90 @@
+From 2fcb7ae87e6f097cf768195137dfd204d17c8c33 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 14 Feb 2019 11:53:06 +0000
+Subject: [PATCH 335/757] configs: Add O3 option in starter_fs.py and
+ ruby_fs.py
+
+Change-Id: I2d59d15cb8acdd7b2675653335af879e35b0d6b3
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Ciro Santilli <ciro.santilli@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57273
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/arm/ruby_fs.py    |  3 ++-
+ configs/example/arm/starter_fs.py | 18 ++++++++++--------
+ 2 files changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/configs/example/arm/ruby_fs.py b/configs/example/arm/ruby_fs.py
+index c2fc226..ecca22b 100644
+--- a/configs/example/arm/ruby_fs.py
++++ b/configs/example/arm/ruby_fs.py
+@@ -46,7 +46,7 @@ from common import MemConfig
+ from common import ObjectList
+ from common import Options
+ from common import SysPaths
+-from common.cores.arm import HPI
++from common.cores.arm import O3_ARM_v7a, HPI
+ from ruby import Ruby
+ 
+ import devices
+@@ -62,6 +62,7 @@ cpu_types = {
+     "noncaching" : NonCachingSimpleCPU,
+     "minor" : MinorCPU,
+     "hpi" : HPI.HPI,
++    "o3" : O3_ARM_v7a.O3_ARM_v7a_3,
+ }
+ 
+ def create_cow_image(name):
+diff --git a/configs/example/arm/starter_fs.py b/configs/example/arm/starter_fs.py
+index a5a013f..140f102 100644
+--- a/configs/example/arm/starter_fs.py
++++ b/configs/example/arm/starter_fs.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2016-2017, 2020 ARM Limited
++# Copyright (c) 2016-2017, 2020, 2022 Arm Limited
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -50,7 +50,7 @@ m5.util.addToPath('../..')
+ from common import SysPaths
+ from common import ObjectList
+ from common import MemConfig
+-from common.cores.arm import HPI
++from common.cores.arm import O3_ARM_v7a, HPI
+ 
+ import devices
+ 
+@@ -61,17 +61,19 @@ default_root_device = '/dev/vda1'
+ 
+ 
+ # Pre-defined CPU configurations. Each tuple must be ordered as : (cpu_class,
+-# l1_icache_class, l1_dcache_class, walk_cache_class, l2_Cache_class). Any of
++# l1_icache_class, l1_dcache_class, l2_Cache_class). Any of
+ # the cache class may be 'None' if the particular cache is not present.
+ cpu_types = {
+-
+-    "atomic" : ( AtomicSimpleCPU, None, None, None),
++    "atomic" : (AtomicSimpleCPU, None, None, None),
+     "minor" : (MinorCPU,
+                devices.L1I, devices.L1D,
+                devices.L2),
+-    "hpi" : ( HPI.HPI,
+-              HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_L2)
++    "hpi" : (HPI.HPI,
++             HPI.HPI_ICache, HPI.HPI_DCache,
++             HPI.HPI_L2),
++    "o3" : (O3_ARM_v7a.O3_ARM_v7a_3,
++            O3_ARM_v7a.O3_ARM_v7a_ICache, O3_ARM_v7a.O3_ARM_v7a_DCache,
++            O3_ARM_v7a.O3_ARM_v7aL2),
+ }
+ 
+ def create_cow_image(name):
+-- 
+1.8.3.1
+

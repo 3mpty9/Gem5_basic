@@ -1,0 +1,285 @@
+From 7a408e35fdf380662855cef328dbe2f3dd3451c5 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 01:15:04 -0800
+Subject: [PATCH 286/757] dev,arch-x86: Add an x86/compatibility IDE
+ controller.
+
+This is essentially the same as the normal one, except it sets its
+ProgIF bits to show that it works in compatibility mode only, with fixed
+IO ports and fixed IRQs that it operates with which are outside of the
+scope of the normal PCI mechanisms.
+
+Change-Id: I69d04f5c9444e7e227588b96b7dd4123b2850e23
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55586
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/x86/SConscript     |  3 ++
+ src/dev/x86/SouthBridge.py | 16 ++++-------
+ src/dev/x86/X86Ide.py      | 49 +++++++++++++++++++++++++++++++
+ src/dev/x86/ide_ctrl.cc    | 72 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/dev/x86/ide_ctrl.hh    | 59 +++++++++++++++++++++++++++++++++++++
+ 5 files changed, 189 insertions(+), 10 deletions(-)
+ create mode 100644 src/dev/x86/X86Ide.py
+ create mode 100644 src/dev/x86/ide_ctrl.cc
+ create mode 100644 src/dev/x86/ide_ctrl.hh
+
+diff --git a/src/dev/x86/SConscript b/src/dev/x86/SConscript
+index 5a1c0ec..dba54ce 100644
+--- a/src/dev/x86/SConscript
++++ b/src/dev/x86/SConscript
+@@ -55,6 +55,9 @@ SimObject('I8042.py', sim_objects=['I8042'], tags='x86 isa')
+ Source('i8042.cc', tags='x86 isa')
+ DebugFlag('I8042', 'The I8042 keyboard controller', tags='x86 isa');
+ 
++SimObject('X86Ide.py', sim_objects=['X86IdeController'], tags='x86 isa');
++Source('ide_ctrl.cc', tags='x86 isa')
++
+ SimObject('PcSpeaker.py', sim_objects=['PcSpeaker'], tags='x86 isa')
+ Source('speaker.cc', tags='x86 isa')
+ DebugFlag('PcSpeaker', tags='x86 isa')
+diff --git a/src/dev/x86/SouthBridge.py b/src/dev/x86/SouthBridge.py
+index 9e0a88f..6570cac 100644
+--- a/src/dev/x86/SouthBridge.py
++++ b/src/dev/x86/SouthBridge.py
+@@ -32,9 +32,9 @@ from m5.objects.I82094AA import I82094AA
+ from m5.objects.I8237 import I8237
+ from m5.objects.I8254 import I8254
+ from m5.objects.I8259 import I8259
+-from m5.objects.Ide import IdeController
+ from m5.objects.PciDevice import PciLegacyIoBar, PciIoBar
+ from m5.objects.PcSpeaker import PcSpeaker
++from m5.objects.X86Ide import X86IdeController
+ from m5.SimObject import SimObject
+ 
+ def x86IOAddress(port):
+@@ -63,15 +63,7 @@ class SouthBridge(SimObject):
+     io_apic = Param.I82094AA(I82094AA(pio_addr=0xFEC00000), "I/O APIC")
+ 
+     # IDE controller
+-    ide = IdeController(disks=[], pci_func=0, pci_dev=4, pci_bus=0)
+-    ide.BAR0 = PciLegacyIoBar(addr=0x1f0, size='8B')
+-    ide.BAR1 = PciLegacyIoBar(addr=0x3f4, size='3B')
+-    ide.BAR2 = PciLegacyIoBar(addr=0x170, size='8B')
+-    ide.BAR3 = PciLegacyIoBar(addr=0x374, size='3B')
+-    ide.Command = 0
+-    ide.ProgIF = 0x80
+-    ide.InterruptLine = 14
+-    ide.InterruptPin = 1
++    ide = X86IdeController(disks=[], pci_func=0, pci_dev=4, pci_bus=0)
+ 
+     def attachIO(self, bus, dma_ports):
+         # Route interrupt signals
+@@ -82,6 +74,10 @@ class SouthBridge(SimObject):
+         self.pit.int_pin = self.io_apic.inputs[2]
+         self.keyboard.keyboard_int_pin = self.io_apic.inputs[1]
+         self.keyboard.mouse_int_pin = self.io_apic.inputs[12]
++        self.ide.int_primary = self.pic2.inputs[6]
++        self.ide.int_primary = self.io_apic.inputs[14]
++        self.ide.int_secondary = self.pic2.inputs[7]
++        self.ide.int_secondary = self.io_apic.inputs[15]
+         # Tell the devices about each other
+         self.pic1.slave = self.pic2
+         self.speaker.i8254 = self.pit
+diff --git a/src/dev/x86/X86Ide.py b/src/dev/x86/X86Ide.py
+new file mode 100644
+index 0000000..99aa853
+--- /dev/null
++++ b/src/dev/x86/X86Ide.py
+@@ -0,0 +1,49 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.SimObject import SimObject
++from m5.params import *
++from m5.objects.Ide import IdeController
++from m5.objects.IntPin import IntSourcePin
++from m5.objects.PciDevice import PciLegacyIoBar
++
++class X86IdeController(IdeController):
++    type = 'X86IdeController'
++    cxx_header = "dev/x86/ide_ctrl.hh"
++    cxx_class = 'gem5::X86IdeController'
++
++    VendorID = 0x8086
++    DeviceID = 0x7111
++    ProgIF = 0x80
++    InterruptLine = 0xff
++    InterruptPin = 0x01
++
++    BAR0 = PciLegacyIoBar(addr=0x1f0, size='8B')
++    BAR1 = PciLegacyIoBar(addr=0x3f4, size='3B')
++    BAR2 = PciLegacyIoBar(addr=0x170, size='8B')
++    BAR3 = PciLegacyIoBar(addr=0x374, size='3B')
++
++    int_primary = IntSourcePin('Interrupt for the primary channel')
++    int_secondary = IntSourcePin('Interrupt for the secondary channel')
+diff --git a/src/dev/x86/ide_ctrl.cc b/src/dev/x86/ide_ctrl.cc
+new file mode 100644
+index 0000000..4825e83
+--- /dev/null
++++ b/src/dev/x86/ide_ctrl.cc
+@@ -0,0 +1,72 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/x86/ide_ctrl.hh"
++
++namespace gem5
++{
++
++X86IdeController::X86IdeController(const Params &p) : IdeController(p)
++{
++    for (int i = 0; i < p.port_int_primary_connection_count; i++) {
++        intPrimary.push_back(new IntSourcePin<X86IdeController>(
++                    csprintf("%s.int_primary[%d]", name(), i), i, this));
++    }
++    for (int i = 0; i < p.port_int_secondary_connection_count; i++) {
++        intSecondary.push_back(new IntSourcePin<X86IdeController>(
++                    csprintf("%s.int_secondary[%d]", name(), i), i, this));
++    }
++}
++
++void
++X86IdeController::postInterrupt(bool is_primary)
++{
++    auto &pin = is_primary ? intPrimary : intSecondary;
++    for (auto *wire: pin)
++        wire->raise();
++}
++
++void
++X86IdeController::clearInterrupt(bool is_primary)
++{
++    auto &pin = is_primary ? intPrimary : intSecondary;
++    for (auto *wire: pin)
++        wire->lower();
++}
++
++Port &
++X86IdeController::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "int_primary")
++        return *intPrimary.at(idx);
++    else if (if_name == "int_secondary")
++        return *intSecondary.at(idx);
++    else
++        return IdeController::getPort(if_name, idx);
++}
++
++} // namespace gem5
+diff --git a/src/dev/x86/ide_ctrl.hh b/src/dev/x86/ide_ctrl.hh
+new file mode 100644
+index 0000000..b46150a
+--- /dev/null
++++ b/src/dev/x86/ide_ctrl.hh
+@@ -0,0 +1,59 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_X86_IDE_CTRL_HH__
++#define __DEV_X86_IDE_CTRL_HH__
++
++#include <vector>
++
++#include "dev/intpin.hh"
++#include "dev/storage/ide_ctrl.hh"
++#include "params/X86IdeController.hh"
++
++namespace gem5
++{
++
++class X86IdeController : public IdeController
++{
++  private:
++    std::vector<IntSourcePin<X86IdeController> *> intPrimary;
++    std::vector<IntSourcePin<X86IdeController> *> intSecondary;
++
++  public:
++    PARAMS(X86IdeController);
++    X86IdeController(const Params &p);
++
++    Port &getPort(const std::string &if_name,
++            PortID idx=InvalidPortID) override;
++
++    void postInterrupt(bool is_primary) override;
++    void clearInterrupt(bool is_primary) override;
++};
++
++} // namespace gem5
++
++#endif // __DEV_X86_IDE_CTRL_HH_
+-- 
+1.8.3.1
+

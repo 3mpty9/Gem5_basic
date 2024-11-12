@@ -1,0 +1,102 @@
+From 0eba590d015f9bb850e4bd54754881fc07e495bf Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 15 Dec 2021 10:54:02 +0000
+Subject: [PATCH 183/757] arch-arm: De-virtualize updateIntState
+
+De-virtualize updateIntState and replace it with the new blockIntUpdate
+in the MuxingKvmGic class.
+
+The monolithic updateIntState is GicV2 specific and it is not compatible
+with the more complex IRQ update logic in GicV3, which is delegating the
+update to the destributor/redistributor/cpuinterface classes
+
+Rather than stubbing the update function the MuxingKvmGic class, we
+override the blockIntUpdate to return true in case a KVM gic is in use.
+This is loosening the interface, not restricting any GIC implementation
+to a specific update interface/design
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Ib8d9c99b720c779a2255ac47ee2a655ff281581d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55609
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc | 14 ++++++--------
+ src/arch/arm/kvm/gic.hh |  6 +++---
+ src/dev/arm/gic_v2.hh   |  2 +-
+ 3 files changed, 10 insertions(+), 12 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index b0c3d96..5ce148e 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2015-2017 ARM Limited
++ * Copyright (c) 2015-2017, 2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -273,18 +273,16 @@ MuxingKvmGic::clearPPInt(uint32_t num, uint32_t cpu)
+     kernelGic->clearPPI(cpu, num);
+ }
+ 
+-void
+-MuxingKvmGic::updateIntState(int hint)
++bool
++MuxingKvmGic::blockIntUpdate() const
+ {
+-    // During Kvm->GicV2 state transfer, writes to the GicV2 will call
++    // During Kvm->Gic state transfer, writes to the Gic will call
+     // updateIntState() which can post an interrupt.  Since we're only
+-    // using the GicV2 model for holding state in this circumstance, we
++    // using the Gic model for holding state in this circumstance, we
+     // short-circuit this behavior, as the GicV2 is not actually active.
+-    if (!usingKvm)
+-        return GicV2::updateIntState(hint);
++    return usingKvm;
+ }
+ 
+-
+ void
+ MuxingKvmGic::fromGicV2ToKvm()
+ {
+diff --git a/src/arch/arm/kvm/gic.hh b/src/arch/arm/kvm/gic.hh
+index 71ec3bc..a835208 100644
+--- a/src/arch/arm/kvm/gic.hh
++++ b/src/arch/arm/kvm/gic.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2015-2017 ARM Limited
++ * Copyright (c) 2015-2017, 2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -189,8 +189,8 @@ class MuxingKvmGic : public GicV2
+     void sendPPInt(uint32_t num, uint32_t cpu) override;
+     void clearPPInt(uint32_t num, uint32_t cpu) override;
+ 
+-  protected: // GicV2
+-    void updateIntState(int hint) override;
++  protected: // BaseGic
++    bool blockIntUpdate() const override;
+ 
+   protected:
+     /** System this interrupt controller belongs to */
+diff --git a/src/dev/arm/gic_v2.hh b/src/dev/arm/gic_v2.hh
+index 577f78e..5562419 100644
+--- a/src/dev/arm/gic_v2.hh
++++ b/src/dev/arm/gic_v2.hh
+@@ -448,7 +448,7 @@ class GicV2 : public BaseGic, public BaseGicRegisters
+     /** See if some processor interrupt flags need to be enabled/disabled
+      * @param hint which set of interrupts needs to be checked
+      */
+-    virtual void updateIntState(int hint);
++    void updateIntState(int hint);
+ 
+     /** Update the register that records priority of the highest priority
+      *  active interrupt*/
+-- 
+1.8.3.1
+

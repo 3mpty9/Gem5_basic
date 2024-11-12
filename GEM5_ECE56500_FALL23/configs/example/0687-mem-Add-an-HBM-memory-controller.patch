@@ -1,0 +1,1454 @@
+From 60317f99feac2a2d2bfd4765b6cb1eca134c53e3 Mon Sep 17 00:00:00 2001
+From: Ayaz Akram <yazakram@ucdavis.edu>
+Date: Fri, 13 May 2022 23:20:14 -0700
+Subject: [PATCH 687/757] mem: Add an HBM memory controller
+
+This change adds an hbm memory controller in gem5,
+which is capable of controlling two hbm memory interfaces
+(two pseudo channels). HBMCtrl inherits from MemCtrl
+and tries to reuse most of the MemCtrl functions for two
+different dram interfaces. Morever, a notion of pseudo
+channel is added in the memory interface itself, to make
+sure that the scheduling decisions in any interface are
+based on the pkts for that pseudo channel only. Also, the
+command bandwidth checks are divided into row and column
+commands, which are shared by both pseudo channels.
+
+Change-Id: Ie2ee8183d0f7f744aff2ed05cabc75fec3ea2171
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59732
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Wendy Elsasser <welsasser@rambus.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/HBMCtrl.py         |  43 ++++
+ src/mem/SConscript         |   2 +
+ src/mem/dram_interface.cc  |  30 ++-
+ src/mem/dram_interface.hh  |   3 +-
+ src/mem/hbm_ctrl.cc        | 492 +++++++++++++++++++++++++++++++++++++++++++++
+ src/mem/hbm_ctrl.hh        | 262 ++++++++++++++++++++++++
+ src/mem/hetero_mem_ctrl.cc |  13 +-
+ src/mem/hetero_mem_ctrl.hh |   3 +-
+ src/mem/mem_ctrl.cc        |  53 ++---
+ src/mem/mem_ctrl.hh        |  44 ++--
+ src/mem/mem_interface.cc   |   5 +-
+ src/mem/mem_interface.hh   |  19 +-
+ src/mem/nvm_interface.cc   |  10 +-
+ src/mem/nvm_interface.hh   |   3 +-
+ 14 files changed, 920 insertions(+), 62 deletions(-)
+ create mode 100644 src/mem/HBMCtrl.py
+ create mode 100644 src/mem/hbm_ctrl.cc
+ create mode 100644 src/mem/hbm_ctrl.hh
+
+diff --git a/src/mem/HBMCtrl.py b/src/mem/HBMCtrl.py
+new file mode 100644
+index 0000000..4726661
+--- /dev/null
++++ b/src/mem/HBMCtrl.py
+@@ -0,0 +1,43 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All Rights Reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.proxy import *
++from m5.objects.MemCtrl import *
++
++# HBMCtrl manages two pseudo channels of HBM2
++
++class HBMCtrl(MemCtrl):
++    type = 'HBMCtrl'
++    cxx_header = "mem/hbm_ctrl.hh"
++    cxx_class = 'gem5::memory::HBMCtrl'
++
++    # HBMCtrl uses the SimpleMemCtlr's interface
++    # `dram` as the first pseudo channel, the second
++    # pseudo channel interface is following
++    dram_2 = Param.DRAMInterface("DRAM memory interface")
++
++    partitioned_q = Param.Bool(True, "split queues for pseudo channels")
+diff --git a/src/mem/SConscript b/src/mem/SConscript
+index ec9915c..0f2efed 100644
+--- a/src/mem/SConscript
++++ b/src/mem/SConscript
+@@ -51,6 +51,7 @@ DebugFlag('SysBridge')
+ SimObject('MemCtrl.py', sim_objects=['MemCtrl'],
+         enums=['MemSched'])
+ SimObject('HeteroMemCtrl.py', sim_objects=['HeteroMemCtrl'])
++SimObject('HBMCtrl.py', sim_objects=['HBMCtrl'])
+ SimObject('MemInterface.py', sim_objects=['MemInterface'], enums=['AddrMap'])
+ SimObject('DRAMInterface.py', sim_objects=['DRAMInterface'],
+         enums=['PageManage'])
+@@ -77,6 +78,7 @@ Source('external_master.cc')
+ Source('external_slave.cc')
+ Source('mem_ctrl.cc')
+ Source('hetero_mem_ctrl.cc')
++Source('hbm_ctrl.cc')
+ Source('mem_interface.cc')
+ Source('dram_interface.cc')
+ Source('nvm_interface.cc')
+diff --git a/src/mem/dram_interface.cc b/src/mem/dram_interface.cc
+index 17bf748..df8c7b5 100644
+--- a/src/mem/dram_interface.cc
++++ b/src/mem/dram_interface.cc
+@@ -88,7 +88,7 @@ DRAMInterface::chooseNextFRFCFS(MemPacketQueue& queue, Tick min_col_at) const
+         MemPacket* pkt = *i;
+ 
+         // select optimal DRAM packet in Q
+-        if (pkt->isDram()) {
++        if (pkt->isDram() && (pkt->pseudoChannel == pseudoChannel)) {
+             const Bank& bank = ranks[pkt->rank]->banks[pkt->bank];
+             const Tick col_allowed_at = pkt->isRead() ? bank.rdAllowedAt :
+                                                         bank.wrAllowedAt;
+@@ -183,7 +183,7 @@ DRAMInterface::activateBank(Rank& rank_ref, Bank& bank_ref,
+     if (twoCycleActivate)
+         act_at = ctrl->verifyMultiCmd(act_tick, maxCommandsPerWindow, tAAD);
+     else
+-        act_at = ctrl->verifySingleCmd(act_tick, maxCommandsPerWindow);
++        act_at = ctrl->verifySingleCmd(act_tick, maxCommandsPerWindow, true);
+ 
+     DPRINTF(DRAM, "Activate at tick %d\n", act_at);
+ 
+@@ -301,7 +301,7 @@ DRAMInterface::prechargeBank(Rank& rank_ref, Bank& bank, Tick pre_tick,
+         // Issuing an explicit PRE command
+         // Verify that we have command bandwidth to issue the precharge
+         // if not, shift to next burst window
+-        pre_at = ctrl->verifySingleCmd(pre_tick, maxCommandsPerWindow);
++        pre_at = ctrl->verifySingleCmd(pre_tick, maxCommandsPerWindow, true);
+         // enforce tPPD
+         for (int i = 0; i < banksPerRank; i++) {
+             rank_ref.banks[i].preAllowedAt = std::max(pre_at + tPPD,
+@@ -402,7 +402,7 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
+     if (dataClockSync && ((cmd_at - rank_ref.lastBurstTick) > clkResyncDelay))
+         cmd_at = ctrl->verifyMultiCmd(cmd_at, maxCommandsPerWindow, tCK);
+     else
+-        cmd_at = ctrl->verifySingleCmd(cmd_at, maxCommandsPerWindow);
++        cmd_at = ctrl->verifySingleCmd(cmd_at, maxCommandsPerWindow, false);
+ 
+     // if we are interleaving bursts, ensure that
+     // 1) we don't double interleave on next burst issue
+@@ -513,6 +513,13 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
+             // 3) make sure we are not considering the packet that we are
+             //    currently dealing with
+             while (!got_more_hits && p != queue[i].end()) {
++
++                if ((*p)->pseudoChannel != pseudoChannel) {
++                    // only consider if this pkt belongs to this interface
++                    ++p;
++                    continue;
++                }
++
+                 if (mem_pkt != (*p)) {
+                     bool same_rank_bank = (mem_pkt->rank == (*p)->rank) &&
+                                           (mem_pkt->bank == (*p)->bank);
+@@ -819,7 +826,7 @@ DRAMInterface::isBusy(bool read_queue_empty, bool all_writes_nvm)
+ 
+ MemPacket*
+ DRAMInterface::decodePacket(const PacketPtr pkt, Addr pkt_addr,
+-                       unsigned size, bool is_read)
++                       unsigned size, bool is_read, uint8_t pseudo_channel)
+ {
+     // decode the address based on the address mapping scheme, with
+     // Ro, Ra, Co, Ba and Ch denoting row, rank, column, bank and
+@@ -899,8 +906,8 @@ DRAMInterface::decodePacket(const PacketPtr pkt, Addr pkt_addr,
+     // later
+     uint16_t bank_id = banksPerRank * rank + bank;
+ 
+-    return new MemPacket(pkt, is_read, true, rank, bank, row, bank_id,
+-                   pkt_addr, size);
++    return new MemPacket(pkt, is_read, true, pseudo_channel, rank, bank, row,
++                   bank_id, pkt_addr, size);
+ }
+ 
+ void DRAMInterface::setupRank(const uint8_t rank, const bool is_read)
+@@ -1032,6 +1039,8 @@ DRAMInterface::minBankPrep(const MemPacketQueue& queue,
+     // bank in question
+     std::vector<bool> got_waiting(ranksPerChannel * banksPerRank, false);
+     for (const auto& p : queue) {
++        if (p->pseudoChannel != pseudoChannel)
++            continue;
+         if (p->isDram() && ranks[p->rank]->inRefIdleState())
+             got_waiting[p->bankId] = true;
+     }
+@@ -1288,11 +1297,10 @@ DRAMInterface::Rank::processRefreshEvent()
+         // if a request is at the moment being handled and this request is
+         // accessing the current rank then wait for it to finish
+         if ((rank == dram.activeRank)
+-            && (dram.ctrl->requestEventScheduled())) {
++            && (dram.ctrl->requestEventScheduled(dram.pseudoChannel))) {
+             // hand control over to the request loop until it is
+             // evaluated next
+             DPRINTF(DRAM, "Refresh awaiting draining\n");
+-
+             return;
+         } else {
+             refreshState = REF_PD_EXIT;
+@@ -1649,10 +1657,10 @@ DRAMInterface::Rank::processPowerEvent()
+         }
+ 
+         // completed refresh event, ensure next request is scheduled
+-        if (!dram.ctrl->requestEventScheduled()) {
++        if (!(dram.ctrl->requestEventScheduled(dram.pseudoChannel))) {
+             DPRINTF(DRAM, "Scheduling next request after refreshing"
+                            " rank %d\n", rank);
+-            dram.ctrl->restartScheduler(curTick());
++            dram.ctrl->restartScheduler(curTick(), dram.pseudoChannel);
+         }
+     }
+ 
+diff --git a/src/mem/dram_interface.hh b/src/mem/dram_interface.hh
+index 33d1d52..924db66 100644
+--- a/src/mem/dram_interface.hh
++++ b/src/mem/dram_interface.hh
+@@ -665,7 +665,8 @@ class DRAMInterface : public MemInterface
+     void setupRank(const uint8_t rank, const bool is_read) override;
+ 
+     MemPacket* decodePacket(const PacketPtr pkt, Addr pkt_addr,
+-                           unsigned int size, bool is_read) override;
++                           unsigned int size, bool is_read,
++                           uint8_t pseudo_channel = 0) override;
+ 
+     /**
+      * Iterate through dram ranks to exit self-refresh in order to drain
+diff --git a/src/mem/hbm_ctrl.cc b/src/mem/hbm_ctrl.cc
+new file mode 100644
+index 0000000..03cfec6
+--- /dev/null
++++ b/src/mem/hbm_ctrl.cc
+@@ -0,0 +1,492 @@
++/*
++ * Copyright (c) 2022 The Regents of the University of California
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "mem/hbm_ctrl.hh"
++
++#include "base/trace.hh"
++#include "debug/DRAM.hh"
++#include "debug/Drain.hh"
++#include "debug/MemCtrl.hh"
++#include "debug/QOS.hh"
++#include "mem/dram_interface.hh"
++#include "mem/mem_interface.hh"
++#include "sim/system.hh"
++
++namespace gem5
++{
++
++namespace memory
++{
++
++HBMCtrl::HBMCtrl(const HBMCtrlParams &p) :
++    MemCtrl(p),
++    retryRdReqPC1(false), retryWrReqPC1(false),
++    nextReqEventPC1([this] {processNextReqEvent(pc1Int, respQueuePC1,
++                         respondEventPC1, nextReqEventPC1, retryWrReqPC1);},
++                         name()),
++    respondEventPC1([this] {processRespondEvent(pc1Int, respQueuePC1,
++                         respondEventPC1, retryRdReqPC1); }, name()),
++    pc1Int(p.dram_2),
++    partitionedQ(p.partitioned_q)
++{
++    DPRINTF(MemCtrl, "Setting up HBM controller\n");
++
++    pc0Int = dynamic_cast<DRAMInterface*>(dram);
++
++    assert(dynamic_cast<DRAMInterface*>(p.dram_2) != nullptr);
++
++    readBufferSize = pc0Int->readBufferSize + pc1Int->readBufferSize;
++    writeBufferSize = pc0Int->writeBufferSize + pc1Int->writeBufferSize;
++
++    fatal_if(!pc0Int, "Memory controller must have pc0 interface");
++    fatal_if(!pc1Int, "Memory controller must have pc1 interface");
++
++    pc0Int->setCtrl(this, commandWindow, 0);
++    pc1Int->setCtrl(this, commandWindow, 1);
++
++    if (partitionedQ) {
++        writeHighThreshold = (writeBufferSize * (p.write_high_thresh_perc/2)
++                             / 100.0);
++        writeLowThreshold = (writeBufferSize * (p.write_low_thresh_perc/2)
++                            / 100.0);
++    } else {
++        writeHighThreshold = (writeBufferSize * p.write_high_thresh_perc
++                            / 100.0);
++        writeLowThreshold = (writeBufferSize * p.write_low_thresh_perc
++                            / 100.0);
++    }
++}
++
++void
++HBMCtrl::init()
++{
++    MemCtrl::init();
++}
++
++void
++HBMCtrl::startup()
++{
++    MemCtrl::startup();
++
++    isTimingMode = system()->isTimingMode();
++    if (isTimingMode) {
++        // shift the bus busy time sufficiently far ahead that we never
++        // have to worry about negative values when computing the time for
++        // the next request, this will add an insignificant bubble at the
++        // start of simulation
++        pc1Int->nextBurstAt = curTick() + pc1Int->commandOffset();
++    }
++}
++
++Tick
++HBMCtrl::recvAtomic(PacketPtr pkt)
++{
++    Tick latency = 0;
++
++    if (pc0Int->getAddrRange().contains(pkt->getAddr())) {
++        latency = MemCtrl::recvAtomicLogic(pkt, pc0Int);
++    } else if (pc1Int->getAddrRange().contains(pkt->getAddr())) {
++        latency = MemCtrl::recvAtomicLogic(pkt, pc1Int);
++    } else {
++        panic("Can't handle address range for packet %s\n", pkt->print());
++    }
++
++    return latency;
++}
++
++void
++HBMCtrl::recvFunctional(PacketPtr pkt)
++{
++    bool found = MemCtrl::recvFunctionalLogic(pkt, pc0Int);
++
++    if (!found) {
++        found = MemCtrl::recvFunctionalLogic(pkt, pc1Int);
++    }
++
++    if (!found) {
++        panic("Can't handle address range for packet %s\n", pkt->print());
++    }
++}
++
++Tick
++HBMCtrl::recvAtomicBackdoor(PacketPtr pkt, MemBackdoorPtr &backdoor)
++{
++    Tick latency = recvAtomic(pkt);
++
++    if (pc0Int && pc0Int->getAddrRange().contains(pkt->getAddr())) {
++        pc0Int->getBackdoor(backdoor);
++    } else if (pc1Int && pc1Int->getAddrRange().contains(pkt->getAddr())) {
++        pc1Int->getBackdoor(backdoor);
++    }
++    else {
++        panic("Can't handle address range for packet %s\n",
++              pkt->print());
++    }
++    return latency;
++}
++
++bool
++HBMCtrl::writeQueueFullPC0(unsigned int neededEntries) const
++{
++    DPRINTF(MemCtrl,
++            "Write queue limit %d, PC0 size %d, entries needed %d\n",
++            writeBufferSize, writeQueueSizePC0, neededEntries);
++
++    unsigned int wrsize_new = (writeQueueSizePC0 + neededEntries);
++    return wrsize_new > (writeBufferSize/2);
++}
++
++bool
++HBMCtrl::writeQueueFullPC1(unsigned int neededEntries) const
++{
++    DPRINTF(MemCtrl,
++            "Write queue limit %d, PC1 size %d, entries needed %d\n",
++            writeBufferSize, writeQueueSizePC1, neededEntries);
++
++    unsigned int wrsize_new = (writeQueueSizePC1 + neededEntries);
++    return wrsize_new > (writeBufferSize/2);
++}
++
++bool
++HBMCtrl::readQueueFullPC0(unsigned int neededEntries) const
++{
++    DPRINTF(MemCtrl,
++            "Read queue limit %d, PC0 size %d, entries needed %d\n",
++            readBufferSize, readQueueSizePC0 + respQueue.size(),
++            neededEntries);
++
++    unsigned int rdsize_new = readQueueSizePC0 + respQueue.size()
++                                               + neededEntries;
++    return rdsize_new > (readBufferSize/2);
++}
++
++bool
++HBMCtrl::readQueueFullPC1(unsigned int neededEntries) const
++{
++    DPRINTF(MemCtrl,
++            "Read queue limit %d, PC1 size %d, entries needed %d\n",
++            readBufferSize, readQueueSizePC1 + respQueuePC1.size(),
++            neededEntries);
++
++    unsigned int rdsize_new = readQueueSizePC1 + respQueuePC1.size()
++                                               + neededEntries;
++    return rdsize_new > (readBufferSize/2);
++}
++
++bool
++HBMCtrl::readQueueFull(unsigned int neededEntries) const
++{
++    DPRINTF(MemCtrl,
++            "HBMCtrl: Read queue limit %d, entries needed %d\n",
++            readBufferSize, neededEntries);
++
++    unsigned int rdsize_new = totalReadQueueSize + respQueue.size() +
++                                respQueuePC1.size() + neededEntries;
++    return rdsize_new > readBufferSize;
++}
++
++bool
++HBMCtrl::recvTimingReq(PacketPtr pkt)
++{
++    // This is where we enter from the outside world
++    DPRINTF(MemCtrl, "recvTimingReq: request %s addr %#x size %d\n",
++            pkt->cmdString(), pkt->getAddr(), pkt->getSize());
++
++    panic_if(pkt->cacheResponding(), "Should not see packets where cache "
++                                        "is responding");
++
++    panic_if(!(pkt->isRead() || pkt->isWrite()),
++                "Should only see read and writes at memory controller\n");
++
++    // Calc avg gap between requests
++    if (prevArrival != 0) {
++        stats.totGap += curTick() - prevArrival;
++    }
++    prevArrival = curTick();
++
++    // What type of media does this packet access?
++    bool is_pc0;
++
++    // TODO: make the interleaving bit across pseudo channels a parameter
++    if (bits(pkt->getAddr(), 6) == 0) {
++        is_pc0 = true;
++    } else {
++        is_pc0 = false;
++    }
++
++    // Find out how many memory packets a pkt translates to
++    // If the burst size is equal or larger than the pkt size, then a pkt
++    // translates to only one memory packet. Otherwise, a pkt translates to
++    // multiple memory packets
++    unsigned size = pkt->getSize();
++    uint32_t burst_size = pc0Int->bytesPerBurst();
++    unsigned offset = pkt->getAddr() & (burst_size - 1);
++    unsigned int pkt_count = divCeil(offset + size, burst_size);
++
++    // run the QoS scheduler and assign a QoS priority value to the packet
++    qosSchedule({&readQueue, &writeQueue}, burst_size, pkt);
++
++    // check local buffers and do not accept if full
++    if (pkt->isWrite()) {
++        if (is_pc0) {
++            if (partitionedQ ? writeQueueFullPC0(pkt_count) :
++                                        writeQueueFull(pkt_count))
++            {
++                DPRINTF(MemCtrl, "Write queue full, not accepting\n");
++                // remember that we have to retry this port
++                MemCtrl::retryWrReq = true;
++                stats.numWrRetry++;
++                return false;
++            } else {
++                addToWriteQueue(pkt, pkt_count, pc0Int);
++                stats.writeReqs++;
++                stats.bytesWrittenSys += size;
++            }
++        } else {
++            if (partitionedQ ? writeQueueFullPC1(pkt_count) :
++                                        writeQueueFull(pkt_count))
++            {
++                DPRINTF(MemCtrl, "Write queue full, not accepting\n");
++                // remember that we have to retry this port
++                retryWrReqPC1 = true;
++                stats.numWrRetry++;
++                return false;
++            } else {
++                addToWriteQueue(pkt, pkt_count, pc1Int);
++                stats.writeReqs++;
++                stats.bytesWrittenSys += size;
++            }
++        }
++    } else {
++
++        assert(pkt->isRead());
++        assert(size != 0);
++
++        if (is_pc0) {
++            if (partitionedQ ? readQueueFullPC0(pkt_count) :
++                                        HBMCtrl::readQueueFull(pkt_count)) {
++                DPRINTF(MemCtrl, "Read queue full, not accepting\n");
++                // remember that we have to retry this port
++                retryRdReqPC1 = true;
++                stats.numRdRetry++;
++                return false;
++            } else {
++                if (!addToReadQueue(pkt, pkt_count, pc0Int)) {
++                    if (!nextReqEvent.scheduled()) {
++                        DPRINTF(MemCtrl, "Request scheduled immediately\n");
++                        schedule(nextReqEvent, curTick());
++                    }
++                }
++
++                stats.readReqs++;
++                stats.bytesReadSys += size;
++            }
++        } else {
++            if (partitionedQ ? readQueueFullPC1(pkt_count) :
++                                        HBMCtrl::readQueueFull(pkt_count)) {
++                DPRINTF(MemCtrl, "Read queue full, not accepting\n");
++                // remember that we have to retry this port
++                retryRdReqPC1 = true;
++                stats.numRdRetry++;
++                return false;
++            } else {
++                if (!addToReadQueue(pkt, pkt_count, pc1Int)) {
++                    if (!nextReqEventPC1.scheduled()) {
++                        DPRINTF(MemCtrl, "Request scheduled immediately\n");
++                        schedule(nextReqEventPC1, curTick());
++                    }
++                }
++                stats.readReqs++;
++                stats.bytesReadSys += size;
++            }
++        }
++    }
++
++    return true;
++}
++
++void
++HBMCtrl::pruneRowBurstTick()
++{
++    auto it = rowBurstTicks.begin();
++    while (it != rowBurstTicks.end()) {
++        auto current_it = it++;
++        if (MemCtrl::getBurstWindow(curTick()) > *current_it) {
++            DPRINTF(MemCtrl, "Removing burstTick for %d\n", *current_it);
++            rowBurstTicks.erase(current_it);
++        }
++    }
++}
++
++void
++HBMCtrl::pruneColBurstTick()
++{
++    auto it = colBurstTicks.begin();
++    while (it != colBurstTicks.end()) {
++        auto current_it = it++;
++        if (MemCtrl::getBurstWindow(curTick()) > *current_it) {
++            DPRINTF(MemCtrl, "Removing burstTick for %d\n", *current_it);
++            colBurstTicks.erase(current_it);
++        }
++    }
++}
++
++void
++HBMCtrl::pruneBurstTick()
++{
++    pruneRowBurstTick();
++    pruneColBurstTick();
++}
++
++Tick
++HBMCtrl::verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst, bool row_cmd)
++{
++    // start with assumption that there is no contention on command bus
++    Tick cmd_at = cmd_tick;
++
++    // get tick aligned to burst window
++    Tick burst_tick = MemCtrl::getBurstWindow(cmd_tick);
++
++    // verify that we have command bandwidth to issue the command
++    // if not, iterate over next window(s) until slot found
++
++    if (row_cmd) {
++        while (rowBurstTicks.count(burst_tick) >= max_cmds_per_burst) {
++            DPRINTF(MemCtrl, "Contention found on row command bus at %d\n",
++                    burst_tick);
++            burst_tick += commandWindow;
++            cmd_at = burst_tick;
++        }
++        DPRINTF(MemCtrl, "Now can send a row cmd_at %d\n",
++                    cmd_at);
++        rowBurstTicks.insert(burst_tick);
++
++    } else {
++        while (colBurstTicks.count(burst_tick) >= max_cmds_per_burst) {
++            DPRINTF(MemCtrl, "Contention found on col command bus at %d\n",
++                    burst_tick);
++            burst_tick += commandWindow;
++            cmd_at = burst_tick;
++        }
++        DPRINTF(MemCtrl, "Now can send a col cmd_at %d\n",
++                    cmd_at);
++        colBurstTicks.insert(burst_tick);
++    }
++    return cmd_at;
++}
++
++Tick
++HBMCtrl::verifyMultiCmd(Tick cmd_tick, Tick max_cmds_per_burst,
++                        Tick max_multi_cmd_split)
++{
++
++    // start with assumption that there is no contention on command bus
++    Tick cmd_at = cmd_tick;
++
++    // get tick aligned to burst window
++    Tick burst_tick = MemCtrl::getBurstWindow(cmd_tick);
++
++    // Command timing requirements are from 2nd command
++    // Start with assumption that 2nd command will issue at cmd_at and
++    // find prior slot for 1st command to issue
++    // Given a maximum latency of max_multi_cmd_split between the commands,
++    // find the burst at the maximum latency prior to cmd_at
++    Tick burst_offset = 0;
++    Tick first_cmd_offset = cmd_tick % commandWindow;
++    while (max_multi_cmd_split > (first_cmd_offset + burst_offset)) {
++        burst_offset += commandWindow;
++    }
++    // get the earliest burst aligned address for first command
++    // ensure that the time does not go negative
++    Tick first_cmd_tick = burst_tick - std::min(burst_offset, burst_tick);
++
++    // Can required commands issue?
++    bool first_can_issue = false;
++    bool second_can_issue = false;
++    // verify that we have command bandwidth to issue the command(s)
++    while (!first_can_issue || !second_can_issue) {
++        bool same_burst = (burst_tick == first_cmd_tick);
++        auto first_cmd_count = rowBurstTicks.count(first_cmd_tick);
++        auto second_cmd_count = same_burst ?
++                        first_cmd_count + 1 : rowBurstTicks.count(burst_tick);
++
++        first_can_issue = first_cmd_count < max_cmds_per_burst;
++        second_can_issue = second_cmd_count < max_cmds_per_burst;
++
++        if (!second_can_issue) {
++            DPRINTF(MemCtrl, "Contention (cmd2) found on command bus at %d\n",
++                    burst_tick);
++            burst_tick += commandWindow;
++            cmd_at = burst_tick;
++        }
++
++        // Verify max_multi_cmd_split isn't violated when command 2 is shifted
++        // If commands initially were issued in same burst, they are
++        // now in consecutive bursts and can still issue B2B
++        bool gap_violated = !same_burst &&
++                        ((burst_tick - first_cmd_tick) > max_multi_cmd_split);
++
++        if (!first_can_issue || (!second_can_issue && gap_violated)) {
++            DPRINTF(MemCtrl, "Contention (cmd1) found on command bus at %d\n",
++                    first_cmd_tick);
++            first_cmd_tick += commandWindow;
++        }
++    }
++
++    // Add command to burstTicks
++    rowBurstTicks.insert(burst_tick);
++    rowBurstTicks.insert(first_cmd_tick);
++
++    return cmd_at;
++}
++
++void
++HBMCtrl::drainResume()
++{
++
++    MemCtrl::drainResume();
++
++    if (!isTimingMode && system()->isTimingMode()) {
++        // if we switched to timing mode, kick things into action,
++        // and behave as if we restored from a checkpoint
++        startup();
++        pc1Int->startup();
++    } else if (isTimingMode && !system()->isTimingMode()) {
++        // if we switch from timing mode, stop the refresh events to
++        // not cause issues with KVM
++        if (pc1Int) {
++            pc1Int->drainRanks();
++        }
++    }
++
++    // update the mode
++    isTimingMode = system()->isTimingMode();
++}
++
++} // namespace memory
++} // namespace gem5
+diff --git a/src/mem/hbm_ctrl.hh b/src/mem/hbm_ctrl.hh
+new file mode 100644
+index 0000000..6c73010
+--- /dev/null
++++ b/src/mem/hbm_ctrl.hh
+@@ -0,0 +1,262 @@
++/*
++ * Copyright (c) 2022 The Regents of the University of California
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++/**
++ * @file
++ * HBMCtrl declaration
++ */
++
++#ifndef __HBM_CTRL_HH__
++#define __HBM_CTRL_HH__
++
++#include <deque>
++#include <string>
++#include <unordered_set>
++#include <utility>
++#include <vector>
++
++#include "mem/mem_ctrl.hh"
++#include "params/HBMCtrl.hh"
++
++namespace gem5
++{
++
++namespace memory
++{
++
++class MemInterface;
++class DRAMInterface;
++
++
++/**
++ * HBM2 is divided into two pseudo channels which have independent data buses
++ * but share a command bus (separate row and column command bus). Therefore,
++ * the HBM memory controller should be able to control both pseudo channels.
++ * This HBM memory controller inherits from gem5's default
++ * memory controller (pseudo channel 0) and manages the additional HBM pseudo
++ * channel (pseudo channel 1).
++ */
++class HBMCtrl : public MemCtrl
++{
++
++  protected:
++
++    bool respQEmpty() override
++    {
++        return (respQueue.empty() && respQueuePC1.empty());
++    }
++
++  private:
++
++    /**
++     * Remember if we have to retry a request for second pseudo channel.
++     */
++    bool retryRdReqPC1;
++    bool retryWrReqPC1;
++
++    /**
++     * Remove commands that have already issued from rowBurstTicks
++     * and colBurstTicks
++     */
++    void pruneBurstTick() override;
++
++  public:
++    HBMCtrl(const HBMCtrlParams &p);
++
++    void pruneRowBurstTick();
++    void pruneColBurstTick();
++
++    /**
++     * Check for command bus contention for single cycle command.
++     * If there is contention, shift command to next burst.
++     * Check verifies that the commands issued per burst is less
++     * than a defined max number, maxCommandsPerWindow.
++     * Therefore, contention per cycle is not verified and instead
++     * is done based on a burst window.
++     *
++     * @param cmd_tick Initial tick of command, to be verified
++     * @param max_cmds_per_burst Number of commands that can issue
++     *                           in a burst window
++     * @return tick for command issue without contention
++     */
++    Tick verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst,
++                        bool row_cmd) override;
++
++    /**
++     * Check for command bus contention for multi-cycle (2 currently)
++     * command. If there is contention, shift command(s) to next burst.
++     * Check verifies that the commands issued per burst is less
++     * than a defined max number, maxCommandsPerWindow.
++     * Therefore, contention per cycle is not verified and instead
++     * is done based on a burst window.
++     * For HBM2, only row cmds (activate) can be multi-cycle
++     *
++     * @param cmd_tick Initial tick of command, to be verified
++     * @param max_multi_cmd_split Maximum delay between commands
++     * @param max_cmds_per_burst Number of commands that can issue
++     *                           in a burst window
++     * @return tick for command issue without contention
++     */
++    Tick verifyMultiCmd(Tick cmd_tick, Tick max_cmds_per_burst,
++                        Tick max_multi_cmd_split = 0) override;
++
++    /**
++     * NextReq and Respond events for second pseudo channel
++     *
++     */
++    EventFunctionWrapper nextReqEventPC1;
++    EventFunctionWrapper respondEventPC1;
++
++    /**
++     * Check if the read queue partition of both pseudo
++     * channels has room for more entries. This is used when the HBM ctrl
++     * is run with partitioned queues
++     *
++     * @param pkt_count The number of entries needed in the read queue
++     * @return true if read queue partition is full, false otherwise
++     */
++    bool readQueueFullPC0(unsigned int pkt_count) const;
++    bool readQueueFullPC1(unsigned int pkt_count) const;
++    bool readQueueFull(unsigned int pkt_count) const;
++
++    /**
++     * Check if the write queue partition of both pseudo
++     * channels has room for more entries. This is used when the HBM ctrl
++     * is run with partitioned queues
++     *
++     * @param pkt_count The number of entries needed in the write queue
++     * @return true if write queue is full, false otherwise
++     */
++    bool writeQueueFullPC0(unsigned int pkt_count) const;
++    bool writeQueueFullPC1(unsigned int pkt_count) const;
++
++    /**
++     * Following counters are used to keep track of the entries in read/write
++     * queue for each pseudo channel (useful when the partitioned queues are
++     * used)
++     */
++    uint64_t readQueueSizePC0 = 0;
++    uint64_t readQueueSizePC1 = 0;
++    uint64_t writeQueueSizePC0 = 0;
++    uint64_t writeQueueSizePC1 = 0;
++
++    /**
++     * Response queue for pkts sent to second pseudo channel
++     * The first pseudo channel uses MemCtrl::respQueue
++     */
++    std::deque<MemPacket*> respQueuePC1;
++
++    /**
++     * Holds count of row commands issued in burst window starting at
++     * defined Tick. This is used to ensure that the row command bandwidth
++     * does not exceed the allowable media constraints.
++     */
++    std::unordered_multiset<Tick> rowBurstTicks;
++
++    /**
++     * This is used to ensure that the column command bandwidth
++     * does not exceed the allowable media constraints. HBM2 has separate
++     * command bus for row and column commands
++     */
++    std::unordered_multiset<Tick> colBurstTicks;
++
++    /**
++     * Pointers to interfaces of the two pseudo channels
++     * pc0Int is same as MemCtrl::dram (it will be pointing to
++     * the DRAM interface defined in base MemCtrl)
++     */
++    DRAMInterface* pc0Int;
++    DRAMInterface* pc1Int;
++
++    /**
++     * This indicates if the R/W queues will be partitioned among
++     * pseudo channels
++     */
++    bool partitionedQ;
++
++  public:
++
++    /**
++     * Is there a respondEvent for pseudo channel 1 scheduled?
++     *
++     * @return true if event is scheduled
++     */
++    bool respondEventPC1Scheduled() const
++    {
++        return respondEventPC1.scheduled();
++    }
++
++    /**
++     * Is there a read/write burst Event scheduled?
++     *
++     * @return true if event is scheduled
++     */
++    bool requestEventScheduled(uint8_t pseudo_channel) const override
++    {
++        if (pseudo_channel == 0) {
++            return MemCtrl::requestEventScheduled(pseudo_channel);
++        } else {
++            assert(pseudo_channel == 1);
++            return nextReqEventPC1.scheduled();
++        }
++    }
++
++    /**
++     * restart the controller scheduler
++     *
++     * @param Tick to schedule next event
++     * @param pseudo_channel pseudo channel number for which scheduler
++     * needs to restart
++     */
++    void restartScheduler(Tick tick, uint8_t pseudo_channel) override
++    {
++        if (pseudo_channel == 0) {
++            MemCtrl::restartScheduler(tick);
++        } else {
++            schedule(nextReqEventPC1, tick);
++        }
++    }
++
++
++    virtual void init() override;
++    virtual void startup() override;
++    virtual void drainResume() override;
++
++
++  protected:
++    Tick recvAtomic(PacketPtr pkt) override;
++    Tick recvAtomicBackdoor(PacketPtr pkt, MemBackdoorPtr &backdoor) override;
++    void recvFunctional(PacketPtr pkt) override;
++    bool recvTimingReq(PacketPtr pkt) override;
++
++};
++
++} // namespace memory
++} // namespace gem5
++
++#endif //__HBM_CTRL_HH__
+diff --git a/src/mem/hetero_mem_ctrl.cc b/src/mem/hetero_mem_ctrl.cc
+index de2a999..5a9534b 100644
+--- a/src/mem/hetero_mem_ctrl.cc
++++ b/src/mem/hetero_mem_ctrl.cc
+@@ -195,15 +195,16 @@ HeteroMemCtrl::recvTimingReq(PacketPtr pkt)
+ void
+ HeteroMemCtrl::processRespondEvent(MemInterface* mem_intr,
+                         MemPacketQueue& queue,
+-                        EventFunctionWrapper& resp_event)
++                        EventFunctionWrapper& resp_event,
++                        bool& retry_rd_req)
+ {
+     DPRINTF(MemCtrl,
+             "processRespondEvent(): Some req has reached its readyTime\n");
+ 
+     if (queue.front()->isDram()) {
+-        MemCtrl::processRespondEvent(dram, queue, resp_event);
++        MemCtrl::processRespondEvent(dram, queue, resp_event, retry_rd_req);
+     } else {
+-        MemCtrl::processRespondEvent(nvm, queue, resp_event);
++        MemCtrl::processRespondEvent(nvm, queue, resp_event, retry_rd_req);
+     }
+ }
+ 
+@@ -285,11 +286,17 @@ HeteroMemCtrl::doBurstAccess(MemPacket* mem_pkt, MemInterface* mem_intr)
+         cmd_at = MemCtrl::doBurstAccess(mem_pkt, mem_intr);
+         // Update timing for NVM ranks if NVM is configured on this channel
+         nvm->addRankToRankDelay(cmd_at);
++        // Since nextBurstAt and nextReqAt are part of the interface, making
++        // sure that they are same for both nvm and dram interfaces
++        nvm->nextBurstAt = dram->nextBurstAt;
++        nvm->nextReqTime = dram->nextReqTime;
+ 
+     } else {
+         cmd_at = MemCtrl::doBurstAccess(mem_pkt, nvm);
+         // Update timing for NVM ranks if NVM is configured on this channel
+         dram->addRankToRankDelay(cmd_at);
++        dram->nextBurstAt = nvm->nextBurstAt;
++        dram->nextReqTime = nvm->nextReqTime;
+     }
+ 
+     return cmd_at;
+diff --git a/src/mem/hetero_mem_ctrl.hh b/src/mem/hetero_mem_ctrl.hh
+index ec0d9c3..ee1aa0c 100644
+--- a/src/mem/hetero_mem_ctrl.hh
++++ b/src/mem/hetero_mem_ctrl.hh
+@@ -95,7 +95,8 @@ class HeteroMemCtrl : public MemCtrl
+ 
+     virtual void processRespondEvent(MemInterface* mem_intr,
+                         MemPacketQueue& queue,
+-                        EventFunctionWrapper& resp_event) override;
++                        EventFunctionWrapper& resp_event,
++                        bool& retry_rd_req) override;
+ 
+     /**
+      * Checks if the memory interface is already busy
+diff --git a/src/mem/mem_ctrl.cc b/src/mem/mem_ctrl.cc
+index f46a7fc..18bf3a5 100644
+--- a/src/mem/mem_ctrl.cc
++++ b/src/mem/mem_ctrl.cc
+@@ -62,9 +62,9 @@ MemCtrl::MemCtrl(const MemCtrlParams &p) :
+     port(name() + ".port", *this), isTimingMode(false),
+     retryRdReq(false), retryWrReq(false),
+     nextReqEvent([this] {processNextReqEvent(dram, respQueue,
+-                         respondEvent, nextReqEvent);}, name()),
++                         respondEvent, nextReqEvent, retryWrReq);}, name()),
+     respondEvent([this] {processRespondEvent(dram, respQueue,
+-                         respondEvent); }, name()),
++                         respondEvent, retryRdReq); }, name()),
+     dram(p.dram),
+     readBufferSize(dram->readBufferSize),
+     writeBufferSize(dram->writeBufferSize),
+@@ -76,8 +76,7 @@ MemCtrl::MemCtrl(const MemCtrlParams &p) :
+     frontendLatency(p.static_frontend_latency),
+     backendLatency(p.static_backend_latency),
+     commandWindow(p.command_window),
+-    nextBurstAt(0), prevArrival(0),
+-    nextReqTime(0),
++    prevArrival(0),
+     stats(*this)
+ {
+     DPRINTF(MemCtrl, "Setting up controller\n");
+@@ -115,7 +114,7 @@ MemCtrl::startup()
+         // have to worry about negative values when computing the time for
+         // the next request, this will add an insignificant bubble at the
+         // start of simulation
+-        nextBurstAt = curTick() + dram->commandOffset();
++        dram->nextBurstAt = curTick() + dram->commandOffset();
+     }
+ }
+ 
+@@ -253,7 +252,8 @@ MemCtrl::addToReadQueue(PacketPtr pkt,
+             }
+ 
+             MemPacket* mem_pkt;
+-            mem_pkt = mem_intr->decodePacket(pkt, addr, size, true);
++            mem_pkt = mem_intr->decodePacket(pkt, addr, size, true,
++                                                    mem_intr->pseudoChannel);
+ 
+             // Increment read entries of the rank (dram)
+             // Increment count to trigger issue of non-deterministic read (nvm)
+@@ -325,7 +325,8 @@ MemCtrl::addToWriteQueue(PacketPtr pkt, unsigned int pkt_count,
+         // and enqueue it
+         if (!merged) {
+             MemPacket* mem_pkt;
+-            mem_pkt = mem_intr->decodePacket(pkt, addr, size, false);
++            mem_pkt = mem_intr->decodePacket(pkt, addr, size, false,
++                                                    mem_intr->pseudoChannel);
+             // Default readyTime to Max if nvm interface;
+             //will be reset once read is issued
+             mem_pkt->readyTime = MaxTick;
+@@ -479,7 +480,8 @@ MemCtrl::recvTimingReq(PacketPtr pkt)
+ void
+ MemCtrl::processRespondEvent(MemInterface* mem_intr,
+                         MemPacketQueue& queue,
+-                        EventFunctionWrapper& resp_event)
++                        EventFunctionWrapper& resp_event,
++                        bool& retry_rd_req)
+ {
+ 
+     DPRINTF(MemCtrl,
+@@ -538,8 +540,8 @@ MemCtrl::processRespondEvent(MemInterface* mem_intr,
+ 
+     // We have made a location in the queue available at this point,
+     // so if there is a read that was forced to wait, retry now
+-    if (retryRdReq) {
+-        retryRdReq = false;
++    if (retry_rd_req) {
++        retry_rd_req = false;
+         port.sendRetryReq();
+     }
+ }
+@@ -556,7 +558,10 @@ MemCtrl::chooseNext(MemPacketQueue& queue, Tick extra_col_delay,
+         if (queue.size() == 1) {
+             // available rank corresponds to state refresh idle
+             MemPacket* mem_pkt = *(queue.begin());
+-            if (packetReady(mem_pkt, dram)) {
++            if (mem_pkt->pseudoChannel != mem_intr->pseudoChannel) {
++                return ret;
++            }
++            if (packetReady(mem_pkt, mem_intr)) {
+                 ret = queue.begin();
+                 DPRINTF(MemCtrl, "Single request, going to a free rank\n");
+             } else {
+@@ -566,7 +571,7 @@ MemCtrl::chooseNext(MemPacketQueue& queue, Tick extra_col_delay,
+             // check if there is a packet going to a free rank
+             for (auto i = queue.begin(); i != queue.end(); ++i) {
+                 MemPacket* mem_pkt = *i;
+-                if (packetReady(mem_pkt, dram)) {
++                if (packetReady(mem_pkt, mem_intr)) {
+                     ret = i;
+                     break;
+                 }
+@@ -590,7 +595,8 @@ MemCtrl::chooseNextFRFCFS(MemPacketQueue& queue, Tick extra_col_delay,
+     Tick col_allowed_at = MaxTick;
+ 
+     // time we need to issue a column command to be seamless
+-    const Tick min_col_at = std::max(nextBurstAt + extra_col_delay, curTick());
++    const Tick min_col_at = std::max(mem_intr->nextBurstAt + extra_col_delay,
++                                    curTick());
+ 
+     std::tie(selected_pkt_it, col_allowed_at) =
+                  mem_intr->chooseNextFRFCFS(queue, min_col_at);
+@@ -664,7 +670,7 @@ MemCtrl::getBurstWindow(Tick cmd_tick)
+ }
+ 
+ Tick
+-MemCtrl::verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst)
++MemCtrl::verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst, bool row_cmd)
+ {
+     // start with assumption that there is no contention on command bus
+     Tick cmd_at = cmd_tick;
+@@ -789,17 +795,17 @@ MemCtrl::doBurstAccess(MemPacket* mem_pkt, MemInterface* mem_intr)
+     // Issue the next burst and update bus state to reflect
+     // when previous command was issued
+     std::vector<MemPacketQueue>& queue = selQueue(mem_pkt->isRead());
+-    std::tie(cmd_at, nextBurstAt) =
+-                mem_intr->doBurstAccess(mem_pkt, nextBurstAt, queue);
++    std::tie(cmd_at, mem_intr->nextBurstAt) =
++            mem_intr->doBurstAccess(mem_pkt, mem_intr->nextBurstAt, queue);
+ 
+     DPRINTF(MemCtrl, "Access to %#x, ready at %lld next burst at %lld.\n",
+-            mem_pkt->addr, mem_pkt->readyTime, nextBurstAt);
++            mem_pkt->addr, mem_pkt->readyTime, mem_intr->nextBurstAt);
+ 
+     // Update the minimum timing between the requests, this is a
+     // conservative estimate of when we have to schedule the next
+     // request to not introduce any unecessary bubbles. In most cases
+     // we will wake up sooner than we have to.
+-    nextReqTime = nextBurstAt - dram->commandOffset();
++    mem_intr->nextReqTime = mem_intr->nextBurstAt - mem_intr->commandOffset();
+ 
+     // Update the common bus stats
+     if (mem_pkt->isRead()) {
+@@ -865,7 +871,8 @@ void
+ MemCtrl::processNextReqEvent(MemInterface* mem_intr,
+                         MemPacketQueue& resp_queue,
+                         EventFunctionWrapper& resp_event,
+-                        EventFunctionWrapper& next_req_event) {
++                        EventFunctionWrapper& next_req_event,
++                        bool& retry_wr_req) {
+     // transition is handled by QoS algorithm if enabled
+     if (turnPolicy) {
+         // select bus state - only done if QoS algorithms are in use
+@@ -1109,11 +1116,11 @@ MemCtrl::processNextReqEvent(MemInterface* mem_intr,
+     }
+     // It is possible that a refresh to another rank kicks things back into
+     // action before reaching this point.
+-    if (!nextReqEvent.scheduled())
+-        schedule(next_req_event, std::max(nextReqTime, curTick()));
++    if (!next_req_event.scheduled())
++        schedule(next_req_event, std::max(mem_intr->nextReqTime, curTick()));
+ 
+-    if (retryWrReq && totalWriteQueueSize < writeBufferSize) {
+-        retryWrReq = false;
++    if (retry_wr_req && totalWriteQueueSize < writeBufferSize) {
++        retry_wr_req = false;
+         port.sendRetryReq();
+     }
+ }
+diff --git a/src/mem/mem_ctrl.hh b/src/mem/mem_ctrl.hh
+index b249964..6c2b447 100644
+--- a/src/mem/mem_ctrl.hh
++++ b/src/mem/mem_ctrl.hh
+@@ -116,6 +116,9 @@ class MemPacket
+     /** Does this packet access DRAM?*/
+     const bool dram;
+ 
++    /** pseudo channel num*/
++    const uint8_t pseudoChannel;
++
+     /** Will be populated by address decoder */
+     const uint8_t rank;
+     const uint8_t bank;
+@@ -200,14 +203,14 @@ class MemPacket
+      */
+     inline bool isDram() const { return dram; }
+ 
+-    MemPacket(PacketPtr _pkt, bool is_read, bool is_dram, uint8_t _rank,
+-               uint8_t _bank, uint32_t _row, uint16_t bank_id, Addr _addr,
+-               unsigned int _size)
++    MemPacket(PacketPtr _pkt, bool is_read, bool is_dram, uint8_t _channel,
++               uint8_t _rank, uint8_t _bank, uint32_t _row, uint16_t bank_id,
++               Addr _addr, unsigned int _size)
+         : entryTime(curTick()), readyTime(curTick()), pkt(_pkt),
+           _requestorId(pkt->requestorId()),
+-          read(is_read), dram(is_dram), rank(_rank), bank(_bank), row(_row),
+-          bankId(bank_id), addr(_addr), size(_size), burstHelper(NULL),
+-          _qosValue(_pkt->qosValue())
++          read(is_read), dram(is_dram), pseudoChannel(_channel), rank(_rank),
++          bank(_bank), row(_row), bankId(bank_id), addr(_addr), size(_size),
++          burstHelper(NULL), _qosValue(_pkt->qosValue())
+     { }
+ 
+ };
+@@ -296,12 +299,14 @@ class MemCtrl : public qos::MemCtrl
+     virtual void processNextReqEvent(MemInterface* mem_intr,
+                           MemPacketQueue& resp_queue,
+                           EventFunctionWrapper& resp_event,
+-                          EventFunctionWrapper& next_req_event);
++                          EventFunctionWrapper& next_req_event,
++                          bool& retry_wr_req);
+     EventFunctionWrapper nextReqEvent;
+ 
+     virtual void processRespondEvent(MemInterface* mem_intr,
+                         MemPacketQueue& queue,
+-                        EventFunctionWrapper& resp_event);
++                        EventFunctionWrapper& resp_event,
++                        bool& retry_rd_req);
+     EventFunctionWrapper respondEvent;
+ 
+     /**
+@@ -664,7 +669,7 @@ class MemCtrl : public qos::MemCtrl
+     /**
+      * Remove commands that have already issued from burstTicks
+      */
+-    void pruneBurstTick();
++    virtual void pruneBurstTick();
+ 
+   public:
+ 
+@@ -692,7 +697,8 @@ class MemCtrl : public qos::MemCtrl
+      *                           in a burst window
+      * @return tick for command issue without contention
+      */
+-    Tick verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst);
++    virtual Tick verifySingleCmd(Tick cmd_tick, Tick max_cmds_per_burst,
++                                bool row_cmd);
+ 
+     /**
+      * Check for command bus contention for multi-cycle (2 currently)
+@@ -708,7 +714,7 @@ class MemCtrl : public qos::MemCtrl
+      *                           in a burst window
+      * @return tick for command issue without contention
+      */
+-    Tick verifyMultiCmd(Tick cmd_tick, Tick max_cmds_per_burst,
++    virtual Tick verifyMultiCmd(Tick cmd_tick, Tick max_cmds_per_burst,
+                         Tick max_multi_cmd_split = 0);
+ 
+     /**
+@@ -723,16 +729,26 @@ class MemCtrl : public qos::MemCtrl
+      *
+      * @return true if event is scheduled
+      */
+-    bool requestEventScheduled() const { return nextReqEvent.scheduled(); }
++    virtual bool requestEventScheduled(uint8_t pseudo_channel = 0) const
++    {
++        assert(pseudo_channel == 0);
++        return nextReqEvent.scheduled();
++    }
+ 
+     /**
+      * restart the controller
+      * This can be used by interfaces to restart the
+      * scheduler after maintainence commands complete
+-     *
+      * @param Tick to schedule next event
++     * @param pseudo_channel pseudo channel number for which scheduler
++     * needs to restart, will always be 0 for controllers which control
++     * only a single channel
+      */
+-    void restartScheduler(Tick tick) { schedule(nextReqEvent, tick); }
++    virtual void restartScheduler(Tick tick, uint8_t pseudo_channel = 0)
++    {
++        assert(pseudo_channel == 0);
++        schedule(nextReqEvent, tick);
++    }
+ 
+     /**
+      * Check the current direction of the memory channel
+diff --git a/src/mem/mem_interface.cc b/src/mem/mem_interface.cc
+index fcaf9ba..e97448f 100644
+--- a/src/mem/mem_interface.cc
++++ b/src/mem/mem_interface.cc
+@@ -74,10 +74,13 @@ MemInterface::MemInterface(const MemInterfaceParams &_p)
+ {}
+ 
+ void
+-MemInterface::setCtrl(MemCtrl* _ctrl, unsigned int command_window)
++MemInterface::setCtrl(MemCtrl* _ctrl, unsigned int command_window,
++                                            uint8_t pseudo_channel)
+ {
+     ctrl = _ctrl;
+     maxCommandsPerWindow = command_window / tCK;
++    // setting the pseudo channel number for this interface
++    pseudoChannel = pseudo_channel;
+ }
+ 
+ } // namespace memory
+diff --git a/src/mem/mem_interface.hh b/src/mem/mem_interface.hh
+index dad5608..8d6f4fe 100644
+--- a/src/mem/mem_interface.hh
++++ b/src/mem/mem_interface.hh
+@@ -183,13 +183,26 @@ class MemInterface : public AbstractMemory
+      */
+     uint32_t numWritesQueued;
+ 
++    /**
++     * Till when the controller must wait before issuing next RD/WR burst?
++     */
++    Tick nextBurstAt = 0;
++    Tick nextReqTime = 0;
++
++    /**
++     * pseudo channel number used for HBM modeling
++     */
++    uint8_t pseudoChannel;
++
+     /** Set a pointer to the controller and initialize
+      * interface based on controller parameters
+      * @param _ctrl pointer to the parent controller
+      * @param command_window size of command window used to
+      *                       check command bandwidth
++     *  @param pseudo_channel pseudo channel number
+      */
+-    void setCtrl(MemCtrl* _ctrl, unsigned int command_window);
++    void setCtrl(MemCtrl* _ctrl, unsigned int command_window,
++                                    uint8_t pseudo_channel = 0);
+ 
+     /**
+      * Get an address in a dense range which starts from 0. The input
+@@ -283,10 +296,12 @@ class MemInterface : public AbstractMemory
+      * @param pkt_addr The starting address of the packet
+      * @param size The size of the packet in bytes
+      * @param is_read Is the request for a read or a write to memory
++     * @param pseudo_channel pseudo channel number of the packet
+      * @return A MemPacket pointer with the decoded information
+      */
+     virtual MemPacket* decodePacket(const PacketPtr pkt, Addr pkt_addr,
+-                           unsigned int size, bool is_read)
++                           unsigned int size, bool is_read,
++                           uint8_t pseudo_channel = 0)
+     {
+         panic("MemInterface decodePacket should not be executed from here.\n");
+         return nullptr;
+diff --git a/src/mem/nvm_interface.cc b/src/mem/nvm_interface.cc
+index fdb7777..b2c4073 100644
+--- a/src/mem/nvm_interface.cc
++++ b/src/mem/nvm_interface.cc
+@@ -120,7 +120,7 @@ void NVMInterface::setupRank(const uint8_t rank, const bool is_read)
+ 
+ MemPacket*
+ NVMInterface::decodePacket(const PacketPtr pkt, Addr pkt_addr,
+-                       unsigned size, bool is_read)
++                       unsigned size, bool is_read, uint8_t pseudo_channel)
+ {
+     // decode the address based on the address mapping scheme, with
+     // Ro, Ra, Co, Ba and Ch denoting row, rank, column, bank and
+@@ -200,8 +200,8 @@ NVMInterface::decodePacket(const PacketPtr pkt, Addr pkt_addr,
+     // later
+     uint16_t bank_id = banksPerRank * rank + bank;
+ 
+-    return new MemPacket(pkt, is_read, false, rank, bank, row, bank_id,
+-                   pkt_addr, size);
++    return new MemPacket(pkt, is_read, false, pseudo_channel, rank, bank, row,
++                   bank_id, pkt_addr, size);
+ }
+ 
+ std::pair<MemPacketQueue::iterator, Tick>
+@@ -299,7 +299,7 @@ NVMInterface::chooseRead(MemPacketQueue& queue)
+                                               maxCommandsPerWindow, tCK);
+             } else {
+                 cmd_at = ctrl->verifySingleCmd(cmd_at,
+-                                               maxCommandsPerWindow);
++                                              maxCommandsPerWindow, false);
+             }
+ 
+             // Update delay to next read
+@@ -436,7 +436,7 @@ NVMInterface::doBurstAccess(MemPacket* pkt, Tick next_burst_at,
+     // one command cycle
+     // Write command may require multiple cycles to enable larger address space
+     if (pkt->isRead() || !twoCycleRdWr) {
+-        cmd_at = ctrl->verifySingleCmd(cmd_at, maxCommandsPerWindow);
++        cmd_at = ctrl->verifySingleCmd(cmd_at, maxCommandsPerWindow, false);
+     } else {
+         cmd_at = ctrl->verifyMultiCmd(cmd_at, maxCommandsPerWindow, tCK);
+     }
+diff --git a/src/mem/nvm_interface.hh b/src/mem/nvm_interface.hh
+index 3c782ed..cc41587 100644
+--- a/src/mem/nvm_interface.hh
++++ b/src/mem/nvm_interface.hh
+@@ -201,7 +201,8 @@ class NVMInterface : public MemInterface
+     void setupRank(const uint8_t rank, const bool is_read) override;
+ 
+     MemPacket* decodePacket(const PacketPtr pkt, Addr pkt_addr,
+-                           unsigned int size, bool is_read) override;
++                           unsigned int size, bool is_read,
++                           uint8_t pseudo_channel = 0) override;
+ 
+     /**
+      * Check drain state of NVM interface
+-- 
+1.8.3.1
+

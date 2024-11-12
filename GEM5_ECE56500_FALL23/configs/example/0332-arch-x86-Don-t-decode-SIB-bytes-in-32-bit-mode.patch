@@ -1,0 +1,34 @@
+From e04d40828cdb2aaf19bfc1ece0ba48007c040121 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 11:46:50 -0800
+Subject: [PATCH 332/757] arch-x86: Don't decode SIB bytes in 32 bit mode.
+
+There was a comment there saying we shouldn't, but then we still did
+anyway.
+
+Change-Id: I4a53cf504d38e00fca5d687818149b91354e640d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55593
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/decoder.cc | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/arch/x86/decoder.cc b/src/arch/x86/decoder.cc
+index 5d78c5f..ef87ff3 100644
+--- a/src/arch/x86/decoder.cc
++++ b/src/arch/x86/decoder.cc
+@@ -544,8 +544,7 @@ Decoder::doModRMState(uint8_t nextByte)
+ 
+     // If there's an SIB, get that next.
+     // There is no SIB in 16 bit mode.
+-    if (modRM.rm == 4 && modRM.mod != 3) {
+-            // && in 32/64 bit mode)
++    if (modRM.rm == 4 && modRM.mod != 3 && emi.addrSize != 2) {
+         nextState = SIBState;
+     } else if (displacementSize) {
+         nextState = DisplacementState;
+-- 
+1.8.3.1
+

@@ -1,0 +1,57 @@
+From 6a44472b1c48b9992092bf0b943398ff883dac17 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 27 Dec 2021 15:33:40 -0800
+Subject: [PATCH 085/757] mem: Add 'controller()' function to NVMInterface.py
+
+As noted here: https://gem5.atlassian.net/browse/GEM5-1133,
+NVMInterface.py does not have a `controller()` function, which is used
+by `configs/common/MemConfig.py` to obtain a memory controller for a
+specific memory type selected. This patch adds a `controller()`
+function to `NVNInterface.py` to avoid the reported error.
+
+It should be noted that we do not enforce a rule that a memory type
+must include a `controller()` function. `se.py`, and other scrips
+that use `configs/common/MemConfigs.py`, should not rely on this
+false assumption.
+
+Change-Id: Ieba62f803d3b9f9c5c3c863d5a8c4ca16c5e5e82
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54923
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/NVMInterface.py | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/mem/NVMInterface.py b/src/mem/NVMInterface.py
+index 5c8b27b..7c66901 100644
+--- a/src/mem/NVMInterface.py
++++ b/src/mem/NVMInterface.py
+@@ -35,6 +35,7 @@
+ 
+ from m5.params import *
+ from m5.proxy import *
++from m5.objects.MemCtrl import MemCtrl
+ from m5.objects.MemInterface import MemInterface
+ from m5.objects.DRAMInterface import AddrMap
+ 
+@@ -65,6 +66,16 @@ class NVMInterface(MemInterface):
+     two_cycle_rdwr = Param.Bool(False,
+                      "Two cycles required to send read and write commands")
+ 
++
++    def controller(self):
++        """
++        Instantiate the memory controller and bind it to
++        the current interface.
++        """
++        controller = MemCtrl()
++        controller.nvm = self
++        return controller
++
+ # NVM delays and device architecture defined to mimic PCM like memory.
+ # Can be configured with DDR4_2400 sharing the channel
+ class NVM_2400_1x64(NVMInterface):
+-- 
+1.8.3.1
+

@@ -1,0 +1,56 @@
+From d5e734c54094eb1d5561f024150f2270c2772bc8 Mon Sep 17 00:00:00 2001
+From: Alex Richardson <alexrichardson@google.com>
+Date: Thu, 27 Jan 2022 14:11:04 +0000
+Subject: [PATCH 179/757] arch-riscv: Fix (c.)addiw sign-extension behaviour
+
+Previously calling a function with an INT_MAX argument would result in
+the following (incorrectly extended) trace:
+```
+lui a1, 524288             : IntAlu :  D=0xffffffff80000000
+c_addiw a1, -1             : IntAlu :  D=0xffffffff7fffffff
+```
+I noticed this due to a kernel assertion that checked the second argument
+was bigger than the first. Since INT_MAX was incorrectly being extended to
+0xffffffff7fffffff, the generated slt comparison instruction was returning
+1 instead of the expected zero (which would have happened with 0x7fffffff).
+
+The problem in the current addiw logic is that the immediate value is an
+int64_t, so the 32-bit Rs1/Rc1 values are promoted to 64-bit for the
+aritmetic operation, thereby making the current cast redundant.
+Fix this by placing parens around the whole expression and truncating
+that to 32 bits.
+
+Change-Id: I7b18a8101b1c2614b9f056004e6a7f87b66b64c9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56103
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa/decoder.isa | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index 3cbba5a..e512e08 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -135,7 +135,7 @@ decode QUADRANT default Unknown::unknown() {
+                     return std::make_shared<IllegalInstFault>(
+                             "source reg x0", machInst);
+                 }
+-                Rc1_sd = (int32_t)Rc1_sd + imm;
++                Rc1_sw = (int32_t)(Rc1_sw + imm);
+             }});
+             0x2: c_li({{
+                 imm = CIMM5;
+@@ -471,7 +471,7 @@ decode QUADRANT default Unknown::unknown() {
+         0x06: decode FUNCT3 {
+             format IOp {
+                 0x0: addiw({{
+-                    Rd_sd = Rs1_sw + imm;
++                    Rd_sw = (int32_t)(Rs1_sw + imm);
+                 }}, int32_t);
+                 0x1: slliw({{
+                     Rd_sd = Rs1_sw << imm;
+-- 
+1.8.3.1
+

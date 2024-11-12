@@ -1,0 +1,44 @@
+From 130cb26f7c9178ecb2e3085d35f10f50fd1888c0 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 2 Feb 2022 16:38:58 -0600
+Subject: [PATCH 384/757] sim-se: Initialize shared page table base upon clone
+
+When the clone syscall is called, a new process is created which
+allocates a new page table. If clone was called with CLONE_THREAD, the
+page table of that new process is then marked as shared. Next, initState
+is called on the process which calls the page table's initState. For the
+multi level page table, initState only sets the base pointer if shared
+is false. This means that in this order the base pointer of the new page
+table is not currently initialized causing spurious errors.
+
+To fix this, the page table is explicitly initialized after the new
+process and new page table are created but before the page table is
+marked as shared. The process initState continues as normal and the new
+page table's base pointer is not modified by further calls to initState
+as it is already marked shared.
+
+Change-Id: I4a533e13565fa572fb9153a926f70958bc7488b7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56366
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/sim/syscall_emul.hh | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/sim/syscall_emul.hh b/src/sim/syscall_emul.hh
+index 546ae75..3fe1cf0 100644
+--- a/src/sim/syscall_emul.hh
++++ b/src/sim/syscall_emul.hh
+@@ -1672,6 +1672,7 @@ cloneFunc(SyscallDesc *desc, ThreadContext *tc, RegVal flags, RegVal newStack,
+     }
+ 
+     if (flags & OS::TGT_CLONE_THREAD) {
++        cp->pTable->initState();
+         cp->pTable->shared = true;
+         cp->useForClone = true;
+     }
+-- 
+1.8.3.1
+

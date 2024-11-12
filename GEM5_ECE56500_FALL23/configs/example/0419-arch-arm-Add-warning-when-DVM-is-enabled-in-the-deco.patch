@@ -1,0 +1,43 @@
+From dbc91308c7f34e3fc561f2ef02709dc2e4eaa74c Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 20 Dec 2021 14:20:33 +0000
+Subject: [PATCH 419/757] arch-arm: Add warning when DVM is enabled in the
+ decoder
+
+DVM Ops instructions are micro-architecturally modelled as loads. This
+will tamper the effective number of loads stat, so a user should
+be careful when interpreting stat results
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I526cd542ef804111cf6919359c1ce02df6d4710d
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56605
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/decoder.cc | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/arch/arm/decoder.cc b/src/arch/arm/decoder.cc
+index 18b8c04..4385744 100644
+--- a/src/arch/arm/decoder.cc
++++ b/src/arch/arm/decoder.cc
+@@ -65,6 +65,13 @@ Decoder::Decoder(const ArmDecoderParams &params)
+     // Initialize SVE vector length
+     sveLen = (dynamic_cast<ISA *>(params.isa)
+             ->getCurSveVecLenInBitsAtReset() >> 7) - 1;
++
++    if (dvmEnabled) {
++        warn_once(
++            "DVM Ops instructions are micro-architecturally "
++            "modelled as loads. This will tamper the effective "
++            "number of loads stat\n");
++    }
+ }
+ 
+ void
+-- 
+1.8.3.1
+

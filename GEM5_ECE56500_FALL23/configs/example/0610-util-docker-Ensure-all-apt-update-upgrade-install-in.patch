@@ -1,0 +1,223 @@
+From 92894edf7804d858e9a3bbb41269391c1c4d041b Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 3 May 2022 16:00:58 -0700
+Subject: [PATCH 610/757] util-docker: Ensure all apt update/upgrade/install in
+ one RUN
+
+Prior to this patch those building from these Dockerfiles could
+encounter caching issues where the `apt -y update` RUN was loaded from a
+cached layer prior to running the `install` command. Typically this was
+trying to obtain a package from a wrong IP address. The fix for this is
+to run this all in one Docker RUN to avoid loading a broken cache.
+
+Change-Id: If309c5c1d4a0240fed670abe980772d90f7d2172
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59350
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ util/dockerfiles/gcn-gpu/Dockerfile                         | 5 ++---
+ util/dockerfiles/gpu-fs/Dockerfile                          | 5 ++---
+ util/dockerfiles/llvm-gnu-cross-compiler-riscv64/Dockerfile | 4 +---
+ util/dockerfiles/sst-11.1.0/Dockerfile                      | 5 ++---
+ util/dockerfiles/ubuntu-18.04_all-dependencies/Dockerfile   | 5 ++---
+ util/dockerfiles/ubuntu-18.04_clang-version/Dockerfile      | 5 ++---
+ util/dockerfiles/ubuntu-18.04_gcc-version/Dockerfile        | 5 ++---
+ util/dockerfiles/ubuntu-20.04_all-dependencies/Dockerfile   | 5 ++---
+ util/dockerfiles/ubuntu-20.04_clang-version/Dockerfile      | 5 ++---
+ util/dockerfiles/ubuntu-20.04_gcc-version-11/Dockerfile     | 5 ++---
+ util/dockerfiles/ubuntu-20.04_gcc-version/Dockerfile        | 5 ++---
+ util/dockerfiles/ubuntu-20.04_min-dependencies/Dockerfile   | 5 ++---
+ 12 files changed, 23 insertions(+), 36 deletions(-)
+
+diff --git a/util/dockerfiles/gcn-gpu/Dockerfile b/util/dockerfiles/gcn-gpu/Dockerfile
+index dd4e658..c5db896 100644
+--- a/util/dockerfiles/gcn-gpu/Dockerfile
++++ b/util/dockerfiles/gcn-gpu/Dockerfile
+@@ -25,9 +25,8 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ FROM ubuntu:20.04
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python-is-python3 doxygen libboost-all-dev \
+     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config
+diff --git a/util/dockerfiles/gpu-fs/Dockerfile b/util/dockerfiles/gpu-fs/Dockerfile
+index eae6b76..63ae6b0 100644
+--- a/util/dockerfiles/gpu-fs/Dockerfile
++++ b/util/dockerfiles/gpu-fs/Dockerfile
+@@ -29,9 +29,8 @@
+ 
+ FROM ubuntu:20.04
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python-is-python3 doxygen libboost-all-dev \
+     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config
+diff --git a/util/dockerfiles/llvm-gnu-cross-compiler-riscv64/Dockerfile b/util/dockerfiles/llvm-gnu-cross-compiler-riscv64/Dockerfile
+index ed06bf7..f500b9b 100644
+--- a/util/dockerfiles/llvm-gnu-cross-compiler-riscv64/Dockerfile
++++ b/util/dockerfiles/llvm-gnu-cross-compiler-riscv64/Dockerfile
+@@ -29,9 +29,7 @@
+ FROM ubuntu:20.04 AS stage1
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install \
++RUN apt -y update && apt -y upgrade && apt -y install \
+   binutils build-essential libtool texinfo gzip zip unzip patchutils curl git \
+   make cmake ninja-build automake bison flex gperf grep sed gawk bc \
+   zlib1g-dev libexpat1-dev libmpc-dev libglib2.0-dev libfdt-dev libpixman-1-dev
+diff --git a/util/dockerfiles/sst-11.1.0/Dockerfile b/util/dockerfiles/sst-11.1.0/Dockerfile
+index 5103ffe..c985374 100644
+--- a/util/dockerfiles/sst-11.1.0/Dockerfile
++++ b/util/dockerfiles/sst-11.1.0/Dockerfile
+@@ -27,9 +27,8 @@
+ FROM ubuntu:20.04
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python-is-python3 doxygen libboost-all-dev \
+     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config pip \
+diff --git a/util/dockerfiles/ubuntu-18.04_all-dependencies/Dockerfile b/util/dockerfiles/ubuntu-18.04_all-dependencies/Dockerfile
+index adcc0b0..a05e0fe 100644
+--- a/util/dockerfiles/ubuntu-18.04_all-dependencies/Dockerfile
++++ b/util/dockerfiles/ubuntu-18.04_all-dependencies/Dockerfile
+@@ -26,9 +26,8 @@
+ 
+ FROM ubuntu:18.04
+ 
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python3 doxygen libboost-all-dev \
+     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config \
+diff --git a/util/dockerfiles/ubuntu-18.04_clang-version/Dockerfile b/util/dockerfiles/ubuntu-18.04_clang-version/Dockerfile
+index 4575ef9..3d9c3a7 100644
+--- a/util/dockerfiles/ubuntu-18.04_clang-version/Dockerfile
++++ b/util/dockerfiles/ubuntu-18.04_clang-version/Dockerfile
+@@ -36,9 +36,8 @@ FROM ubuntu:18.04
+ # 9
+ ARG version
+ 
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install git m4 scons zlib1g zlib1g-dev clang-${version} \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install git m4 scons zlib1g zlib1g-dev clang-${version} \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python3 doxygen make
+ 
+diff --git a/util/dockerfiles/ubuntu-18.04_gcc-version/Dockerfile b/util/dockerfiles/ubuntu-18.04_gcc-version/Dockerfile
+index cdb80b7..3e94e8d 100644
+--- a/util/dockerfiles/ubuntu-18.04_gcc-version/Dockerfile
++++ b/util/dockerfiles/ubuntu-18.04_gcc-version/Dockerfile
+@@ -33,9 +33,8 @@ FROM ubuntu:18.04
+ # 8
+ ARG version
+ 
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install git m4 scons zlib1g zlib1g-dev gcc-multilib \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install git m4 scons zlib1g zlib1g-dev gcc-multilib \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python3 doxygen wget zip gcc-${version} \
+     g++-${version} make
+diff --git a/util/dockerfiles/ubuntu-20.04_all-dependencies/Dockerfile b/util/dockerfiles/ubuntu-20.04_all-dependencies/Dockerfile
+index 3fef444..27a6382 100644
+--- a/util/dockerfiles/ubuntu-20.04_all-dependencies/Dockerfile
++++ b/util/dockerfiles/ubuntu-20.04_all-dependencies/Dockerfile
+@@ -27,9 +27,8 @@
+ FROM ubuntu:20.04
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
+     libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
+     python3-dev python-is-python3 doxygen libboost-all-dev \
+     libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config pip \
+diff --git a/util/dockerfiles/ubuntu-20.04_clang-version/Dockerfile b/util/dockerfiles/ubuntu-20.04_clang-version/Dockerfile
+index ceb11ab..00f34c4 100644
+--- a/util/dockerfiles/ubuntu-20.04_clang-version/Dockerfile
++++ b/util/dockerfiles/ubuntu-20.04_clang-version/Dockerfile
+@@ -36,9 +36,8 @@ FROM ubuntu:20.04
+ ARG version
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
+     protobuf-compiler libprotoc-dev libgoogle-perftools-dev python3-dev \
+     python-is-python3 doxygen libboost-all-dev libhdf5-serial-dev \
+     python3-pydot libpng-dev clang-${version} make
+diff --git a/util/dockerfiles/ubuntu-20.04_gcc-version-11/Dockerfile b/util/dockerfiles/ubuntu-20.04_gcc-version-11/Dockerfile
+index 8d570f0..f01479d 100644
+--- a/util/dockerfiles/ubuntu-20.04_gcc-version-11/Dockerfile
++++ b/util/dockerfiles/ubuntu-20.04_gcc-version-11/Dockerfile
+@@ -31,9 +31,8 @@ FROM ubuntu:20.04
+ # installed via APT more easily.
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
+     protobuf-compiler libprotoc-dev libgoogle-perftools-dev python3-dev \
+     python-is-python3 doxygen libboost-all-dev libhdf5-serial-dev \
+     python3-pydot libpng-dev make software-properties-common
+diff --git a/util/dockerfiles/ubuntu-20.04_gcc-version/Dockerfile b/util/dockerfiles/ubuntu-20.04_gcc-version/Dockerfile
+index c121fe0..0ec8083 100644
+--- a/util/dockerfiles/ubuntu-20.04_gcc-version/Dockerfile
++++ b/util/dockerfiles/ubuntu-20.04_gcc-version/Dockerfile
+@@ -33,9 +33,8 @@ FROM ubuntu:20.04
+ ARG version
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
++RUN apt -y update && apt -y upgrade && \
++    apt -y install git m4 scons zlib1g zlib1g-dev libprotobuf-dev \
+     protobuf-compiler libprotoc-dev libgoogle-perftools-dev python3-dev \
+     python-is-python3 doxygen libboost-all-dev libhdf5-serial-dev \
+     python3-pydot libpng-dev gcc-${version} g++-${version} make
+diff --git a/util/dockerfiles/ubuntu-20.04_min-dependencies/Dockerfile b/util/dockerfiles/ubuntu-20.04_min-dependencies/Dockerfile
+index 68c61ef..4b65146 100644
+--- a/util/dockerfiles/ubuntu-20.04_min-dependencies/Dockerfile
++++ b/util/dockerfiles/ubuntu-20.04_min-dependencies/Dockerfile
+@@ -27,6 +27,5 @@
+ FROM ubuntu:20.04
+ 
+ ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt -y update
+-RUN apt -y upgrade
+-RUN apt -y install build-essential m4 scons python3-dev python-is-python3
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential m4 scons python3-dev python-is-python3
+-- 
+1.8.3.1
+

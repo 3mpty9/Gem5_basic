@@ -1,0 +1,25 @@
+From 85205fcfaee3fb4b6611ba57b66af8d892f8117b Mon Sep 17 00:00:00 2001
+From: Mithuna Thottethodi <mithuna@purdue.edu>
+Date: Thu, 13 Oct 2022 09:26:50 -0400
+Subject: [PATCH 750/757] python: m5 ops library path fix
+
+Change-Id: I56e9909df2d9fe38e37f25045516260c6d46f1a2
+---
+ util/m5/SConstruct | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/util/m5/SConstruct b/util/m5/SConstruct
+index 62be63c..baf130d 100644
+--- a/util/m5/SConstruct
++++ b/util/m5/SConstruct
+@@ -59,6 +59,7 @@ else:
+     main.Append(CCFLAGS=[ '-O2' ])
+ main.Append(CPPPATH=[ common_include ])
+ main.Append(CXXFLAGS=[ '-std=c++14' ])
++main.Append(LIBFLAGS=[ '/usr/lib64' ])
+ 
+ if not GetOption('verbose'):
+     # A functor which returns a shorter summary string to replace the normal
+-- 
+1.8.3.1
+

@@ -1,0 +1,40 @@
+From a13e9bd4f76ec81898bbaad5dad6005a2b5ffbf7 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 3 May 2022 12:31:02 -0700
+Subject: [PATCH 609/757] util-docker: Add gpu-fs to docker-compose.yaml
+
+Though https://gem5-review.googlesource.com/c/public/gem5/+/59051 added
+the gpu-fs image, it needs added to the docker-compose.yaml file to be
+automatically build and pushed to our docker image repository.
+
+With this patch a user can execute `docker-compose build gpu-fs` to
+build this image locally.
+
+Change-Id: Iacc768d3d1b7fccb8867e8c788012c292216cb02
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59349
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/dockerfiles/docker-compose.yaml | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/util/dockerfiles/docker-compose.yaml b/util/dockerfiles/docker-compose.yaml
+index cbc8987..2db46e1 100644
+--- a/util/dockerfiles/docker-compose.yaml
++++ b/util/dockerfiles/docker-compose.yaml
+@@ -6,6 +6,11 @@ services:
+             context: gcn-gpu
+             dockerfile: Dockerfile
+         image: gcr.io/gem5-test/gcn-gpu
++    gpu-fs:
++        build:
++            context: gcn-gpu
++            dockerfile: Dockerfile
++        image: gcr.io/gem5-test/gpu-fs
+     sst:
+         build:
+             context: sst-11.1.0
+-- 
+1.8.3.1
+

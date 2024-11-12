@@ -1,0 +1,240 @@
+From 8df2ebf43ed88420841fa5102277548873aceb8e Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 8 Apr 2022 16:54:26 +0800
+Subject: [PATCH 577/757] dev: Add a special reset interface to consolidate
+ reset logic
+
+How to reset a model correctly is very different between models. Take
+cpu models for instance, they have different reset pins for different
+parts(typically one for each core, one for shared component, one for
+debug interface). To make users more easily to reset the model, here we
+want to introduce a special reset port. By implementing the port, users
+can simply request a whole reset to the model. If users want to do
+partial resets, users still can access the raw pins to achieve what they
+want.
+
+Change-Id: I746121d16441e021dc3392aeae1a6d9fa33d637a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58810
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/ResetPort.py  | 47 ++++++++++++++++++++++++++++++++++
+ src/dev/SConscript    |  3 +++
+ src/dev/reset_port.cc | 57 +++++++++++++++++++++++++++++++++++++++++
+ src/dev/reset_port.hh | 71 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 178 insertions(+)
+ create mode 100644 src/dev/ResetPort.py
+ create mode 100644 src/dev/reset_port.cc
+ create mode 100644 src/dev/reset_port.hh
+
+diff --git a/src/dev/ResetPort.py b/src/dev/ResetPort.py
+new file mode 100644
+index 0000000..d7140c5
+--- /dev/null
++++ b/src/dev/ResetPort.py
+@@ -0,0 +1,47 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import Port, VectorPort
++
++RESET_REQUEST_ROLE = 'Reset Request'
++RESET_RESPONSE_ROLE = 'Reset Response'
++Port.compat(RESET_REQUEST_ROLE, RESET_RESPONSE_ROLE)
++
++# ResetRequestPort is an artifact request port for reset purpose.
++class ResetRequestPort(Port):
++    def __init__(self, desc):
++        super().__init__(RESET_REQUEST_ROLE, desc, is_source=True)
++
++# ResetResponsePort is an artifact response port for reset purpose.
++# The owner should perform whole reset when receiving a request.
++class ResetResponsePort(Port):
++    def __init__(self, desc):
++        super().__init__(RESET_RESPONSE_ROLE, desc)
++
++# VectorResetRequestPort presents a bank of artifact reset request
++# ports.
++class VectorResetRequestPort(VectorPort):
++    def __init__(self, desc):
++        super().__init__(RESET_REQUEST_ROLE, desc, is_source=True)
+diff --git a/src/dev/SConscript b/src/dev/SConscript
+index bc2fe98..44a7cc9 100644
+--- a/src/dev/SConscript
++++ b/src/dev/SConscript
+@@ -38,6 +38,9 @@ Source('dma_virt_device.cc')
+ SimObject('IntPin.py', sim_objects=[])
+ Source('intpin.cc')
+ 
++SimObject('ResetPort.py', sim_objects=[])
++Source('reset_port.cc')
++
+ DebugFlag('IsaFake')
+ DebugFlag('DMA')
+ 
+diff --git a/src/dev/reset_port.cc b/src/dev/reset_port.cc
+new file mode 100644
+index 0000000..8d32c7d
+--- /dev/null
++++ b/src/dev/reset_port.cc
+@@ -0,0 +1,57 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/reset_port.hh"
++
++#include "base/logging.hh"
++
++namespace gem5
++{
++
++void
++ResetRequestPort::bind(Port &p)
++{
++    peer = dynamic_cast<ResetResponsePortBase*>(&p);
++    fatal_if(peer == nullptr, "Attempt to bind reset request port %s to "
++            "incompatible port %s.", name(), p.name());
++    Port::bind(p);
++}
++
++void
++ResetRequestPort::unbind()
++{
++    peer = nullptr;
++    Port::unbind();
++}
++
++void
++ResetRequestPort::requestReset()
++{
++    peer->requestReset();
++}
++
++} // namespace gem5
+diff --git a/src/dev/reset_port.hh b/src/dev/reset_port.hh
+new file mode 100644
+index 0000000..2846900
+--- /dev/null
++++ b/src/dev/reset_port.hh
+@@ -0,0 +1,71 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_RESET_PORT_HH__
++#define __DEV_RESET_PORT_HH__
++
++#include "sim/port.hh"
++
++#include <string>
++
++namespace gem5
++{
++
++class ResetResponsePortBase : public Port
++{
++  public:
++    using Port::Port;
++    virtual void requestReset() = 0;
++};
++
++template <class Device>
++class ResetResponsePort : public ResetResponsePortBase
++{
++  public:
++    ResetResponsePort(const std::string &name, PortID id, Device *dev) :
++        ResetResponsePortBase(name, id), device(dev) {}
++    void requestReset() override { device->requestReset(); }
++
++  private:
++    Device *device = nullptr;
++};
++
++class ResetRequestPort : public Port
++{
++  public:
++    using Port::Port;
++    void bind(Port &p) override;
++    void unbind() override;
++    void requestReset();
++
++  private:
++    ResetResponsePortBase *peer = nullptr;
++};
++
++} // namespace gem5
++
++#endif // __DEV_RESET_PORT_HH__
+-- 
+1.8.3.1
+

@@ -1,0 +1,83 @@
+From d63c6407754f3d2c1ec103042b0a735848b5e37c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 24 Mar 2022 15:54:34 -0700
+Subject: [PATCH 464/757] dev-amdgpu: Remove unused variables in src/dev/amdgpu
+
+These were causing errors to be thrown when compiling in clang-12.
+
+Change-Id: I8bd2d7e7e1d4423a54766ed906c864bb91e884f0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58149
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Matthew Poremba <matthew.poremba@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_device.hh | 10 ----------
+ src/dev/amdgpu/system_hub.cc    |  6 +++---
+ src/dev/amdgpu/system_hub.hh    |  3 +--
+ 3 files changed, 4 insertions(+), 15 deletions(-)
+
+diff --git a/src/dev/amdgpu/amdgpu_device.hh b/src/dev/amdgpu/amdgpu_device.hh
+index 09c13c9..6697d82 100644
+--- a/src/dev/amdgpu/amdgpu_device.hh
++++ b/src/dev/amdgpu/amdgpu_device.hh
+@@ -121,16 +121,6 @@ class AMDGPUDevice : public PciDevice
+     bool checkpoint_before_mmios;
+     int init_interrupt_count;
+ 
+-    // GART aperture. This is the initial 1-level privledged page table that
+-    // resides in framebuffer memory.
+-    uint32_t gartBase = 0x0;
+-    uint32_t gartSize = 0x0;
+-
+-    // MMHUB aperture. These addresses are set by the GPU. For now we wait
+-    // until the driver reads them before setting them.
+-    uint64_t mmhubBase = 0x0;
+-    uint64_t mmhubTop = 0x0;
+-
+     // VMIDs data structures
+     // map of pasids to vmids
+     std::unordered_map<uint16_t, uint16_t> idMap;
+diff --git a/src/dev/amdgpu/system_hub.cc b/src/dev/amdgpu/system_hub.cc
+index b55cc52..90dcb7f 100644
+--- a/src/dev/amdgpu/system_hub.cc
++++ b/src/dev/amdgpu/system_hub.cc
+@@ -39,7 +39,7 @@ namespace gem5
+ void
+ AMDGPUSystemHub::sendRequest(PacketPtr pkt, Event *callback)
+ {
+-    ResponseEvent *dmaRespEvent = new ResponseEvent(pkt, callback);
++    ResponseEvent *dmaRespEvent = new ResponseEvent(callback);
+     Tick delay = 0;
+ 
+     // Assuming read XOR write (i.e., not an atomic).
+@@ -59,8 +59,8 @@ AMDGPUSystemHub::dmaResponse(PacketPtr pkt)
+ {
+ }
+ 
+-AMDGPUSystemHub::ResponseEvent::ResponseEvent(PacketPtr pkt, Event *_callback)
+-    : reqPkt(pkt), callback(_callback)
++AMDGPUSystemHub::ResponseEvent::ResponseEvent(Event *_callback)
++    : callback(_callback)
+ {
+     // Delete this event after process is called
+     setFlags(Event::AutoDelete);
+diff --git a/src/dev/amdgpu/system_hub.hh b/src/dev/amdgpu/system_hub.hh
+index 2de627f..0b48c3b 100644
+--- a/src/dev/amdgpu/system_hub.hh
++++ b/src/dev/amdgpu/system_hub.hh
+@@ -66,11 +66,10 @@ class AMDGPUSystemHub : public DmaDevice
+ 
+     class ResponseEvent : public Event
+     {
+-       PacketPtr reqPkt;
+        Event *callback;
+ 
+        public:
+-        ResponseEvent(PacketPtr pkt, Event *_callback);
++        ResponseEvent(Event *_callback);
+ 
+         void process();
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,95 @@
+From f894de5486d57e6f0611f0968763515d4f7d8b3a Mon Sep 17 00:00:00 2001
+From: Eric Ye <ericye@google.com>
+Date: Wed, 29 Dec 2021 17:03:38 -0800
+Subject: [PATCH 092/757] scons: Try to fix build dependency bug when
+ generating fastmodels
+
+Bug: 201084562
+Change-Id: I33cc9e09b1ce46f80864d75f088a2534949e55e1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55043
+Reviewed-by: Gabe Black <gabeblack@google.com>
+Maintainer: Gabe Black <gabeblack@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 54 ++++++++++++++++++++++++---------------
+ 1 file changed, 33 insertions(+), 21 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index 63b1b16..ccfc620 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -250,6 +250,34 @@ license_count = int(env['ARMLMD_LICENSE_COUNT'])
+ arm_licenses = list((Value(object()) for i in range(license_count)))
+ license_cycle = cycle(arm_licenses)
+ 
++# HACK: Make sure the gic protocol headers are somewhere we can find them.
++# These should start out alongside other headers fast model provides which we
++# are already able to include, but unfortunately they're in the examples
++# directory.
++gicv3_comms_headers = (
++        'gicv3_comms_base.h', 'gicv3_comms_if.h', 'gicv3_comms_sockets.h')
++examples_common_dir = pvlib_home.Dir('examples/SystemCExport/Common')
++gic_protocol_path = 'Protocols/GICv3Comms'
++gic_protocol_dest = Dir(env['BUILDDIR']).Dir(gic_protocol_path)
++gic_protocol_src = examples_common_dir.Dir(gic_protocol_path)
++
++for header in gicv3_comms_headers:
++    Command(gic_protocol_dest.File(header), gic_protocol_src.File(header),
++            Copy('${TARGET}', '${SOURCE}'))
++# Since we are copying the source files to a different directory, Scons's
++# dependency scanner does not pick up the dependency between these files.
++# Specify them manually.
++env.Depends(gic_protocol_dest.File('gicv3_comms_base.h'),
++            gic_protocol_dest.File('gicv3_comms_if.h'))
++env.Depends(gic_protocol_dest.File('gicv3_comms_sockets.h'),
++            gic_protocol_dest.File('gicv3_comms_if.h'))
++
++common_headers = ('lisa_protocol_types.h', 'tlm_has_get_protocol_types.h')
++for header in common_headers:
++    header_target = gic_protocol_dest.Dir('include').File(header)
++    header_src = examples_common_dir.Dir('include').File(header)
++    Command(header_target, header_src, Copy('${TARGET}', '${SOURCE}'))
++
+ class ArmFastModelComponent(object):
+     def __init__(self, project_file, *extra_deps):
+         project_file = File(project_file)
+@@ -320,6 +348,11 @@ class ArmFastModelComponent(object):
+ 
+         sources = [project_file]
+         sources.extend(extra_deps)
++        # The simgen-generated .lisa files may #include these gicv3 files, but
++        # SCons does not detect this dependency since they are generated files.
++        # Add the dependencies manually.
++        sources.extend([gic_protocol_dest.File('gicv3_comms_sockets.h'),
++                        gic_protocol_dest.File('gicv3_comms_base.h')])
+         env.Command(lib_nodes + self.headers + [self.log], sources,
+                     Action(self.simgen_builder, Transform('SIMGEN')))
+         # Distribute simgen actions among ARM license slots. All actions which
+@@ -357,24 +390,3 @@ SimObject('FastModel.py', sim_objects=[
+     'AmbaToTlmBridge64', 'AmbaFromTlmBridge64'])
+ Source('amba_to_tlm_bridge.cc')
+ Source('amba_from_tlm_bridge.cc')
+-
+-# HACK: Make sure the gic protocol headers are somewhere we can find them.
+-# These should start out alongside other headers fast model provides which we
+-# are already able to include, but unfortunately they're in the examples
+-# directory.
+-gicv3_comms_headers = (
+-        'gicv3_comms_base.h', 'gicv3_comms_if.h', 'gicv3_comms_sockets.h')
+-examples_common_dir = pvlib_home.Dir('examples/SystemCExport/Common')
+-gic_protocol_path = 'Protocols/GICv3Comms'
+-gic_protocol_dest = Dir(env['BUILDDIR']).Dir(gic_protocol_path)
+-gic_protocol_src = examples_common_dir.Dir(gic_protocol_path)
+-
+-for header in gicv3_comms_headers:
+-    Command(gic_protocol_dest.File(header), gic_protocol_src.File(header),
+-            Copy('${TARGET}', '${SOURCE}'))
+-
+-common_headers = ('lisa_protocol_types.h', 'tlm_has_get_protocol_types.h')
+-for header in common_headers:
+-    header_target = gic_protocol_dest.Dir('include').File(header)
+-    header_src = examples_common_dir.Dir('include').File(header)
+-    Command(header_target, header_src, Copy('${TARGET}', '${SOURCE}'))
+-- 
+1.8.3.1
+

@@ -1,0 +1,1129 @@
+From 6baea72d8e9c4fa108a48f50f59cf4002a9666c4 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 21 Sep 2021 14:43:50 -0700
+Subject: [PATCH 018/757] stdlib: Add beta simulate module to the gem5 stdlib
+
+This module is used to semi-automate the running of gem5 simulation,
+mostly by handling exit events automatically and removing instantiation
+boilerplate code.
+
+NOTE: This module is still in beta.
+
+Change-Id: I4706119478464efcf4d92e3a1da05bddd0953b6a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/50753
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ configs/example/gem5_library/arm-hello.py          |  17 +-
+ configs/example/gem5_library/riscv-fs.py           |  11 +-
+ .../gem5_library/x86-ubuntu-run-with-kvm.py        |  34 +-
+ configs/example/gem5_library/x86-ubuntu-run.py     |  12 +-
+ src/python/SConscript                              |   4 +
+ src/python/gem5/simulate/__init__.py               |   0
+ src/python/gem5/simulate/exit_event.py             |  86 +++++
+ src/python/gem5/simulate/exit_event_generators.py  |  76 +++++
+ src/python/gem5/simulate/simulator.py              | 349 +++++++++++++++++++++
+ tests/gem5/configs/boot_kvm_switch_exit.py         |  39 +--
+ tests/gem5/configs/parsec_disk_run.py              | 127 ++------
+ tests/gem5/configs/riscv_boot_exit_run.py          |  20 +-
+ tests/gem5/configs/simple_binary_run.py            |  21 +-
+ tests/gem5/configs/x86_boot_exit_run.py            |  27 +-
+ 14 files changed, 626 insertions(+), 197 deletions(-)
+ create mode 100644 src/python/gem5/simulate/__init__.py
+ create mode 100644 src/python/gem5/simulate/exit_event.py
+ create mode 100644 src/python/gem5/simulate/exit_event_generators.py
+ create mode 100644 src/python/gem5/simulate/simulator.py
+
+diff --git a/configs/example/gem5_library/arm-hello.py b/configs/example/gem5_library/arm-hello.py
+index 5a2f46c..b1f6f38 100644
+--- a/configs/example/gem5_library/arm-hello.py
++++ b/configs/example/gem5_library/arm-hello.py
+@@ -41,9 +41,6 @@ scons build/ARM/gem5.opt
+ ```
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+ from gem5.isas import ISA
+ from gem5.utils.requires import requires
+ from gem5.resources.resource import Resource
+@@ -52,6 +49,7 @@ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.components.boards.simple_board import SimpleBoard
+ from gem5.components.cachehierarchies.classic.no_cache import NoCache
+ from gem5.components.processors.simple_processor import SimpleProcessor
++from gem5.simulate.simulator import Simulator
+ 
+ # This check ensures the gem5 binary is compiled to the ARM ISA target. If not,
+ # an exception will be thrown.
+@@ -89,12 +87,13 @@ board.set_se_binary_workload(
+     Resource("arm-hello64-static")
+ )
+ 
+-# Lastly we setup the root, instantiate the design, and run the simulation.
+-root = Root(full_system=False, system=board)
+-
+-m5.instantiate()
++# Lastly we run the simulation.
++simulator = Simulator(board=board, full_system=False)
++simulator.run()
+ 
+-exit_event = m5.simulate()
+ print(
+-    "Exiting @ tick {} because {}.".format(m5.curTick(), exit_event.getCause())
++    "Exiting @ tick {} because {}.".format(
++        simulator.get_current_tick(),
++        simulator.get_last_exit_event_cause(),
++    )
+ )
+diff --git a/configs/example/gem5_library/riscv-fs.py b/configs/example/gem5_library/riscv-fs.py
+index 4d0a2c8..4c1f117 100644
+--- a/configs/example/gem5_library/riscv-fs.py
++++ b/configs/example/gem5_library/riscv-fs.py
+@@ -39,9 +39,6 @@ Characteristics
+   password: `root`)
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+ from gem5.components.boards.riscv_board import RiscvBoard
+ from gem5.components.memory import SingleChannelDDR3_1600
+ from gem5.components.processors.simple_processor import SimpleProcessor
+@@ -53,6 +50,7 @@ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+ from gem5.utils.requires import requires
+ from gem5.resources.resource import Resource
++from gem5.simulate.simulator import Simulator
+ 
+ # Run a check to ensure the right version of gem5 is being used.
+ requires(isa_required=ISA.RISCV)
+@@ -84,13 +82,10 @@ board.set_kernel_disk_workload(
+                    disk_image=Resource("riscv-disk-img"),
+ )
+ 
+-root = Root(full_system=True, system=board)
+-
+-m5.instantiate()
+-
++simulator = Simulator(board=board)
+ print("Beginning simulation!")
+ # Note: This simulation will never stop. You can access the terminal upon boot
+ # using m5term (`./util/term`): `./m5term localhost <port>`. Note the `<port>`
+ # value is obtained from the gem5 terminal stdout. Look out for
+ # "system.platform.terminal: Listening for connections on port <port>".
+-exit_event = m5.simulate()
+\ No newline at end of file
++simulator.run()
+\ No newline at end of file
+diff --git a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+index 630cb09..fa84960 100644
+--- a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
++++ b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+@@ -35,14 +35,11 @@ Usage
+ -----
+ 
+ ```
+-scons build/X86_MESI_Two_Level/gem5.opt
++scons build/X86/gem5.opt
+ ./build/X86/gem5.opt configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+ ```
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+ from gem5.utils.requires import requires
+ from gem5.components.boards.x86_board import X86Board
+ from gem5.components.memory.single_channel import SingleChannelDDR3_1600
+@@ -53,6 +50,8 @@ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.resources.resource import Resource
++from gem5.simulate.simulator import Simulator
++from gem5.simulate.exit_event import ExitEvent
+ 
+ # This runs a check to ensure the gem5 binary is compiled to X86 and to the
+ # MESI Two Level coherence protocol.
+@@ -126,19 +125,14 @@ board.set_kernel_disk_workload(
+     readfile_contents=command,
+ )
+ 
+-
+-root = Root(full_system=True, system=board)
+-root.sim_quantum = int(1e9)  # sim_quantum must be st if KVM cores are used.
+-
+-m5.instantiate()
+-
+-# This first stretch of the simulation runs using the KVM cores. In this setup
+-# this will terminate until Ubuntu boot is complete.
+-m5.simulate()
+-
+-# This will switch from the KVM cores to the Timing cores.
+-processor.switch()
+-
+-# This final stretch of the simulation will be run using the Timing cores. In
+-# this setup an echo statement will be executed prior to exiting.
+-m5.simulate()
++simulator = Simulator(
++    board=board,
++    on_exit_event={
++        # Here we want override the default behavior for the first m5 exit
++        # exit event. Instead of exiting the simulator, we just want to
++        # switch the processor. The 2nd m5 exit after will revert to using
++        # default behavior where the simulator run will exit.
++        ExitEvent.EXIT : (func() for func in [processor.switch]),
++    },
++)
++simulator.run()
+diff --git a/configs/example/gem5_library/x86-ubuntu-run.py b/configs/example/gem5_library/x86-ubuntu-run.py
+index 622f4f3..c6f6f83 100644
+--- a/configs/example/gem5_library/x86-ubuntu-run.py
++++ b/configs/example/gem5_library/x86-ubuntu-run.py
+@@ -44,11 +44,10 @@ scons build/X86/gem5.opt
+ ```
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+-from gem5.resources.resource import Resource
+ from gem5.prebuilt.demo.x86_demo_board import X86DemoBoard
++from gem5.resources.resource import Resource
++from gem5.simulate.simulator import Simulator
++
+ 
+ # Here we setup the board. The prebuilt X86DemoBoard allows for Full-System X86
+ # simulation.
+@@ -62,6 +61,5 @@ board.set_kernel_disk_workload(
+     disk_image=Resource("x86-ubuntu-img"),
+ )
+ 
+-root = Root(full_system=True, system=board)
+-m5.instantiate()
+-m5.simulate()
++simulator = Simulator(board=board)
++simulator.run()
+diff --git a/src/python/SConscript b/src/python/SConscript
+index 1939100..984ae82 100644
+--- a/src/python/SConscript
++++ b/src/python/SConscript
+@@ -32,6 +32,10 @@ PySource('gem5', 'gem5/__init__.py')
+ PySource('gem5', 'gem5/coherence_protocol.py')
+ PySource('gem5', 'gem5/isas.py')
+ PySource('gem5', 'gem5/runtime.py')
++PySource('gem5.simulate', 'gem5/simulate/__init__.py')
++PySource('gem5.simulate', 'gem5/simulate/simulator.py')
++PySource('gem5.simulate', 'gem5/simulate/exit_event.py')
++PySource('gem5.simulate', 'gem5/simulate/exit_event_generators.py')
+ PySource('gem5.components', 'gem5/components/__init__.py')
+ PySource('gem5.components.boards', 'gem5/components/boards/__init__.py')
+ PySource('gem5.components.boards', 'gem5/components/boards/abstract_board.py')
+diff --git a/src/python/gem5/simulate/__init__.py b/src/python/gem5/simulate/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/python/gem5/simulate/exit_event.py b/src/python/gem5/simulate/exit_event.py
+new file mode 100644
+index 0000000..6dafc75
+--- /dev/null
++++ b/src/python/gem5/simulate/exit_event.py
+@@ -0,0 +1,86 @@
++# Copyright (c) 2021 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from enum import Enum
++
++
++class ExitEvent(Enum):
++    """
++    An enum class holding all the supported simulator exit events.
++
++    The simulator will exit in certain conditions. The simulate package has
++    been designed to categorize these into sensible states of exit, listed
++    below.
++    """
++
++    EXIT = "exit"  # A standard vanilla exit.
++    WORKBEGIN = "workbegin"  # An exit because a ROI has been reached.
++    WORKEND = "workend"  # An exit because a ROI has ended.
++    SWITCHCPU = "switchcpu"  # An exit needed to switch CPU cores.
++    FAIL = "fail"  # An exit because the simulation has failed.
++    CHECKPOINT = "checkpoint"  # An exit to load a checkpoint.
++    MAX_TICK = "max tick" # An exit due to a maximum tick value being met.
++    USER_INTERRUPT = ( # An exit due to a user interrupt (e.g., cntr + c)
++        "user interupt"
++    )
++
++    @classmethod
++    def translate_exit_status(cls, exit_string: str) -> "ExitEvent":
++        """
++        This function will translate common exit strings to their correct
++        ExitEvent categorization.
++
++
++        **Note:** At present, we do not guarantee this list is complete, as
++        there are no bounds on what string may be returned by the simulator
++        given an exit event.
++        """
++
++        if exit_string == "m5_workbegin instruction encountered":
++            return ExitEvent.WORKBEGIN
++        elif exit_string == "workbegin":
++            return ExitEvent.WORKBEGIN
++        elif exit_string == "m5_workend instruction encountered":
++            return ExitEvent.WORKEND
++        elif exit_string == "workend":
++            return ExitEvent.WORKEND
++        elif exit_string == "m5_exit instruction encountered":
++            return ExitEvent.EXIT
++        elif exit_string == "exiting with last active thread context":
++            return ExitEvent.EXIT
++        elif exit_string == "simulate() limit reached":
++            return ExitEvent.MAX_TICK
++        elif exit_string == "switchcpu":
++            return ExitEvent.SWITCHCPU
++        elif exit_string == "m5_fail instruction encountered":
++            return ExitEvent.FAIL
++        elif exit_string == "checkpoint":
++            return ExitEvent.CHECKPOINT
++        elif exit_string == "user interrupt received":
++            return ExitEvent.USER_INTERRUPT
++        raise NotImplementedError(
++            "Exit event '{}' not implemented".format(exit_string)
++        )
+diff --git a/src/python/gem5/simulate/exit_event_generators.py b/src/python/gem5/simulate/exit_event_generators.py
+new file mode 100644
+index 0000000..011bca6
+--- /dev/null
++++ b/src/python/gem5/simulate/exit_event_generators.py
+@@ -0,0 +1,76 @@
++# Copyright (c) 2021 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import m5.stats
++from ..components.processors.abstract_processor import AbstractProcessor
++from ..components.processors.switchable_processor import SwitchableProcessor
++
++"""
++In this package we store generators for simulation exit events.
++"""
++
++
++def default_exit_generator():
++    """
++    A default generator for an exit event. It will return True, indicating that
++    the Simulator run loop should exit.
++    """
++    while True:
++        yield True
++
++
++def default_switch_generator(processor: AbstractProcessor):
++    """
++    A default generator for a switch exit event. If the processor is a
++    SwitchableProcessor, this generator will switch it. Otherwise nothing will
++    happen.
++    """
++    is_switchable = isinstance(processor, SwitchableProcessor)
++    while True:
++        if is_switchable:
++            yield processor.switch()
++        else:
++            yield False
++
++
++def default_workbegin_generator():
++    """
++    A default generator for a workbegin exit event. It will reset the
++    simulation statistics.
++    """
++    while True:
++        m5.stats.reset()
++        yield False
++
++
++def default_workend_generator():
++    """
++    A default generator for a workend exit event. It will dump the simulation
++    statistics.
++    """
++    while True:
++        m5.stats.dump()
++        yield False
+diff --git a/src/python/gem5/simulate/simulator.py b/src/python/gem5/simulate/simulator.py
+new file mode 100644
+index 0000000..1645dfc
+--- /dev/null
++++ b/src/python/gem5/simulate/simulator.py
+@@ -0,0 +1,349 @@
++# Copyright (c) 2021 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import m5
++import m5.ticks
++from m5.stats import addStatVisitor
++from m5.stats.gem5stats import get_simstat
++from m5.objects import Root
++from m5.util import warn
++
++import os
++from typing import Optional, List, Tuple, Dict, Generator, Union
++
++from .exit_event_generators import (
++    default_exit_generator,
++    default_switch_generator,
++    default_workbegin_generator,
++    default_workend_generator,
++)
++from .exit_event import ExitEvent
++from ..components.boards.abstract_board import AbstractBoard
++from ..components.processors.cpu_types import CPUTypes
++
++
++class Simulator:
++    """
++    This Simulator class is used to manage the execution of a gem5 simulation.
++
++    **Warning:** The simulate package is still in a beta state. The gem5
++    project does not guarantee the APIs within this package will remain
++    consistent in future across upcoming releases.
++
++    Example
++    -------
++    Examples using the Simulator class can be found under
++    `configs/example/gem5_library`.
++
++    The most basic run would be as follows:
++
++    ```
++    simulator = Simulator(board=board)
++    simulator.run()
++    ```
++
++    This will run a simulation and execute default behavior for exit events.
++    """
++
++    def __init__(
++        self,
++        board: AbstractBoard,
++        full_system: bool = True,
++        on_exit_event: Optional[
++            Dict[Union[str, ExitEvent], Generator[Optional[bool], None, None]]
++        ] = None,
++        expected_execution_order: Optional[List[ExitEvent]] = None,
++    ) -> None:
++        """
++        :param board: The board to be simulated.
++        :param full_system: Whether to run in full-system simulation or not. If
++        False, the simulation will run in Syscall-Execution mode. True by
++        default.
++        :param on_exit_event: An optional map to specify the generator to
++        execute on each exit event. The generator may yield a boolean which,
++        if True, will have the Simulator exit the run loop.
++        :param expected_execution_order: May be specified to check the exit
++        events come in a specified order. If the order specified is not
++        encountered (e.g., 'Workbegin', 'Workend', then 'Exit'), an Exception
++        is thrown. If this parameter is not specified, any ordering of exit
++        events is valid.
++
++        `on_exit_event` usage notes
++        ---------------------------
++
++        The `on_exit_event` parameter specifies a Python generator for each
++        exit event. `next(<generator>)` is run each time an exit event. The
++        generator may yield a boolean. If this value of this boolean is True
++        the Simulator run loop will exit, otherwise
++        the Simulator run loop will continue execution. If the generator has
++        finished (i.e. a `StopIteration` exception is thrown when
++        `next(<generator>)` is executed), then the default behavior for that
++        exit event is run.
++
++        As an example, a user may specify their own exit event setup like so:
++
++        ```
++        def unique_exit_event():
++            processor.switch()
++            yield False
++            m5.stats.dump()
++            yield False
++            yield True
++
++        simulator = Simulator(
++            board=board
++            on_exit_event = {
++                ExitEvent.Exit : unique_exit_event(),
++            },
++        )
++        ```
++
++        This will execute `processor.switch()` the first time an exit event is
++        encountered, will dump gem5 statistics the second time an exit event is
++        encountered, and will terminate the Simulator run loop the third time.
++
++        Each exit event has a default behavior if none is specified by the
++        user. These are as follows:
++
++            * ExitEvent.EXIT:  default_exit_list
++            * ExitEvent.CHECKPOINT: default_exit_list
++            * ExitEvent.FAIL : default_exit_list
++            * ExitEvent.SWITCHCPU: default_switch_list
++            * ExitEvent.WORKBEGIN: default_workbegin_list
++            * ExitEvent.WORKEND: default_workend_list
++            * ExitEvent.USER_INTERRUPT: default_exit_generator
++            * ExitEvent.MAX_TICK: default_exit_generator()
++
++        These generators can be found in the `exit_event_generator.py` module.
++
++        """
++
++        warn(
++            "The simulate package is still in a beta state. The gem5 "
++            "project does not guarantee the APIs within this package will "
++            "remain consistent across upcoming releases."
++        )
++
++        # We specify a dictionary here outlining the default behavior for each
++        # exit event. Each exit event is mapped to a generator.
++        self._default_on_exit_dict = {
++            ExitEvent.EXIT: default_exit_generator(),
++            # TODO: Something else should be done here for CHECKPOINT
++            ExitEvent.CHECKPOINT: default_exit_generator(),
++            ExitEvent.FAIL: default_exit_generator(),
++            ExitEvent.SWITCHCPU: default_switch_generator(
++                processor=board.get_processor()
++            ),
++            ExitEvent.WORKBEGIN: default_workbegin_generator(),
++            ExitEvent.WORKEND: default_workend_generator(),
++            ExitEvent.USER_INTERRUPT: default_exit_generator(),
++            ExitEvent.MAX_TICK: default_exit_generator(),
++        }
++
++        if on_exit_event:
++            self._on_exit_event = on_exit_event
++        else:
++            self._on_exit_event = self._default_on_exit_dict
++
++        self._instantiated = False
++        self._board = board
++        self._full_system = full_system
++        self._expected_execution_order = expected_execution_order
++        self._tick_stopwatch = []
++
++        self._last_exit_event = None
++        self._exit_event_count = 0
++
++    def get_stats(self) -> Dict:
++        """
++        Obtain the current simulation statistics as a Dictionary, conforming
++        to a JSON-style schema.
++
++        **Warning:** Will throw an Exception if called before `run()`. The
++        board must be initialized before obtaining statistics
++        """
++
++        if not self._instantiated:
++            raise Exception(
++                "Cannot obtain simulation statistics prior to inialization."
++            )
++
++        return get_simstat(self._root).to_json()
++
++    def add_text_stats_output(self, path: str) -> None:
++        """
++        This function is used to set an output location for text stats. If
++        specified, when stats are dumped they will be output to this location
++        as a text file file, in addition to any other stats' output locations
++        specified.
++
++        :param path: That path in which the file should be output to.
++        """
++        if not os.is_path_exists_or_creatable(path):
++            raise Exception(
++                f"Path '{path}' is is not a valid text stats output location."
++            )
++        addStatVisitor(path)
++
++    def add_json_stats_output(self, path: str) -> None:
++        """
++        This function is used to set an output location for JSON. If specified,
++        when stats are dumped they will be output to this location as a JSON
++        file, in addition to any other stats' output locations specified.
++
++        :param path: That path in which the JSON should be output to.
++        """
++        if not os.is_path_exists_or_creatable(path):
++            raise Exception(
++                f"Path '{path}' is is not a valid JSON output location."
++            )
++        addStatVisitor(f"json://{path}")
++
++    def get_last_exit_event_cause(self) -> str:
++        """
++        Returns the last exit event cause.
++        """
++        return self._last_exit_event.getCause()
++
++    def get_current_tick(self) -> int:
++        """
++        Returns the current tick.
++        """
++        return m5.curTick()
++
++    def get_tick_stopwatch(self) -> List[Tuple[ExitEvent, int]]:
++        """
++        Returns a list of tuples, which each tuple specifying an exit event
++        and the ticks at that event.
++        """
++        return self._tick_stopwatch
++
++    def get_roi_ticks(self) -> List[int]:
++        """
++        Returns a list of the tick counts for every ROI encountered (specified
++        as a region of code between a Workbegin and Workend exit event).
++        """
++        start = 0
++        to_return = []
++        for (exit_event, tick) in self._tick_stopwatch:
++            if exit_event == ExitEvent.WORKBEGIN:
++                start = tick
++            elif exit_event == ExitEvent.WORKEND:
++                to_return.append(tick - start)
++
++        return to_return
++
++    def _instantiate(self) -> None:
++        """
++        This method will instantiate the board and carry out necessary
++        boilerplate code before the instantiation such as setting up root and
++        setting the sim_quantum (if running in KVM mode).
++        """
++
++        if not self._instantiated:
++            root = Root(full_system=self._full_system, board=self._board)
++
++            # We take a copy of the Root in case it's required elsewhere
++            # (for example, in `get_stats()`).
++            self._root = root
++
++            if CPUTypes.KVM in [
++                core.get_type()
++                for core in self._board.get_processor().get_cores()
++            ]:
++                m5.ticks.fixGlobalFrequency()
++                root.sim_quantum = m5.ticks.fromSeconds(0.001)
++
++            m5.instantiate()
++            self._instantiated = True
++
++    def run(self, max_ticks: int = m5.MaxTick) -> None:
++        """
++        This function will start or continue the simulator run and handle exit
++        events accordingly.
++
++        :param max_ticks: The maximum number of ticks to execute per simulation
++        run. If this max_ticks value is met, a MAX_TICK exit event is
++        received, if another simulation exit event is met the tick count is
++        reset. This is the **maximum number of ticks per simululation run**.
++        """
++
++        # We instantiate the board if it has not already been instantiated.
++        self._instantiate()
++
++        # This while loop will continue until an a generator yields True.
++        while True:
++
++            self._last_exit_event = m5.simulate(max_ticks)
++
++            # Translate the exit event cause to the exit event enum.
++            exit_enum = ExitEvent.translate_exit_status(
++                self.get_last_exit_event_cause()
++            )
++
++            # Check to see the run is corresponding to the expected execution
++            # order (assuming this check is demanded by the user).
++            if self._expected_execution_order:
++                expected_enum = self._expected_execution_order[
++                    self._exit_event_count
++                ]
++                if exit_enum.value != expected_enum.value:
++                    raise Exception(
++                        f"Expected a '{expected_enum.value}' exit event but a "
++                        f"'{exit_enum.value}' exit event was encountered."
++                    )
++
++            # Record the current tick and exit event enum.
++            self._tick_stopwatch.append((exit_enum, self.get_current_tick()))
++
++            try:
++                # If the user has specified their own generator for this exit
++                # event, use it.
++                exit_on_completion = next(self._on_exit_event[exit_enum])
++            except StopIteration:
++                # If the user's generator has ended, throw a warning and use
++                # the default generator for this exit event.
++                warn(
++                    "User-specified generator for the exit event "
++                    f"'{exit_enum.value}' has ended. Using the default "
++                    "generator."
++                )
++                exit_on_completion = next(
++                    self._default_on_exit_dict[exit_enum]
++                )
++            except KeyError:
++                # If the user has not specified their own generator for this
++                # exit event, use the default.
++                exit_on_completion = next(
++                    self._default_on_exit_dict[exit_enum]
++                )
++
++            self._exit_event_count += 1
++
++            # If the generator returned True we will return from the Simulator
++            # run loop.
++            if exit_on_completion:
++                return
+diff --git a/tests/gem5/configs/boot_kvm_switch_exit.py b/tests/gem5/configs/boot_kvm_switch_exit.py
+index 5aa19f5..9f5f7ee 100644
+--- a/tests/gem5/configs/boot_kvm_switch_exit.py
++++ b/tests/gem5/configs/boot_kvm_switch_exit.py
+@@ -45,6 +45,8 @@ from gem5.resources.resource import Resource
+ from gem5.runtime import (
+     get_runtime_coherence_protocol, get_runtime_isa
+ )
++from gem5.simulate.simulator import Simulator
++from gem5.simulate.exit_event import ExitEvent
+ from gem5.utils.requires import requires
+ 
+ parser = argparse.ArgumentParser(
+@@ -201,25 +203,24 @@ print("Running with ISA: " + get_runtime_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+-root = Root(full_system=True, system=motherboard)
+-
+-root.sim_quantum = int(1e9)
+-
+-m5.instantiate()
+-
+-print("Booting!")
+-exit_event = m5.simulate()
+-if exit_event.getCause() != "m5_exit instruction encountered":
+-    raise Exception("Expected exit instruction after boot!")
+-
+-print(f"Switching processors to {args.cpu}!")
+-processor.switch()
++simulator = Simulator(
++    board=motherboard,
++    on_exit_event={
++        # When we reach the first exit, we switch cores. For the second exit we
++        # simply exit the simulation (default behavior).
++        ExitEvent.EXIT : (i() for i in [processor.switch]),
++    },
++    # This parameter allows us to state the expected order-of-execution.
++    # That is, we expect two exit events. If anyother event is triggered, an
++    # exeception will be thrown.
++    expected_execution_order=[ExitEvent.EXIT, ExitEvent.EXIT],
++)
+ 
+-exit_event = m5.simulate()
+-exit_cause = exit_event.getCause()
++simulator.run()
+ 
+-if exit_cause != "m5_exit instruction encountered":
+-    raise Exception(
+-        f"Expected exit after switching processors, received: {exit_cause}"
++print(
++    "Exiting @ tick {} because {}.".format(
++        simulator.get_current_tick(),
++        simulator.get_last_exit_event_cause(),
+     )
+-print("Exiting @ tick {} because {}.".format(m5.curTick(), exit_cause))
++)
+diff --git a/tests/gem5/configs/parsec_disk_run.py b/tests/gem5/configs/parsec_disk_run.py
+index 1315c58..a5cf41d 100644
+--- a/tests/gem5/configs/parsec_disk_run.py
++++ b/tests/gem5/configs/parsec_disk_run.py
+@@ -35,10 +35,7 @@ Notes
+ * This will only function for the X86 ISA.
+ """
+ 
+-import m5
+-import m5.ticks
+-from m5.objects import Root
+-
++import m5.stats
+ 
+ from gem5.resources.resource import Resource
+ from gem5.components.boards.x86_board import X86Board
+@@ -48,10 +45,9 @@ from gem5.components.processors.simple_switchable_processor import (
+ )
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+-from gem5.runtime import (
+-    get_runtime_isa,
+-    get_runtime_coherence_protocol,
+-)
++from gem5.runtime import get_runtime_isa, get_runtime_coherence_protocol
++from gem5.simulate.simulator import Simulator
++from gem5.simulate.exit_event import ExitEvent
+ from gem5.utils.requires import requires
+ 
+ import time
+@@ -220,8 +216,6 @@ command = (
+     + "parsecmgmt -a run -p {} ".format(args.benchmark)
+     + "-c gcc-hooks -i {} ".format(args.size)
+     + "-n {}\n".format(str(args.num_cpus))
+-    + "sleep 5 \n"
+-    + "m5 exit \n"
+ )
+ 
+ board.set_kernel_disk_workload(
+@@ -240,103 +234,44 @@ print("Running with ISA: " + get_runtime_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+-root = Root(full_system=True, system=board)
+-
+-if args.cpu == "kvm" or args.boot_cpu == "kvm":
+-    # TODO: This of annoying. Is there a way to fix this to happen
+-    # automatically when running KVM?
+-    root.sim_quantum = int(1e9)
+-
+-m5.instantiate()
+-
+-globalStart = time.time()
+-print("Beginning the simulation")
+ 
+-start_tick = m5.curTick()
+-end_tick = m5.curTick()
++# Here we define some custom workbegin/workend exit event generators. Here we
++# want to switch to detailed CPUs at the beginning of the ROI, then continue to
++# the end of of the ROI. Then we exit the simulation.
++def workbegin():
++    processor.switch()
++    yield False
+ 
+-m5.stats.reset()
++def workend():
++    yield True
+ 
+-exit_event = m5.simulate()
+-
+-if exit_event.getCause() == "workbegin":
+-    print("Done booting Linux")
+-    # Reached the start of ROI.
+-    # The start of the ROI is marked by an m5_work_begin() call.
+-    print("Resetting stats at the start of ROI!")
+-    m5.stats.reset()
+-    start_tick = m5.curTick()
+-
+-    # Switch to the Timing Processor.
+-    board.get_processor().switch()
+-else:
+-    print("Unexpected termination of simulation!")
+-    print("Cause: {}".format(exit_event.getCause()))
+-    print()
+-
+-    m5.stats.dump()
+-    end_tick = m5.curTick()
+-
+-    m5.stats.reset()
+-    print("Performance statistics:")
+-    print("Simulated time: {}s".format((end_tick - start_tick) / 1e12))
+-    print("Ran a total of", m5.curTick() / 1e12, "simulated seconds")
+-    print(
+-        "Total wallclock time: {}s, {} min".format(
+-            (
+-                time.time() - globalStart,
+-                (time.time() - globalStart) / 60,
+-            )
+-        )
+-    )
+-    exit(1)
+-
+-# Simulate the ROI.
+-exit_event = m5.simulate()
+-
+-if exit_event.getCause() == "workend":
+-    # Reached the end of ROI
+-    # The end of the ROI is marked by an m5_work_end() call.
+-    print("Dumping stats at the end of the ROI!")
+-    m5.stats.dump()
+-    end_tick = m5.curTick()
+-
+-    m5.stats.reset()
++simulator = Simulator(
++    board=board,
++    on_exit_event={
++        ExitEvent.WORKBEGIN : workbegin(),
++        ExitEvent.WORKEND: workend(),
++    },
++)
+ 
+-    # Switch back to the Atomic Processor
+-    board.get_processor().switch()
+-else:
+-    print("Unexpected termination of simulation!")
+-    print("Cause: {}".format(exit_event.getCause()))
+-    print()
+-    m5.stats.dump()
+-    end_tick = m5.curTick()
+-
+-    m5.stats.reset()
+-    print("Performance statistics:")
+-    print("Simulated time: {}s".format((end_tick - start_tick) / 1e12))
+-    print("Ran a total of", m5.curTick() / 1e12, "simulated seconds")
+-    print(
+-        "Total wallclock time: {}s, {} min".format(
+-            time.time() - globalStart,
+-            (time.time() - globalStart) / 60,
+-        )
+-    )
+-    exit(1)
++global_start = time.time()
++simulator.run()
++global_end = time.time()
++global_time = global_end - global_start
+ 
+-# Simulate the remaning part of the benchmark
+-# Run the rest of the workload until m5 exit
++roi_ticks = simulator.get_roi_ticks()
++assert len(roi_ticks) == 1
+ 
+-exit_event = m5.simulate()
+ 
+ print("Done running the simulation")
+ print()
+ print("Performance statistics:")
+ 
+-print("Simulated time in ROI: {}s".format((end_tick - start_tick) / 1e12))
+-print("Ran a total of {} simulated seconds".format(m5.curTick() / 1e12))
++print("Simulated time in ROI: {}s".format((roi_ticks[0]) / 1e12))
+ print(
+-    "Total wallclock time: {}s, {} min".format(
+-        time.time() - globalStart, (time.time() - globalStart) / 60
++    "Ran a total of {} simulated seconds".format(
++        simulator.get_current_tick() / 1e12
+     )
+ )
++print(
++    "Total wallclock time: {}s, {} min".format(global_time, (global_time) / 60)
++)
+diff --git a/tests/gem5/configs/riscv_boot_exit_run.py b/tests/gem5/configs/riscv_boot_exit_run.py
+index cf6d0f7..6420542 100644
+--- a/tests/gem5/configs/riscv_boot_exit_run.py
++++ b/tests/gem5/configs/riscv_boot_exit_run.py
+@@ -33,15 +33,13 @@ Characteristics
+ * Runs exclusively on the RISC-V ISA with the classic caches
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+ from gem5.isas import ISA
+ from gem5.utils.requires import requires
+ from gem5.resources.resource import Resource
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.components.boards.riscv_board import RiscvBoard
+ from gem5.components.processors.simple_processor import SimpleProcessor
++from gem5.simulate.simulator import Simulator
+ 
+ import argparse
+ import importlib
+@@ -168,14 +166,16 @@ board.set_kernel_disk_workload(
+     ),
+ )
+ 
+-root = Root(full_system=True, system=board)
+-
+-m5.instantiate()
++simulator = Simulator(board=board)
+ 
+ if args.tick_exit:
+-    exit_event = m5.simulate(args.tick_exit)
++    simulator.run(max_ticks = args.tick_exit)
+ else:
+-    exit_event = m5.simulate()
++    simulator.run()
++
+ print(
+-    "Exiting @ tick {} because {}.".format(m5.curTick(), exit_event.getCause())
+-)
++    "Exiting @ tick {} because {}.".format(
++        simulator.get_current_tick(),
++        simulator.get_last_exit_event_cause(),
++    )
++)
+\ No newline at end of file
+diff --git a/tests/gem5/configs/simple_binary_run.py b/tests/gem5/configs/simple_binary_run.py
+index fa4faa0..3a44602 100644
+--- a/tests/gem5/configs/simple_binary_run.py
++++ b/tests/gem5/configs/simple_binary_run.py
+@@ -30,15 +30,13 @@ The system has no cache heirarchy and is as "bare-bones" as you can get in
+ gem5 while still being functinal.
+ """
+ 
+-import m5
+-from m5.objects import Root
+-
+ from gem5.resources.resource import Resource
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.components.memory import SingleChannelDDR3_1600
+ from gem5.components.boards.simple_board import SimpleBoard
+ from gem5.components.cachehierarchies.classic.no_cache import NoCache
+ from gem5.components.processors.simple_processor import SimpleProcessor
++from gem5.simulate.simulator import Simulator
+ 
+ import argparse
+ 
+@@ -98,16 +96,13 @@ binary = Resource(args.resource,
+         resource_directory=args.resource_directory)
+ motherboard.set_se_binary_workload(binary)
+ 
+-root = Root(full_system=False, system=motherboard)
+-
+-if args.cpu == "kvm":
+-    # TODO: This of annoying. Is there a way to fix this to happen
+-    # automatically when running KVM?
+-    root.sim_quantum = int(1e9)
+-
+-m5.instantiate()
++# Run the simulation
++simulator = Simulator(board=motherboard, full_system=False)
++simulator.run()
+ 
+-exit_event = m5.simulate()
+ print(
+-    "Exiting @ tick {} because {}.".format(m5.curTick(), exit_event.getCause())
++    "Exiting @ tick {} because {}.".format(
++        simulator.get_current_tick(),
++        simulator.get_last_exit_event_cause(),
++    )
+ )
+diff --git a/tests/gem5/configs/x86_boot_exit_run.py b/tests/gem5/configs/x86_boot_exit_run.py
+index 217a823..5c8b025 100644
+--- a/tests/gem5/configs/x86_boot_exit_run.py
++++ b/tests/gem5/configs/x86_boot_exit_run.py
+@@ -29,7 +29,6 @@ This script will run a simple boot exit test.
+ """
+ 
+ import m5
+-from m5.objects import Root
+ 
+ from gem5.runtime import (
+     get_runtime_coherence_protocol,
+@@ -42,6 +41,7 @@ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.components.boards.x86_board import X86Board
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.components.processors.simple_processor import SimpleProcessor
++from gem5.simulate.simulator import Simulator
+ 
+ import argparse
+ import importlib
+@@ -220,20 +220,17 @@ print("Running with ISA: " + get_runtime_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+-root = Root(full_system=True, system=motherboard)
+-
+-if args.cpu == "kvm":
+-    # TODO: This of annoying. Is there a way to fix this to happen
+-    # automatically when running KVM?
+-    root.sim_quantum = int(1e9)
+-
+-m5.instantiate()
+-
+ print("Beginning simulation!")
+-if args.tick_exit != None:
+-    exit_event = m5.simulate(args.tick_exit)
++simulator = Simulator(board=motherboard)
++
++if args.tick_exit:
++    simulator.run(max_ticks = args.tick_exit)
+ else:
+-    exit_event = m5.simulate()
++    simulator.run()
++
+ print(
+-    "Exiting @ tick {} because {}.".format(m5.curTick(), exit_event.getCause())
+-)
++    "Exiting @ tick {} because {}.".format(
++        simulator.get_current_tick(),
++        simulator.get_last_exit_event_cause(),
++    )
++)
+\ No newline at end of file
+-- 
+1.8.3.1
+

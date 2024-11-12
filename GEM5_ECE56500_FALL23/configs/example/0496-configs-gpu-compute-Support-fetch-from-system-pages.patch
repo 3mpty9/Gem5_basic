@@ -1,0 +1,240 @@
+From 91e8bbe29977a1ed3b80fce40db50734f5174470 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 14 Mar 2022 23:29:45 -0500
+Subject: [PATCH 496/757] configs,gpu-compute: Support fetch from system pages
+
+The amdgpu driver supports fetching instructions from pages which reside
+in system memory rather than device memory. This changeset adds support
+to do this by adding the system hub object added in a prior changeset to
+the fetch unit and issues requests to the system hub if the system bit
+in the memory page's PTE is set. Otherwise, the requestor ID is set to
+be device memory and the request is routed through the Ruby network /
+GPU caches to fetch the instructions.
+
+Change-Id: Ib2fb47c589fdd5e544ab6493d7dbd8f2d9d7b0e8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57652
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py |  6 ++++++
+ src/gpu-compute/GPU.py                 |  1 +
+ src/gpu-compute/compute_unit.cc        |  9 ++++++++-
+ src/gpu-compute/compute_unit.hh        |  2 ++
+ src/gpu-compute/fetch_unit.cc          | 31 ++++++++++++++++++++++++++++++-
+ src/gpu-compute/fetch_unit.hh          | 16 ++++++++++++++++
+ src/gpu-compute/shader.cc              |  2 +-
+ src/gpu-compute/shader.hh              |  2 ++
+ 8 files changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 8c9895f..972a4f9 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -133,6 +133,10 @@ def makeGpuFSSystem(args):
+     gpu_mem_mgr = AMDGPUMemoryManager()
+     system.pc.south_bridge.gpu.memory_manager = gpu_mem_mgr
+ 
++    # CPU data path (SystemHub)
++    system_hub = AMDGPUSystemHub()
++    shader.system_hub = system_hub
++
+     # GPU, HSAPP, and GPUCommandProc are DMA devices
+     system._dma_ports.append(gpu_hsapp)
+     system._dma_ports.append(gpu_cmd_proc)
+@@ -141,6 +145,7 @@ def makeGpuFSSystem(args):
+     system._dma_ports.append(sdma1)
+     system._dma_ports.append(device_ih)
+     system._dma_ports.append(pm4_pkt_proc)
++    system._dma_ports.append(system_hub)
+     system._dma_ports.append(gpu_mem_mgr)
+     system._dma_ports.append(hsapp_pt_walker)
+     system._dma_ports.append(cp_pt_walker)
+@@ -154,6 +159,7 @@ def makeGpuFSSystem(args):
+     sdma1.pio = system.iobus.mem_side_ports
+     device_ih.pio = system.iobus.mem_side_ports
+     pm4_pkt_proc.pio = system.iobus.mem_side_ports
++    system_hub.pio = system.iobus.mem_side_ports
+ 
+     # Full system needs special TLBs for SQC, Scalar, and vector data ports
+     args.full_system = True
+diff --git a/src/gpu-compute/GPU.py b/src/gpu-compute/GPU.py
+index 3e5fba6..a0154a7 100644
+--- a/src/gpu-compute/GPU.py
++++ b/src/gpu-compute/GPU.py
+@@ -224,6 +224,7 @@ class Shader(ClockedObject):
+     CUs = VectorParam.ComputeUnit('Number of compute units')
+     gpu_cmd_proc = Param.GPUCommandProcessor('Command processor for GPU')
+     dispatcher = Param.GPUDispatcher('GPU workgroup dispatcher')
++    system_hub = Param.AMDGPUSystemHub(NULL, 'GPU System Hub (FS Mode only)')
+     n_wf = Param.Int(10, 'Number of wavefront slots per SIMD')
+     impl_kern_launch_acq = Param.Bool(True, """Insert acq packet into
+                                          ruby at kernel launch""")
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index cc6244b..e1794a8 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -979,11 +979,18 @@ ComputeUnit::DataPort::recvReqRetry()
+ bool
+ ComputeUnit::SQCPort::recvTimingResp(PacketPtr pkt)
+ {
+-    computeUnit->fetchStage.processFetchReturn(pkt);
++    computeUnit->handleSQCReturn(pkt);
++
+     return true;
+ }
+ 
+ void
++ComputeUnit::handleSQCReturn(PacketPtr pkt)
++{
++    fetchStage.processFetchReturn(pkt);
++}
++
++void
+ ComputeUnit::SQCPort::recvReqRetry()
+ {
+     int len = retries.size();
+diff --git a/src/gpu-compute/compute_unit.hh b/src/gpu-compute/compute_unit.hh
+index 87ed541..1c211d9 100644
+--- a/src/gpu-compute/compute_unit.hh
++++ b/src/gpu-compute/compute_unit.hh
+@@ -463,6 +463,8 @@ class ComputeUnit : public ClockedObject
+     bool isDone() const;
+     bool isVectorAluIdle(uint32_t simdId) const;
+ 
++    void handleSQCReturn(PacketPtr pkt);
++
+   protected:
+     RequestorID _requestorId;
+ 
+diff --git a/src/gpu-compute/fetch_unit.cc b/src/gpu-compute/fetch_unit.cc
+index 6e35818..640e29b 100644
+--- a/src/gpu-compute/fetch_unit.cc
++++ b/src/gpu-compute/fetch_unit.cc
+@@ -206,6 +206,15 @@ FetchUnit::initiateFetch(Wavefront *wavefront)
+ 
+         computeUnit.sqcTLBPort.sendFunctional(pkt);
+ 
++        /**
++         * For full system, if this is a device request we need to set the
++         * requestor ID of the packet to the GPU memory manager so it is routed
++         * through Ruby as a memory request and not a PIO request.
++         */
++        if (!pkt->req->systemReq()) {
++            pkt->req->requestorId(computeUnit.vramRequestorId());
++        }
++
+         GpuTranslationState *sender_state =
+              safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+@@ -250,6 +259,15 @@ FetchUnit::fetch(PacketPtr pkt, Wavefront *wavefront)
+     }
+ 
+     /**
++     * For full system, if this is a device request we need to set the
++     * requestor ID of the packet to the GPU memory manager so it is routed
++     * through Ruby as a memory request and not a PIO request.
++     */
++    if (!pkt->req->systemReq()) {
++        pkt->req->requestorId(computeUnit.vramRequestorId());
++    }
++
++    /**
+      * we should have reserved an entry in the fetch buffer
+      * for this cache line. here we get the pointer to the
+      * entry used to buffer this request's line data.
+@@ -263,7 +281,11 @@ FetchUnit::fetch(PacketPtr pkt, Wavefront *wavefront)
+     if (timingSim) {
+         // translation is done. Send the appropriate timing memory request.
+ 
+-        if (!computeUnit.sqcPort.sendTimingReq(pkt)) {
++        if (pkt->req->systemReq()) {
++            SystemHubEvent *resp_event = new SystemHubEvent(pkt, this);
++            assert(computeUnit.shader->systemHub);
++            computeUnit.shader->systemHub->sendRequest(pkt, resp_event);
++        } else if (!computeUnit.sqcPort.sendTimingReq(pkt)) {
+             computeUnit.sqcPort.retries.push_back(std::make_pair(pkt,
+                                                                    wavefront));
+ 
+@@ -643,4 +665,11 @@ FetchUnit::FetchBufDesc::fetchBytesRemaining() const
+     return bytes_remaining;
+ }
+ 
++void
++FetchUnit::SystemHubEvent::process()
++{
++    reqPkt->makeResponse();
++    fetchUnit->computeUnit.handleSQCReturn(reqPkt);
++}
++
+ } // namespace gem5
+diff --git a/src/gpu-compute/fetch_unit.hh b/src/gpu-compute/fetch_unit.hh
+index 6002665..0ba88c7 100644
+--- a/src/gpu-compute/fetch_unit.hh
++++ b/src/gpu-compute/fetch_unit.hh
+@@ -44,6 +44,7 @@
+ #include "config/the_gpu_isa.hh"
+ #include "gpu-compute/scheduler.hh"
+ #include "mem/packet.hh"
++#include "sim/eventq.hh"
+ 
+ namespace gem5
+ {
+@@ -238,6 +239,21 @@ class FetchUnit
+         TheGpuISA::Decoder *_decoder;
+     };
+ 
++    class SystemHubEvent : public Event
++    {
++      FetchUnit *fetchUnit;
++      PacketPtr reqPkt;
++
++      public:
++        SystemHubEvent(PacketPtr pkt, FetchUnit *fetch_unit)
++            : fetchUnit(fetch_unit), reqPkt(pkt)
++        {
++            setFlags(Event::AutoDelete);
++        }
++
++        void process();
++    };
++
+     bool timingSim;
+     ComputeUnit &computeUnit;
+     TheGpuISA::Decoder decoder;
+diff --git a/src/gpu-compute/shader.cc b/src/gpu-compute/shader.cc
+index ebacbb5..73d2366 100644
+--- a/src/gpu-compute/shader.cc
++++ b/src/gpu-compute/shader.cc
+@@ -65,7 +65,7 @@ Shader::Shader(const Params &p) : ClockedObject(p),
+     trace_vgpr_all(1), n_cu((p.CUs).size()), n_wf(p.n_wf),
+     globalMemSize(p.globalmem),
+     nextSchedCu(0), sa_n(0), gpuCmdProc(*p.gpu_cmd_proc),
+-    _dispatcher(*p.dispatcher),
++    _dispatcher(*p.dispatcher), systemHub(p.system_hub),
+     max_valu_insts(p.max_valu_insts), total_valu_insts(0),
+     stats(this, p.CUs[0]->wfSize())
+ {
+diff --git a/src/gpu-compute/shader.hh b/src/gpu-compute/shader.hh
+index 96ad15d..0978acb 100644
+--- a/src/gpu-compute/shader.hh
++++ b/src/gpu-compute/shader.hh
+@@ -44,6 +44,7 @@
+ #include "cpu/simple_thread.hh"
+ #include "cpu/thread_context.hh"
+ #include "cpu/thread_state.hh"
++#include "dev/amdgpu/system_hub.hh"
+ #include "gpu-compute/compute_unit.hh"
+ #include "gpu-compute/gpu_dyn_inst.hh"
+ #include "gpu-compute/hsa_queue_entry.hh"
+@@ -225,6 +226,7 @@ class Shader : public ClockedObject
+ 
+     GPUCommandProcessor &gpuCmdProc;
+     GPUDispatcher &_dispatcher;
++    AMDGPUSystemHub *systemHub;
+ 
+     int64_t max_valu_insts;
+     int64_t total_valu_insts;
+-- 
+1.8.3.1
+

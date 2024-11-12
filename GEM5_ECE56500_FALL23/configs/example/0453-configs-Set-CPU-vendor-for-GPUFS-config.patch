@@ -1,0 +1,37 @@
+From 110b9a1bbd2a719cb1ba56623c27f745ab53f000 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 20 Oct 2021 12:59:26 -0500
+Subject: [PATCH 453/757] configs: Set CPU vendor for GPUFS config
+
+A valid CPU vendor string (i.e., not "M5 Simulator") needs to be passed
+to CPUID in order for Linux to create the sysfs files needed for ROCm's
+Thunk interface to initialize properly. If these are no created
+hipDeviceProperties and other basic GPU code APIs will error out.
+
+Change-Id: I6e3f459162e4673860a8f0a88473e38d5d7be237
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53070
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 7714f91..2e35373 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -157,6 +157,10 @@ def makeGpuFSSystem(args):
+ 
+         system.ruby._cpu_ports[i].connectCpuPorts(cpu)
+ 
++    for i in range(len(system.cpu)):
++        for j in range(len(system.cpu[i].isa)):
++            system.cpu[i].isa[j].vendor_string = "AuthenticAMD"
++
+     # The shader core will be whatever is after the CPU cores are accounted for
+     shader_idx = args.num_cpus
+     system.cpu.append(shader)
+-- 
+1.8.3.1
+

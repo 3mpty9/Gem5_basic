@@ -1,0 +1,42 @@
+From 0d59a8417a1c8354e05b5f5018fdf7f608fd4649 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 15 Feb 2022 16:22:34 -0800
+Subject: [PATCH 256/757] ext-testlib: Import MutableSet properly.
+
+The MutableSet class used to be part of the collections module directly,
+but in 3.3 was moved to collections.abc. Apparently there was still a
+version in collections, since we had been importing it from that old
+location and it had been working up until now. After a recent update,
+this stopped working for me, and may be tied to an update to the local
+version of python on my machine.
+
+This change imports MutableSet from collections.abc instead of
+collections directly. I found only one place that this class was used in
+src or ext, so I don't think it needs to be fixed anywhere else.
+
+Change-Id: I8b2e82160fd433d57af4a7008ec282ee8ad8a422
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56849
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabeblack@google.com>
+---
+ ext/testlib/helper.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ext/testlib/helper.py b/ext/testlib/helper.py
+index 1cb13f0..ed6e325 100644
+--- a/ext/testlib/helper.py
++++ b/ext/testlib/helper.py
+@@ -41,7 +41,8 @@
+ '''
+ Helper classes for writing tests with this test library.
+ '''
+-from collections import MutableSet, namedtuple
++from collections import namedtuple
++from collections.abc import MutableSet
+ 
+ import difflib
+ import errno
+-- 
+1.8.3.1
+

@@ -1,0 +1,131 @@
+From 0fefc76fe6e23cd54cd27b9389931535e1593790 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Fri, 18 Feb 2022 17:05:37 -0800
+Subject: [PATCH 302/757] mem-cache: Fix unit inconsistencies in base cache
+ stats
+
+Most latency stats are described to have Cycle unit in the comments.
+However, most of them are calculated from Tick.
+
+Also, the unit of `demandAvgMissLatency` is incorrect.
+
+Change-Id: Ib1b9b7c6fa4404cecb3982b3799753df19774623
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56989
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/base.cc | 12 ++++++------
+ src/mem/cache/base.hh | 22 +++++++++++-----------
+ 2 files changed, 17 insertions(+), 17 deletions(-)
+
+diff --git a/src/mem/cache/base.cc b/src/mem/cache/base.cc
+index 435684a..cf6c9fe 100644
+--- a/src/mem/cache/base.cc
++++ b/src/mem/cache/base.cc
+@@ -2222,10 +2222,10 @@ BaseCache::CacheStats::CacheStats(BaseCache &c)
+     ADD_STAT(overallMissRate, statistics::units::Ratio::get(),
+              "miss rate for overall accesses"),
+     ADD_STAT(demandAvgMissLatency, statistics::units::Rate<
+-                statistics::units::Cycle, statistics::units::Count>::get(),
+-             "average overall miss latency"),
++                statistics::units::Tick, statistics::units::Count>::get(),
++             "average overall miss latency in ticks"),
+     ADD_STAT(overallAvgMissLatency, statistics::units::Rate<
+-                statistics::units::Cycle, statistics::units::Count>::get(),
++                statistics::units::Tick, statistics::units::Count>::get(),
+              "average overall miss latency"),
+     ADD_STAT(blockedCycles, statistics::units::Cycle::get(),
+             "number of cycles access was blocked"),
+@@ -2257,13 +2257,13 @@ BaseCache::CacheStats::CacheStats(BaseCache &c)
+     ADD_STAT(overallMshrMissRate, statistics::units::Ratio::get(),
+              "mshr miss ratio for overall accesses"),
+     ADD_STAT(demandAvgMshrMissLatency, statistics::units::Rate<
+-                statistics::units::Cycle, statistics::units::Count>::get(),
++                statistics::units::Tick, statistics::units::Count>::get(),
+              "average overall mshr miss latency"),
+     ADD_STAT(overallAvgMshrMissLatency, statistics::units::Rate<
+-                statistics::units::Cycle, statistics::units::Count>::get(),
++                statistics::units::Tick, statistics::units::Count>::get(),
+              "average overall mshr miss latency"),
+     ADD_STAT(overallAvgMshrUncacheableLatency, statistics::units::Rate<
+-                statistics::units::Cycle, statistics::units::Count>::get(),
++                statistics::units::Tick, statistics::units::Count>::get(),
+              "average overall mshr uncacheable latency"),
+     ADD_STAT(replacements, statistics::units::Count::get(),
+              "number of replacements"),
+diff --git a/src/mem/cache/base.hh b/src/mem/cache/base.hh
+index 0dc64e1..6fc7628 100644
+--- a/src/mem/cache/base.hh
++++ b/src/mem/cache/base.hh
+@@ -1006,12 +1006,12 @@ class BaseCache : public ClockedObject
+             @sa Packet::Command */
+         statistics::Vector misses;
+         /**
+-         * Total number of cycles per thread/command spent waiting for a hit.
++         * Total number of ticks per thread/command spent waiting for a hit.
+          * Used to calculate the average hit latency.
+          */
+         statistics::Vector hitLatency;
+         /**
+-         * Total number of cycles per thread/command spent waiting for a miss.
++         * Total number of ticks per thread/command spent waiting for a miss.
+          * Used to calculate the average miss latency.
+          */
+         statistics::Vector missLatency;
+@@ -1027,9 +1027,9 @@ class BaseCache : public ClockedObject
+         statistics::Vector mshrMisses;
+         /** Number of misses that miss in the MSHRs, per command and thread. */
+         statistics::Vector mshrUncacheable;
+-        /** Total cycle latency of each MSHR miss, per command and thread. */
++        /** Total tick latency of each MSHR miss, per command and thread. */
+         statistics::Vector mshrMissLatency;
+-        /** Total cycle latency of each MSHR miss, per command and thread. */
++        /** Total tick latency of each MSHR miss, per command and thread. */
+         statistics::Vector mshrUncacheableLatency;
+         /** The miss rate in the MSHRs pre command and thread. */
+         statistics::Formula mshrMissRate;
+@@ -1055,9 +1055,9 @@ class BaseCache : public ClockedObject
+         statistics::Formula demandHits;
+         /** Number of hit for all accesses. */
+         statistics::Formula overallHits;
+-        /** Total number of cycles spent waiting for demand hits. */
++        /** Total number of ticks spent waiting for demand hits. */
+         statistics::Formula demandHitLatency;
+-        /** Total number of cycles spent waiting for all hits. */
++        /** Total number of ticks spent waiting for all hits. */
+         statistics::Formula overallHitLatency;
+ 
+         /** Number of misses for demand accesses. */
+@@ -1065,9 +1065,9 @@ class BaseCache : public ClockedObject
+         /** Number of misses for all accesses. */
+         statistics::Formula overallMisses;
+ 
+-        /** Total number of cycles spent waiting for demand misses. */
++        /** Total number of ticks spent waiting for demand misses. */
+         statistics::Formula demandMissLatency;
+-        /** Total number of cycles spent waiting for all misses. */
++        /** Total number of ticks spent waiting for all misses. */
+         statistics::Formula overallMissLatency;
+ 
+         /** The number of demand accesses. */
+@@ -1109,12 +1109,12 @@ class BaseCache : public ClockedObject
+         /** Total number of misses that miss in the MSHRs. */
+         statistics::Formula overallMshrUncacheable;
+ 
+-        /** Total cycle latency of demand MSHR misses. */
++        /** Total tick latency of demand MSHR misses. */
+         statistics::Formula demandMshrMissLatency;
+-        /** Total cycle latency of overall MSHR misses. */
++        /** Total tick latency of overall MSHR misses. */
+         statistics::Formula overallMshrMissLatency;
+ 
+-        /** Total cycle latency of overall MSHR misses. */
++        /** Total tick latency of overall MSHR misses. */
+         statistics::Formula overallMshrUncacheableLatency;
+ 
+         /** The demand miss rate in the MSHRs. */
+-- 
+1.8.3.1
+

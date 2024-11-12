@@ -1,0 +1,67 @@
+From 886154b9583ff9d284efbecd9decb0eb2aaaa1aa Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 21:32:11 -0700
+Subject: [PATCH 499/757] arch: Split up src/dest register ID creation.
+
+This will allow us to selectively change the RegID of an operand to, for
+instance, convert it to InvalidRegClass just as a source so it never
+actually gets read.
+
+Change-Id: I9f8117cbb2088f8150080f815cdb5cb84bd7218e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49747
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index dbb4b2d..a9f5eab 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -143,6 +143,12 @@ class Operand(object):
+     def regId(self):
+         return f'RegId({self.reg_class}, {self.reg_spec})'
+ 
++    def srcRegId(self):
++        return self.regId()
++
++    def destRegId(self):
++        return self.regId()
++
+     def __init__(self, parser, full_name, ext, is_src, is_dest):
+         self.parser = parser
+         self.full_name = full_name
+@@ -238,13 +244,13 @@ class RegOperand(Operand):
+         c_dest = ''
+ 
+         if self.is_src:
+-            c_src = self.src_reg_constructor % self.regId()
++            c_src = self.src_reg_constructor % self.srcRegId()
+             if self.hasReadPred():
+                 c_src = '\n\tif (%s) {%s\n\t}' % \
+                         (self.read_predicate, c_src)
+ 
+         if self.is_dest:
+-            c_dest = self.dst_reg_constructor % self.regId()
++            c_dest = self.dst_reg_constructor % self.destRegId()
+             c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+             if self.hasWritePred():
+                 c_dest = '\n\tif (%s) {%s\n\t}' % \
+@@ -499,10 +505,10 @@ class ControlRegOperand(Operand):
+         c_dest = ''
+ 
+         if self.is_src:
+-            c_src = self.src_reg_constructor % self.regId()
++            c_src = self.src_reg_constructor % self.srcRegId()
+ 
+         if self.is_dest:
+-            c_dest = self.dst_reg_constructor % self.regId()
++            c_dest = self.dst_reg_constructor % self.destRegId()
+ 
+         return c_src + c_dest
+ 
+-- 
+1.8.3.1
+

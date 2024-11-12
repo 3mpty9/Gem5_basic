@@ -1,0 +1,30 @@
+From 78bf9b19605a42206bc63e715989d62934fece4d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 17:47:54 -0700
+Subject: [PATCH 736/757] tests: Add v22-0 tag for compiler-tests docker images
+
+Change-Id: I72247e9371e6a1caf6c693e30fd3d9478fcbaab6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60569
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/compiler-tests.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/compiler-tests.sh b/tests/compiler-tests.sh
+index a6a7f99..354444c 100755
+--- a/tests/compiler-tests.sh
++++ b/tests/compiler-tests.sh
+@@ -103,7 +103,7 @@ for compiler in ${images[@]}; do
+     # targets for this test
+     build_indices=(${build_permutation[@]:0:$builds_count})
+ 
+-    repo_name="${base_url}/${compiler}:latest"
++    repo_name="${base_url}/${compiler}:v22-0"
+ 
+     # Grab compiler image
+     docker pull $repo_name >/dev/null
+-- 
+1.8.3.1
+

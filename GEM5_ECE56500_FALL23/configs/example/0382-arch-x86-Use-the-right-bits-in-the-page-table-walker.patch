@@ -1,0 +1,35 @@
+From a746d8d61997b3277693df59493908c715df5796 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 08:10:57 -0800
+Subject: [PATCH 382/757] arch-x86: Use the right bits in the page table
+ walker.
+
+In the section of the page table walker which processes a non-PAE,
+non-PSE page directory entry, use the right bits of the virtual address
+to figure out what to load next.
+
+Change-Id: I7be3339c24253aa5594f564087eb9a234c370325
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55812
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/pagetable_walker.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/pagetable_walker.cc b/src/arch/x86/pagetable_walker.cc
+index 47be278..78d10d0 100644
+--- a/src/arch/x86/pagetable_walker.cc
++++ b/src/arch/x86/pagetable_walker.cc
+@@ -477,7 +477,7 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
+         }
+         // 4 KB page
+         entry.logBytes = 12;
+-        nextRead = mbits(pte, 31, 12) + vaddr.norml2 * dataSize;
++        nextRead = mbits(pte, 31, 12) + vaddr.norml1 * dataSize;
+         nextState = PTE;
+         break;
+       case PTE:
+-- 
+1.8.3.1
+

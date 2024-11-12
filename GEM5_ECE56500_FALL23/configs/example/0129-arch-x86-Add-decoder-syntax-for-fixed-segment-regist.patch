@@ -1,0 +1,68 @@
+From 10118f751847891a8ef1b4a42b4991233fe28839 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 10 Jan 2022 23:25:00 -0800
+Subject: [PATCH 129/757] arch-x86: Add decoder syntax for fixed segment
+ registers.
+
+There is syntax for this already for fixed integer registers, which this
+is patterned after. Rather than prefixing the operand descriptor with a
+lower case "r", fixed segment registers are prefixed with a lower case
+"s".
+
+Change-Id: Ic08d323bef732a62de23f77ec805c8b7cd5e2303
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55445
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/specialize.isa | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/specialize.isa b/src/arch/x86/isa/specialize.isa
+index 7afdd23..f90aa48 100644
+--- a/src/arch/x86/isa/specialize.isa
++++ b/src/arch/x86/isa/specialize.isa
+@@ -104,17 +104,22 @@ let {{
+ 
+ let {{
+     class OpType(object):
+-        parser = re.compile(r"(?P<tag>[A-Z]+)(?P<size>[a-z]*)|(r(?P<reg>[A-Z0-9]+)(?P<rsize>[a-z]*))")
++        parser = re.compile(r"(?P<tag>[A-Z]+)(?P<size>[a-z]*)|"
++                             "(r(?P<reg>[A-Z0-9]+)(?P<rsize>[a-z]*))|"
++                             "(s(?P<seg>[A-Z0-9]+)(?P<ssize>[a-z]*))")
+         def __init__(self, opTypeString):
+             match = OpType.parser.search(opTypeString)
+             if match == None:
+                 raise Exception("Problem parsing operand type {}".format(
+                     opTypeString))
+             self.reg = match.group("reg")
++            self.seg = match.group("seg")
+             self.tag = match.group("tag")
+             self.size = match.group("size")
+             if not self.size:
+                 self.size = match.group("rsize")
++            if not self.size:
++                self.size = match.group("ssize")
+ 
+     ModRMRegIndex = "(MODRM_REG | (REX_R << 3))"
+     ModRMRMIndex = "(MODRM_RM | (REX_B << 3))"
+@@ -151,6 +156,16 @@ let {{
+ 
+                 Name += "_R"
+ 
++            elif opType.seg:
++                env.addReg("SEGMENT_REG_%sS" % opType.seg)
++                if env.regmUsed:
++                    regString = "env.regm"
++                else:
++                    regString = "env.reg"
++                env.addToDisassembly("printSegment(out, %s);\n" % regString)
++
++                Name += "_S"
++
+             elif opType.tag == "B":
+                 # This refers to registers whose index is encoded as part of
+                 # the opcode.
+-- 
+1.8.3.1
+

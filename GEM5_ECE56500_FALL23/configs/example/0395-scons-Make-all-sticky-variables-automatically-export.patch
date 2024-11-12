@@ -1,0 +1,133 @@
+From 06117275faba606233bb82142ae338c0941b2706 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 15 Feb 2022 00:33:01 -0800
+Subject: [PATCH 395/757] scons: Make all sticky variables automatically
+ exported.
+
+All sticky vars are exported, but not all exported vars are sticky. The
+vars which are exported but not sticky are (at least in general) found
+with Configure() style measurement.
+
+Change-Id: Idebf17e44c2eeca745cdfdd9f42eddcfdb0cf9ed
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56891
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ src/SConscript                   | 8 ++++++--
+ src/arch/SConsopts               | 2 --
+ src/arch/arm/fastmodel/SConsopts | 6 ------
+ src/base/SConsopts               | 3 +--
+ src/cpu/kvm/SConsopts            | 2 +-
+ src/gpu-compute/SConsopts        | 2 --
+ src/mem/ruby/SConsopts           | 2 --
+ src/systemc/SConsopts            | 2 --
+ 8 files changed, 8 insertions(+), 19 deletions(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index d3c5a5c..f905b1f 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -60,7 +60,11 @@ Import('*')
+ # Children need to see the environment
+ Export('env')
+ 
+-build_env = [(opt, env[opt]) for opt in export_vars]
++all_export_vars = set()
++all_export_vars.update(export_vars)
++all_export_vars.update(sticky_vars.keys())
++
++build_env = [(opt, env[opt]) for opt in all_export_vars]
+ 
+ from code_formatter import code_formatter
+ 
+@@ -533,7 +537,7 @@ for extra_dir in extras_dir_list:
+             build_dir = os.path.join(env['BUILDDIR'], root[prefix_len:])
+             SConscript(os.path.join(root, 'SConscript'), variant_dir=build_dir)
+ 
+-for opt in export_vars:
++for opt in all_export_vars:
+     env.ConfigFile(opt)
+ 
+ def makeTheISA(source, target, env):
+diff --git a/src/arch/SConsopts b/src/arch/SConsopts
+index 38b02f5..048814e 100644
+--- a/src/arch/SConsopts
++++ b/src/arch/SConsopts
+@@ -33,5 +33,3 @@ def add_isa_lists():
+             sorted(set(main.Split('${ALL_GPU_ISAS}')))),
+         )
+ AfterSConsopts(add_isa_lists)
+-
+-export_vars.extend(['TARGET_ISA', 'TARGET_GPU_ISA'])
+diff --git a/src/arch/arm/fastmodel/SConsopts b/src/arch/arm/fastmodel/SConsopts
+index 74165fe..c7bfd84 100644
+--- a/src/arch/arm/fastmodel/SConsopts
++++ b/src/arch/arm/fastmodel/SConsopts
+@@ -45,9 +45,3 @@ sticky_vars.AddVariables(
+      'The maximum number of ARM licenses to use concurrently', 1),
+     ('SIMGEN', 'simgen executable', os.environ.get('SIMGEN', default_simgen)),
+ )
+-
+-export_vars.extend([
+-        'ARMLMD_LICENSE_FILE',
+-        'PVLIB_HOME',
+-        'PVLIB_FLAVOR',
+-])
+diff --git a/src/base/SConsopts b/src/base/SConsopts
+index 9fafd64..5c8d5f7 100644
+--- a/src/base/SConsopts
++++ b/src/base/SConsopts
+@@ -80,5 +80,4 @@ sticky_vars.Add(BoolVariable('USE_POSIX_CLOCK', 'Use POSIX Clocks',
+ 
+ 
+ export_vars.extend([
+-        'HAVE_FENV', 'HAVE_PNG', 'USE_POSIX_CLOCK', 'HAVE_VALGRIND',
+-        'HAVE_DEPRECATED_NAMESPACE'])
++        'HAVE_FENV', 'HAVE_PNG', 'HAVE_VALGRIND', 'HAVE_DEPRECATED_NAMESPACE'])
+diff --git a/src/cpu/kvm/SConsopts b/src/cpu/kvm/SConsopts
+index be413e1..72f2a2e 100644
+--- a/src/cpu/kvm/SConsopts
++++ b/src/cpu/kvm/SConsopts
+@@ -76,7 +76,7 @@ if main['KVM_ISA']:
+                 'Enable hardware virtualized (KVM) CPU models', True))
+ else:
+     main['USE_KVM'] = False
++    export_vars.append('USE_KVM')
+     warning("Can not enable KVM, host seems to lack KVM support")
+ 
+-export_vars.append('USE_KVM')
+ export_vars.append('KVM_ISA')
+diff --git a/src/gpu-compute/SConsopts b/src/gpu-compute/SConsopts
+index 1737c13..251ac5d 100644
+--- a/src/gpu-compute/SConsopts
++++ b/src/gpu-compute/SConsopts
+@@ -27,5 +27,3 @@ Import('*')
+ 
+ sticky_vars.Add(BoolVariable('BUILD_GPU', 'Build the compute-GPU model',
+                              False))
+-
+-export_vars.append('BUILD_GPU')
+diff --git a/src/mem/ruby/SConsopts b/src/mem/ruby/SConsopts
+index 80713c4..f26b6d0 100644
+--- a/src/mem/ruby/SConsopts
++++ b/src/mem/ruby/SConsopts
+@@ -34,5 +34,3 @@ AfterSConsopts(add_protocols_var)
+ 
+ sticky_vars.Add(('NUMBER_BITS_PER_SET', 'Max elements in set (default 64)',
+                  64))
+-
+-export_vars.extend(['PROTOCOL', 'NUMBER_BITS_PER_SET'])
+diff --git a/src/systemc/SConsopts b/src/systemc/SConsopts
+index 891431c..7f59955 100644
+--- a/src/systemc/SConsopts
++++ b/src/systemc/SConsopts
+@@ -46,5 +46,3 @@ main.AddMethod(use_systemc_check, 'UseSystemcCheck')
+ 
+ sticky_vars.Add(BoolVariable('USE_SYSTEMC', 'Enable SystemC API support',
+                              main.UseSystemcCheck()))
+-
+-export_vars.append('USE_SYSTEMC')
+-- 
+1.8.3.1
+

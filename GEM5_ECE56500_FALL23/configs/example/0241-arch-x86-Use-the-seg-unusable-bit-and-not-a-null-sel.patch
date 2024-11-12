@@ -1,0 +1,131 @@
+From a9ef634fa8555026c679b77e4422fbf493301dd0 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 8 Jan 2022 23:52:13 -0800
+Subject: [PATCH 241/757] arch-x86: Use the seg unusable bit and not a null
+ selector in the TLB.
+
+When dealing with segmentation in x86, it is *usually* illegal to
+attempt to access a segment which has a null selector when in protected
+mode and not in 64 bit mode. While this is *almost* true, it is not
+actually technically true.
+
+What actually *is* true is that if you *set up* a segment using a null
+selector in those circumstances, that segment becomes unusable, and then
+tryint to use it causes a fault.
+
+When in real mode, it is perfectly legal to use a null selector to
+access memory, since that is just a selector with numerical value 0.
+When you then transition into protected mode, the selector would still
+be 0 (a null selector), but the segment itself would still be set up
+properly and usuable using the base value, limit, and other attributes
+it carried over from real mode.
+
+Rather than check if a segment has a null selector while handling
+segmentation, it's more correct for us to keep track of whether the
+segment is currently usable and check that in the TLB.
+
+Change-Id: Ic2c09e1cfa05afcb03900213b72733545c8f0f4c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55245
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/x86/faults.cc              | 6 ++++--
+ src/arch/x86/isa/microops/regop.isa | 8 +++++++-
+ src/arch/x86/process.cc             | 6 +++++-
+ src/arch/x86/tlb.cc                 | 8 +++-----
+ 4 files changed, 19 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 347a857..09b4d99 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -255,7 +255,8 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     tc->setMiscReg(MISCREG_IDTR_LIMIT, 0xffff);
+ 
+     SegAttr tslAttr = 0;
+-    tslAttr.present = 1;
++    tslAttr.unusable = 1;
++    tslAttr.present = 0;
+     tslAttr.type = 2; // LDT
+     tc->setMiscReg(MISCREG_TSL, 0);
+     tc->setMiscReg(MISCREG_TSL_BASE, 0);
+@@ -263,7 +264,8 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     tc->setMiscReg(MISCREG_TSL_ATTR, tslAttr);
+ 
+     SegAttr trAttr = 0;
+-    trAttr.present = 1;
++    trAttr.unusable = 1;
++    trAttr.present = 0;
+     trAttr.type = 3; // Busy 16-bit TSS
+     tc->setMiscReg(MISCREG_TR, 0);
+     tc->setMiscReg(MISCREG_TR_BASE, 0);
+diff --git a/src/arch/x86/isa/microops/regop.isa b/src/arch/x86/isa/microops/regop.isa
+index 153060c..d37cb6f 100644
+--- a/src/arch/x86/isa/microops/regop.isa
++++ b/src/arch/x86/isa/microops/regop.isa
+@@ -1669,9 +1669,15 @@ let {{
+                     SegLimitDest = desc.limit;
+                     SegAttrDest = attr;
+                 } else {
++                    HandyM5Reg m5reg = M5Reg;
++
+                     SegBaseDest = SegBaseDest;
+                     SegLimitDest = SegLimitDest;
+-                    SegAttrDest = SegAttrDest;
++
++                    SegAttr attr = SegAttrDest;
++                    if (m5reg != LongMode)
++                        attr.unusable = 1;
++                    SegAttrDest = attr;
+                 }
+                 break;
+             }
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index b4f8dee..b1d2f43 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -322,7 +322,8 @@ X86_64Process::initState()
+             // LDT
+             tc->setMiscReg(MISCREG_TSL, 0);
+             SegAttr tslAttr = 0;
+-            tslAttr.present = 1;
++            tslAttr.unusable = 1;
++            tslAttr.present = 0;
+             tslAttr.type = 2;
+             tc->setMiscReg(MISCREG_TSL_ATTR, tslAttr);
+ 
+@@ -684,6 +685,9 @@ I386Process::initState()
+ 
+         // Set the LDT selector to 0 to deactivate it.
+         tc->setMiscRegNoEffect(MISCREG_TSL, 0);
++        SegAttr attr = 0;
++        attr.unusable = 1;
++        tc->setMiscRegNoEffect(MISCREG_TSL_ATTR, attr);
+ 
+         Efer efer = 0;
+         efer.sce = 1; // Enable system call extensions.
+diff --git a/src/arch/x86/tlb.cc b/src/arch/x86/tlb.cc
+index 2fc34fb..b2856ed 100644
+--- a/src/arch/x86/tlb.cc
++++ b/src/arch/x86/tlb.cc
+@@ -334,13 +334,11 @@ TLB::translate(const RequestPtr &req,
+         // If we're not in 64-bit mode, do protection/limit checks
+         if (m5Reg.mode != LongMode) {
+             DPRINTF(TLB, "Not in long mode. Checking segment protection.\n");
+-            // Check for a NULL segment selector.
+-            if (!(seg == SEGMENT_REG_TSG || seg == SYS_SEGMENT_REG_IDTR ||
+-                        seg == SEGMENT_REG_HS || seg == SEGMENT_REG_LS)
+-                    && !tc->readMiscRegNoEffect(MISCREG_SEG_SEL(seg)))
++            SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
++            // Check for an unusable segment.
++            if (attr.unusable)
+                 return std::make_shared<GeneralProtection>(0);
+             bool expandDown = false;
+-            SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
+             if (seg >= SEGMENT_REG_ES && seg <= SEGMENT_REG_HS) {
+                 if (!attr.writable && (mode == BaseMMU::Write || storeCheck))
+                     return std::make_shared<GeneralProtection>(0);
+-- 
+1.8.3.1
+

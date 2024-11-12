@@ -1,0 +1,130 @@
+From fcfa1d56d30a82908c9e29022ed9d3a82a69f34f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 01:21:03 -0800
+Subject: [PATCH 377/757] dev,arch-x86: Change the i8042 to a normal PioDevice.
+
+It was already acting like a normal PioDevice, but was inheriting from
+BasicPioDevice and then disabling the additions that came with it.
+
+Change-Id: I95791c200251c555ace6fe0c4297899877a94471
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55804
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/I8042.py |  7 +++----
+ src/dev/x86/i8042.cc |  5 +----
+ src/dev/x86/i8042.hh | 26 +++++++++++++-------------
+ 3 files changed, 17 insertions(+), 21 deletions(-)
+
+diff --git a/src/dev/x86/I8042.py b/src/dev/x86/I8042.py
+index d2d9a17..956a1bf 100644
+--- a/src/dev/x86/I8042.py
++++ b/src/dev/x86/I8042.py
+@@ -26,17 +26,16 @@
+ 
+ from m5.params import *
+ from m5.proxy import *
+-from m5.objects.Device import BasicPioDevice
++from m5.objects.Device import PioDevice
+ from m5.objects.IntPin import IntSourcePin
+ from m5.objects.PS2 import *
+ 
+-class I8042(BasicPioDevice):
++class I8042(PioDevice):
+     type = 'I8042'
+     cxx_class = 'gem5::X86ISA::I8042'
+     cxx_header = "dev/x86/i8042.hh"
+ 
+-    # This isn't actually used for anything here.
+-    pio_addr = 0x0
++    pio_latency = Param.Latency('100ns', "Programmed IO latency")
+     data_port = Param.Addr('Data port address')
+     command_port = Param.Addr('Command/status port address')
+     mouse_int_pin = IntSourcePin('Pin to signal the mouse has data')
+diff --git a/src/dev/x86/i8042.cc b/src/dev/x86/i8042.cc
+index 8bfbaec..7aed0ee 100644
+--- a/src/dev/x86/i8042.cc
++++ b/src/dev/x86/i8042.cc
+@@ -48,10 +48,8 @@ const uint8_t NumOutputBits = 14;
+ 
+ 
+ X86ISA::I8042::I8042(const Params &p)
+-    : BasicPioDevice(p, 0), // pioSize arg is dummy value... not used
+-      latency(p.pio_latency),
++    : PioDevice(p), latency(p.pio_latency),
+       dataPort(p.data_port), commandPort(p.command_port),
+-      statusReg(0), commandByte(0), dataReg(0), lastCommand(NoCommand),
+       mouse(p.mouse), keyboard(p.keyboard)
+ {
+     fatal_if(!mouse, "The i8042 model requires a mouse instance");
+@@ -80,7 +78,6 @@ AddrRangeList
+ X86ISA::I8042::getAddrRanges() const
+ {
+     AddrRangeList ranges;
+-    // TODO: Are these really supposed to be a single byte and not 4?
+     ranges.push_back(RangeSize(dataPort, 1));
+     ranges.push_back(RangeSize(commandPort, 1));
+     return ranges;
+diff --git a/src/dev/x86/i8042.hh b/src/dev/x86/i8042.hh
+index 4ab86ac..d6e464b 100644
+--- a/src/dev/x86/i8042.hh
++++ b/src/dev/x86/i8042.hh
+@@ -43,7 +43,7 @@ namespace gem5
+ namespace X86ISA
+ {
+ 
+-class I8042 : public BasicPioDevice
++class I8042 : public PioDevice
+ {
+   protected:
+     enum Command
+@@ -98,25 +98,25 @@ class I8042 : public BasicPioDevice
+         Bitfield<0> keyboardFullInt;
+     EndBitUnion(CommandByte)
+ 
+-    Tick latency;
+-    Addr dataPort;
+-    Addr commandPort;
++    Tick latency = 0;
++    Addr dataPort = 0;
++    Addr commandPort = 0;
+ 
+-    StatusReg statusReg;
+-    CommandByte commandByte;
++    StatusReg statusReg = 0;
++    CommandByte commandByte = 0;
+ 
+-    uint8_t dataReg;
++    uint8_t dataReg = 0;
+ 
+-    static const uint16_t NoCommand = (uint16_t)(-1);
+-    uint16_t lastCommand;
++    static inline const uint16_t NoCommand = (uint16_t)(-1);
++    uint16_t lastCommand = NoCommand;
+ 
+     std::vector<IntSourcePin<I8042> *> mouseIntPin;
+     std::vector<IntSourcePin<I8042> *> keyboardIntPin;
+ 
+-    ps2::Device *mouse;
+-    ps2::Device *keyboard;
++    ps2::Device *mouse = nullptr;
++    ps2::Device *keyboard = nullptr;
+ 
+-    void writeData(uint8_t newData, bool mouse = false);
++    void writeData(uint8_t newData, bool mouse=false);
+     uint8_t readDataOut();
+ 
+   public:
+@@ -132,7 +132,7 @@ class I8042 : public BasicPioDevice
+         else if (if_name == "keyboard_int_pin")
+             return *keyboardIntPin.at(idx);
+         else
+-            return BasicPioDevice::getPort(if_name, idx);
++            return PioDevice::getPort(if_name, idx);
+     }
+ 
+     AddrRangeList getAddrRanges() const override;
+-- 
+1.8.3.1
+

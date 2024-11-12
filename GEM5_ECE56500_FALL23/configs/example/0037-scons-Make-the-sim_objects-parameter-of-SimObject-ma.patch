@@ -1,0 +1,92 @@
+From 2a5f2ef55a5b3a2417d16c9f022eab17c92ad691 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 13 Dec 2021 21:43:07 -0800
+Subject: [PATCH 037/757] scons: Make the sim_objects parameter of SimObject
+ mandantory.
+
+If there really are no c++ sim_objects in the file, then sim_objects can
+be set to [] which it used to default to.
+
+This way, if someone hasn't remembered to update their SConscript files
+for the new sim_objects and enums parameters, this will give them some
+indication what's wrong, rather than the build just failing later.
+
+Change-Id: Ic1933f7b9dfff7dd7e403c6c84f1f510c8ee8c72
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54203
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ src/SConscript         | 12 ++++++++++--
+ src/cpu/o3/SConscript  |  2 +-
+ src/dev/SConscript     |  2 +-
+ src/systemc/SConscript |  2 +-
+ 4 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index 7eb810a..e40262a 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -149,13 +149,21 @@ class SimObject(PySource):
+     enums = dict()
+     tags = dict()
+ 
+-    def __init__(self, source, *, sim_objects=[], enums=[],
++    def __init__(self, source, *, sim_objects=None, enums=None,
+             tags=None, add_tags=None):
+         '''Specify the source file and any tags (automatically in
+         the m5.objects package)'''
++        if sim_objects is None:
++            if enums is None:
++                error(f"SimObject({source}...) must list c++ sim_objects or "
++                      "enums (set either to [] if there are none).")
++            sim_objects = []
++        if enums is None:
++            enums = []
++
+         super().__init__('m5.objects', source, tags, add_tags)
+         if self.fixed:
+-            raise AttributeError("Too late to call SimObject now.")
++            error("Too late to call SimObject now.")
+ 
+         SimObject.sim_objects[self.modpath] = sim_objects
+         SimObject.enums[self.modpath] = enums
+diff --git a/src/cpu/o3/SConscript b/src/cpu/o3/SConscript
+index a20e30d..ba021a8 100755
+--- a/src/cpu/o3/SConscript
++++ b/src/cpu/o3/SConscript
+@@ -32,7 +32,7 @@ Import('*')
+ 
+ if 'O3CPU' in env['CPU_MODELS']:
+     SimObject('FUPool.py', sim_objects=['FUPool'])
+-    SimObject('FuncUnitConfig.py')
++    SimObject('FuncUnitConfig.py', sim_objects=[])
+     SimObject('O3CPU.py', sim_objects=['O3CPU'], enums=[
+         'SMTFetchPolicy', 'SMTQueuePolicy', 'CommitPolicy'])
+ 
+diff --git a/src/dev/SConscript b/src/dev/SConscript
+index db3163e..755ddb5 100644
+--- a/src/dev/SConscript
++++ b/src/dev/SConscript
+@@ -35,7 +35,7 @@ Source('isa_fake.cc')
+ Source('dma_device.cc')
+ Source('dma_virt_device.cc')
+ 
+-SimObject('IntPin.py')
++SimObject('IntPin.py', sim_objects=[])
+ Source('intpin.cc')
+ 
+ DebugFlag('IsaFake')
+diff --git a/src/systemc/SConscript b/src/systemc/SConscript
+index ef7e79b..57cb1d9 100644
+--- a/src/systemc/SConscript
++++ b/src/systemc/SConscript
+@@ -32,4 +32,4 @@ env.UseSystemcCheck(warn=True)
+ 
+ env.Append(CPPPATH=Dir('ext'))
+ 
+-SimObject('Tlm.py')
++SimObject('Tlm.py', sim_objects=[])
+-- 
+1.8.3.1
+

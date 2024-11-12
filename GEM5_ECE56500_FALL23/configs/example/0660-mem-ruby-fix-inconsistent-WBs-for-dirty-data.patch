@@ -1,0 +1,82 @@
+From d1d6b4cb9ed018d1b6f5aa11e0a8d287bd4ddfe3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 2 Mar 2022 15:18:29 -0600
+Subject: [PATCH 660/757] mem-ruby: fix inconsistent WBs for dirty data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Initiate_MaitainCoherence would not trigger a writeback if
+tbe.dataMaybeDirtyUpstream is set due to the assumption that
+the upstream cache would writeback any dirty data. However this
+is not the case if we use this action finalize a CleanUnique, e.g.:
+
+- L1-A has data in SC
+- L1-B has data in SD
+- L2 has data in RUSD (L2 is an exclusive cache)
+- L1-A sends CleanUnique to L2
+- L2 invalidates L1-B and receives dirty data.
+- L2 acks the CleanUnique; L1-A is now UC
+- L2 has the dirty data but drops it because dataMaybeDirtyUpstream
+- L1-A doesn't modify the data and eventually evicts it with WriteEvict
+- Data from WriteEvicts are dropped at the HNF and we lose the line
+
+This patch removes the tbe.dataMaybeDirtyUpstream check.
+Instead it only skips the WriteBack if an upstream cache is in
+SD state, when it's guaranteed it will writeback the dirty data.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: I6722bc25068b0c44afcf261abc8824f1d80c09f9
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57392
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Daecheol You <daecheol.you@samsung.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index e5178e7..d11b6e7 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -939,26 +939,29 @@ action(Initiate_MaitainCoherence, desc="") {
+   assert(tbe.actions.empty());
+   // go through either the fill or the writeback pipeline
+   if (tbe.dataValid && tbe.dataToBeInvalid) {
++    // we don't need to WB if the upstream is SD, because the
++    // owner is responsible for the WB
++    bool has_non_ex_owner := tbe.dir_ownerExists && !tbe.dir_ownerIsExcl;
+     if (is_HN) {
+-      if (tbe.dataDirty && (tbe.dataMaybeDirtyUpstream == false)) {
++      if (tbe.dataDirty && !has_non_ex_owner) {
+         tbe.actions.push(Event:SendWriteNoSnp);
+         tbe.actions.push(Event:WriteBEPipe);
+         tbe.actions.push(Event:SendWBData);
+       }
+     } else {
+       if (tbe.dir_sharers.isEmpty() && (tbe.dataDirty || tbe.dataUnique)) {
++        assert(!has_non_ex_owner);
+         tbe.actions.push(Event:SendWriteBackOrWriteEvict);
+         tbe.actions.push(Event:WriteBEPipe);
+         tbe.actions.push(Event:SendWBData);
+-      } else if ((tbe.dir_sharers.isEmpty() == false) && tbe.dataDirty &&
+-                 (tbe.dataMaybeDirtyUpstream == false)) {
++      } else if (tbe.dataDirty && !has_non_ex_owner) {
++        assert(!tbe.dir_sharers.isEmpty());
+         tbe.actions.push(Event:SendWriteClean);
+         tbe.actions.push(Event:WriteBEPipe);
+         tbe.actions.push(Event:SendWBData);
+       }
+     }
+-  }
+-  else if (tbe.dataValid) {
++  } else if (tbe.dataValid) {
+     tbe.actions.push(Event:CheckCacheFill);
+   }
+   tbe.actions.push(Event:TagArrayWrite);
+-- 
+1.8.3.1
+

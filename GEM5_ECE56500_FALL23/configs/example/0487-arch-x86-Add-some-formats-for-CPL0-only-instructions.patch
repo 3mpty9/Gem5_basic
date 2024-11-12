@@ -1,0 +1,177 @@
+From 00dd1b8ffc92ee8c9470d8a7c761a320bbe6eeb7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 24 Jan 2022 04:29:51 -0800
+Subject: [PATCH 487/757] arch-x86: Add some formats for CPL0 only
+ instructions.
+
+These are essentially the same as the Inst and CondInst formats, except
+it adds a CPL check. If the CPL check fails, a new instruction will be
+returned which is only a vehicle for delivering a GP fault.
+
+Change-Id: Ie1e7fb6a6c04082437c4d4a25adc3e03be09ac72
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55890
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/insts/decode_fault.hh | 70 ++++++++++++++++++++++++++++++++++++++
+ src/arch/x86/isa/formats/cond.isa  | 30 ++++++++++++++++
+ src/arch/x86/isa/formats/multi.isa | 14 ++++++++
+ src/arch/x86/isa/includes.isa      |  1 +
+ 4 files changed, 115 insertions(+)
+ create mode 100644 src/arch/x86/insts/decode_fault.hh
+
+diff --git a/src/arch/x86/insts/decode_fault.hh b/src/arch/x86/insts/decode_fault.hh
+new file mode 100644
+index 0000000..ba70b3c
+--- /dev/null
++++ b/src/arch/x86/insts/decode_fault.hh
+@@ -0,0 +1,70 @@
++/*
++ * Copyright (c) 2007 The Hewlett-Packard Development Company
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_X86_INSTS_DEBUGFAULT_HH__
++#define __ARCH_X86_INSTS_DEBUGFAULT_HH__
++
++#include "arch/x86/insts/static_inst.hh"
++
++namespace gem5
++{
++
++namespace X86ISA
++{
++
++class DecodeFaultInst : public X86StaticInst
++{
++  private:
++    Fault fault;
++
++  public:
++    // Constructor.
++    DecodeFaultInst(const char *mnem, ExtMachInst _machInst, Fault _fault) :
++        X86StaticInst(mnem, _machInst, No_OpClass), fault(_fault)
++    {}
++
++    Fault
++    execute(ExecContext *tc, Trace::InstRecord *traceData) const override
++    {
++        return fault;
++    }
++};
++
++} // namespace X86ISA
++} // namespace gem5
++
++#endif //__ARCH_X86_INSTS_DEBUGFAULT_HH__
+diff --git a/src/arch/x86/isa/formats/cond.isa b/src/arch/x86/isa/formats/cond.isa
+index ec46595..158dff3 100644
+--- a/src/arch/x86/isa/formats/cond.isa
++++ b/src/arch/x86/isa/formats/cond.isa
+@@ -47,3 +47,33 @@ def format CondInst(cond, *opTypeSet) {{
+     decode_block = '\tif (%s) {\n%s\n\t} else {\n%s\n}\n' % \
+         (cond, if_blocks.decode_block, else_blocks.decode_block)
+ }};
++
++def format Cpl0CondInst(cond, *opTypeSet) {{
++    blocks = OutputBlocks()
++
++    if_blocks = specializeInst(Name, list(opTypeSet), EmulEnv())
++    blocks.append(if_blocks)
++    else_blocks = specializeInst('UD2', [], EmulEnv())
++    blocks.append(else_blocks)
++
++    (header_output, decoder_output,
++     decode_block, exec_output) = blocks.makeList()
++    decode_block = '''
++        if (%(cond)s) {
++            %(if_block)s
++        } else {
++            %(else_block)s
++        }
++    ''' % {'cond': cond,
++        'if_block': if_blocks.decode_block,
++        'else_block': else_blocks.decode_block
++    }
++    decode_block = '''
++        if (emi.mode.cpl != 0) {
++            return new DecodeFaultInst("%(Name)s", emi,
++                    std::make_shared<GeneralProtection>(0));
++        } else {
++            %(decode_block)s
++        }
++    ''' % {'decode_block': decode_block, 'Name': Name}
++}};
+diff --git a/src/arch/x86/isa/formats/multi.isa b/src/arch/x86/isa/formats/multi.isa
+index 94859e6..0d4e920 100644
+--- a/src/arch/x86/isa/formats/multi.isa
++++ b/src/arch/x86/isa/formats/multi.isa
+@@ -47,6 +47,20 @@ def format Inst(*opTypeSet) {{
+      decode_block, exec_output) = blocks.makeList()
+ }};
+ 
++def format Cpl0Inst(*opTypeSet) {{
++    blocks = specializeInst(Name, list(opTypeSet), EmulEnv())
++    (header_output, decoder_output,
++     decode_block, exec_output) = blocks.makeList()
++    decode_block = '''
++        if (emi.mode.cpl != 0) {
++            return new DecodeFaultInst("%(Name)s", emi,
++                    std::make_shared<GeneralProtection>(0));
++        } else {
++            %(decode_block)s
++        }
++    ''' % {'decode_block': decode_block, 'Name': Name}
++}};
++
+ def format MultiInst(switchVal, *opTypeSets) {{
+     switcher = {}
+     for (count, opTypeSet) in zip(range(len(opTypeSets)), opTypeSets):
+diff --git a/src/arch/x86/isa/includes.isa b/src/arch/x86/isa/includes.isa
+index 9af394a..6fc5f44 100644
+--- a/src/arch/x86/isa/includes.isa
++++ b/src/arch/x86/isa/includes.isa
+@@ -54,6 +54,7 @@ output header {{
+ 
+ #include "arch/generic/debugfaults.hh"
+ #include "arch/x86/emulenv.hh"
++#include "arch/x86/insts/decode_fault.hh"
+ #include "arch/x86/insts/macroop.hh"
+ #include "arch/x86/insts/microdebug.hh"
+ #include "arch/x86/insts/microfpop.hh"
+-- 
+1.8.3.1
+

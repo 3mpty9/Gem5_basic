@@ -1,0 +1,82 @@
+From 2572b85f54136d1c38e4e88b10b6208a2e0494c2 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 10 Jan 2022 23:27:52 -0800
+Subject: [PATCH 131/757] arch-x86: Hook up the PUSH segment selector insts in
+ the decoder.
+
+Change-Id: Id4d59ced3f74a593bb6b0774b843f5dc155c49c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55447
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa | 8 ++++----
+ src/arch/x86/isa/decoder/two_byte_opcodes.isa | 4 ++--
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index 04b3adc..e34b477 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -43,7 +43,7 @@
+         0x00: decode OPCODE_OP_BOTTOM3 {
+             0x6: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                default: WarnUnimpl::push_ES();
++                default: PUSH(sEv);
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+@@ -57,7 +57,7 @@
+         0x01: decode OPCODE_OP_BOTTOM3 {
+             0x6: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                default: WarnUnimpl::push_CS();
++                default: PUSH(sCv);
+             }
+             //Any time this is seen, it should generate a two byte opcode
+             0x7: M5InternalError::error(
+@@ -70,7 +70,7 @@
+         0x02: decode OPCODE_OP_BOTTOM3 {
+             0x6: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                default: WarnUnimpl::push_SS();
++                default: PUSH(sSv);
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+@@ -84,7 +84,7 @@
+         0x03: decode OPCODE_OP_BOTTOM3 {
+             0x6: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                default: WarnUnimpl::push_DS();
++                default: PUSH(sDv);
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+diff --git a/src/arch/x86/isa/decoder/two_byte_opcodes.isa b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+index 549db47..8913ce7 100644
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+@@ -667,7 +667,7 @@
+             }
+         }
+         0x14: decode OPCODE_OP_BOTTOM3 {
+-            0x0: push_fs();
++            0x0: Inst::PUSH(sFv);
+             0x1: pop_fs();
+             0x2: CPUIDInst::CPUID({{
+                 CpuidResult result;
+@@ -694,7 +694,7 @@
+             default: Inst::UD2();
+         }
+         0x15: decode OPCODE_OP_BOTTOM3 {
+-            0x0: push_gs();
++            0x0: Inst::PUSH(sGv);
+             0x1: pop_gs();
+             0x2: rsm_smm();
+             0x3: Inst::BTS(Ev,Gv);
+-- 
+1.8.3.1
+

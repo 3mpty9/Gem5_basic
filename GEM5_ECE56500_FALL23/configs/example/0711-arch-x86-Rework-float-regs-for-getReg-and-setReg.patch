@@ -1,0 +1,436 @@
+From 7e6fd8423ed00105c260105370248898a7da8eed Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 24 Aug 2021 17:00:49 -0700
+Subject: [PATCH 711/757] arch-x86: Rework float regs for getReg and setReg.
+
+Change-Id: I9ef7493225678923964721bf91f2fd2c43d4d1e7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49760
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa.cc                                |   8 +-
+ src/arch/x86/isa.hh                                |   6 +-
+ .../save_and_restore_state.py                      |   8 +-
+ src/arch/x86/isa/microasm.isa                      |  16 +-
+ src/arch/x86/kvm/x86_cpu.cc                        |  12 +-
+ src/arch/x86/nativetrace.cc                        |   4 +-
+ src/arch/x86/regs/float.hh                         | 226 +++++++++++----------
+ 7 files changed, 143 insertions(+), 137 deletions(-)
+
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index d298525..45962c8 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -147,7 +147,7 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+              "CPUID vendor string must be 12 characters\n");
+ 
+     _regClasses.emplace_back(int_reg::NumRegs, debug::IntRegs);
+-    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(float_reg::NumRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+@@ -186,8 +186,10 @@ ISA::copyRegsFrom(ThreadContext *src)
+         tc->setRegFlat(reg, src->getRegFlat(reg));
+     }
+     //copy float regs
+-    for (int i = 0; i < NumFloatRegs; ++i)
+-        tc->setFloatRegFlat(i, src->readFloatRegFlat(i));
++    for (int i = 0; i < float_reg::NumRegs; ++i) {
++        RegId reg(FloatRegClass, i);
++        tc->setRegFlat(reg, src->getRegFlat(reg));
++    }
+     //copy condition-code regs
+     for (int i = 0; i < cc_reg::NumRegs; ++i) {
+         RegId reg(CCRegClass, i);
+diff --git a/src/arch/x86/isa.hh b/src/arch/x86/isa.hh
+index 4a32a21..f19ed9f 100644
+--- a/src/arch/x86/isa.hh
++++ b/src/arch/x86/isa.hh
+@@ -100,9 +100,9 @@ class ISA : public BaseISA
+     int
+     flattenFloatIndex(int reg) const
+     {
+-        if (reg >= NUM_FLOATREGS) {
+-            reg = FLOATREG_STACK(reg - NUM_FLOATREGS,
+-                                 regVal[misc_reg::X87Top]);
++        if (reg >= float_reg::NumRegs) {
++            reg = float_reg::stack(reg - float_reg::NumRegs,
++                                   regVal[misc_reg::X87Top]);
+         }
+         return reg;
+     }
+diff --git a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
+index 410fe69..9addadb 100644
+--- a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
++++ b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
+@@ -43,16 +43,16 @@ storeX87RegTemplate = '''
+ '''
+ 
+ loadXMMRegTemplate =  '''
+-    ldfp fpRegIdx("FLOATREG_XMM_LOW(%(idx)i)"), seg, %(mode)s, \
++    ldfp fpRegIdx("float_reg::xmmLow(%(idx)i)"), seg, %(mode)s, \
+          "DISPLACEMENT + 160 + 16 * %(idx)i", dataSize=8
+-    ldfp fpRegIdx("FLOATREG_XMM_HIGH(%(idx)i)"), seg, %(mode)s, \
++    ldfp fpRegIdx("float_reg::xmmHigh(%(idx)i)"), seg, %(mode)s, \
+          "DISPLACEMENT + 160 + 16 * %(idx)i + 8", dataSize=8
+ '''
+ 
+ storeXMMRegTemplate =  '''
+-    stfp fpRegIdx("FLOATREG_XMM_LOW(%(idx)i)"), seg, %(mode)s, \
++    stfp fpRegIdx("float_reg::xmmLow(%(idx)i)"), seg, %(mode)s, \
+          "DISPLACEMENT + 160 + 16 * %(idx)i", dataSize=8
+-    stfp fpRegIdx("FLOATREG_XMM_HIGH(%(idx)i)"), seg, %(mode)s, \
++    stfp fpRegIdx("float_reg::xmmHigh(%(idx)i)"), seg, %(mode)s, \
+          "DISPLACEMENT + 160 + 16 * %(idx)i + 8", dataSize=8
+ '''
+ 
+diff --git a/src/arch/x86/isa/microasm.isa b/src/arch/x86/isa/microasm.isa
+index 02d8f1c..632cb07 100644
+--- a/src/arch/x86/isa/microasm.isa
++++ b/src/arch/x86/isa/microasm.isa
+@@ -81,7 +81,7 @@ let {{
+         assembler.symbols["t%d" % num] = gpRegIdx("intRegMicro(%d)" % num)
+     for num in range(8):
+         assembler.symbols["ufp%d" % num] = \
+-            fpRegIdx("FLOATREG_MICROFP(%d)" % num)
++            fpRegIdx("float_reg::microfp(%d)" % num)
+     # Add in symbols for the segment descriptor registers
+     for letter in ("c", "d", "e", "f", "g", "h", "s"):
+         assembler.symbols["%ss" % letter.lower()] = \
+@@ -105,16 +105,16 @@ let {{
+         "cr" : crRegIdx("env.reg"),
+         "dr" : drRegIdx("env.reg"),
+         "sr" : segRegIdx("env.reg"),
+-        "xmml" : fpRegIdx("FLOATREG_XMM_LOW(env.reg)"),
+-        "xmmh" : fpRegIdx("FLOATREG_XMM_HIGH(env.reg)"),
++        "xmml" : fpRegIdx("float_reg::xmmLow(env.reg)"),
++        "xmmh" : fpRegIdx("float_reg::xmmHigh(env.reg)"),
+         "regm" : gpRegIdx("env.regm"),
+         "crm" : crRegIdx("env.regm"),
+         "drm" : drRegIdx("env.regm"),
+         "srm" : segRegIdx("env.regm"),
+-        "xmmlm" : fpRegIdx("FLOATREG_XMM_LOW(env.regm)"),
+-        "xmmhm" : fpRegIdx("FLOATREG_XMM_HIGH(env.regm)"),
+-        "mmx" : fpRegIdx("FLOATREG_MMX(env.reg)"),
+-        "mmxm" : fpRegIdx("FLOATREG_MMX(env.regm)"),
++        "xmmlm" : fpRegIdx("float_reg::xmmLow(env.regm)"),
++        "xmmhm" : fpRegIdx("float_reg::xmmHigh(env.regm)"),
++        "mmx" : fpRegIdx("float_reg::mmx(env.reg)"),
++        "mmxm" : fpRegIdx("float_reg::mmx(env.regm)"),
+         "imm" : "adjustedImm",
+         "disp" : "adjustedDisp",
+         "seg" : segRegIdx("env.seg"),
+@@ -230,7 +230,7 @@ let {{
+     assembler.symbols["rom_local_label"] = rom_local_labeler
+ 
+     def stack_index(index):
+-        return fpRegIdx("NUM_FLOATREGS + (((%s) + 8) %% 8)" % index)
++        return fpRegIdx("float_reg::NumRegs + (((%s) + 8) %% 8)" % index)
+ 
+     assembler.symbols["st"] = stack_index
+     assembler.symbols["sti"] = stack_index("env.reg")
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index 00d92b6..cc70a57 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -851,7 +851,7 @@ updateKvmStateFPUCommon(ThreadContext *tc, T &fpu)
+     for (int i = 0; i < 8; ++i) {
+         const unsigned reg_idx((i + top) & 0x7);
+         const double value(bitsToFloat64(
+-                    tc->readFloatReg(FLOATREG_FPR(reg_idx))));
++                    tc->getReg(float_reg::fpr(reg_idx))));
+         DPRINTF(KvmContext, "Setting KVM FP reg %i (st[%i]) := %f\n",
+                 reg_idx, i, value);
+         X86ISA::storeFloat80(fpu.fpr[i], value);
+@@ -861,9 +861,9 @@ updateKvmStateFPUCommon(ThreadContext *tc, T &fpu)
+ 
+     for (int i = 0; i < 16; ++i) {
+         *(uint64_t *)&fpu.xmm[i][0] =
+-            tc->readFloatReg(FLOATREG_XMM_LOW(i));
++            tc->getReg(float_reg::xmmLow(i));
+         *(uint64_t *)&fpu.xmm[i][8] =
+-            tc->readFloatReg(FLOATREG_XMM_HIGH(i));
++            tc->getReg(float_reg::xmmHigh(i));
+     }
+ }
+ 
+@@ -1063,7 +1063,7 @@ updateThreadContextFPUCommon(ThreadContext *tc, const T &fpu)
+         const double value(X86ISA::loadFloat80(fpu.fpr[i]));
+         DPRINTF(KvmContext, "Setting gem5 FP reg %i (st[%i]) := %f\n",
+                 reg_idx, i, value);
+-        tc->setFloatReg(FLOATREG_FPR(reg_idx), floatToBits64(value));
++        tc->setReg(float_reg::fpr(reg_idx), floatToBits64(value));
+     }
+ 
+     // TODO: We should update the MMX state
+@@ -1081,8 +1081,8 @@ updateThreadContextFPUCommon(ThreadContext *tc, const T &fpu)
+     tc->setMiscRegNoEffect(misc_reg::Fop, fpu.last_opcode);
+ 
+     for (int i = 0; i < 16; ++i) {
+-        tc->setFloatReg(FLOATREG_XMM_LOW(i), *(uint64_t *)&fpu.xmm[i][0]);
+-        tc->setFloatReg(FLOATREG_XMM_HIGH(i), *(uint64_t *)&fpu.xmm[i][8]);
++        tc->setReg(float_reg::xmmLow(i), *(uint64_t *)&fpu.xmm[i][0]);
++        tc->setReg(float_reg::xmmHigh(i), *(uint64_t *)&fpu.xmm[i][8]);
+     }
+ }
+ 
+diff --git a/src/arch/x86/nativetrace.cc b/src/arch/x86/nativetrace.cc
+index 809e19b..864825c 100644
+--- a/src/arch/x86/nativetrace.cc
++++ b/src/arch/x86/nativetrace.cc
+@@ -91,9 +91,9 @@ X86NativeTrace::ThreadState::update(ThreadContext *tc)
+     rip = tc->pcState().as<X86ISA::PCState>().npc();
+     //This should be expanded if x87 registers are considered
+     for (int i = 0; i < 8; i++)
+-        mmx[i] = tc->readFloatReg(X86ISA::FLOATREG_MMX(i));
++        mmx[i] = tc->getReg(X86ISA::float_reg::mmx(i));
+     for (int i = 0; i < 32; i++)
+-        xmm[i] = tc->readFloatReg(X86ISA::FLOATREG_XMM_BASE + i);
++        xmm[i] = tc->getReg(X86ISA::float_reg::xmm(i));
+ }
+ 
+ 
+diff --git a/src/arch/x86/regs/float.hh b/src/arch/x86/regs/float.hh
+index bd98567..45e2169 100644
+--- a/src/arch/x86/regs/float.hh
++++ b/src/arch/x86/regs/float.hh
+@@ -43,119 +43,123 @@
+ 
+ namespace gem5
+ {
+-
+ namespace X86ISA
+ {
+-    enum FloatRegIndex
+-    {
+-        // MMX/X87 registers
+-        FLOATREG_MMX_BASE,
+-        FLOATREG_FPR_BASE = FLOATREG_MMX_BASE,
+-        FLOATREG_MMX0 = FLOATREG_MMX_BASE,
+-        FLOATREG_MMX1,
+-        FLOATREG_MMX2,
+-        FLOATREG_MMX3,
+-        FLOATREG_MMX4,
+-        FLOATREG_MMX5,
+-        FLOATREG_MMX6,
+-        FLOATREG_MMX7,
+-
+-        FLOATREG_FPR0 = FLOATREG_FPR_BASE,
+-        FLOATREG_FPR1,
+-        FLOATREG_FPR2,
+-        FLOATREG_FPR3,
+-        FLOATREG_FPR4,
+-        FLOATREG_FPR5,
+-        FLOATREG_FPR6,
+-        FLOATREG_FPR7,
+-
+-        FLOATREG_XMM_BASE = FLOATREG_MMX_BASE + NumMMXRegs,
+-        FLOATREG_XMM0_LOW = FLOATREG_XMM_BASE,
+-        FLOATREG_XMM0_HIGH,
+-        FLOATREG_XMM1_LOW,
+-        FLOATREG_XMM1_HIGH,
+-        FLOATREG_XMM2_LOW,
+-        FLOATREG_XMM2_HIGH,
+-        FLOATREG_XMM3_LOW,
+-        FLOATREG_XMM3_HIGH,
+-        FLOATREG_XMM4_LOW,
+-        FLOATREG_XMM4_HIGH,
+-        FLOATREG_XMM5_LOW,
+-        FLOATREG_XMM5_HIGH,
+-        FLOATREG_XMM6_LOW,
+-        FLOATREG_XMM6_HIGH,
+-        FLOATREG_XMM7_LOW,
+-        FLOATREG_XMM7_HIGH,
+-        FLOATREG_XMM8_LOW,
+-        FLOATREG_XMM8_HIGH,
+-        FLOATREG_XMM9_LOW,
+-        FLOATREG_XMM9_HIGH,
+-        FLOATREG_XMM10_LOW,
+-        FLOATREG_XMM10_HIGH,
+-        FLOATREG_XMM11_LOW,
+-        FLOATREG_XMM11_HIGH,
+-        FLOATREG_XMM12_LOW,
+-        FLOATREG_XMM12_HIGH,
+-        FLOATREG_XMM13_LOW,
+-        FLOATREG_XMM13_HIGH,
+-        FLOATREG_XMM14_LOW,
+-        FLOATREG_XMM14_HIGH,
+-        FLOATREG_XMM15_LOW,
+-        FLOATREG_XMM15_HIGH,
+-
+-        FLOATREG_MICROFP_BASE = FLOATREG_XMM_BASE + 2 * NumXMMRegs,
+-        FLOATREG_MICROFP0 = FLOATREG_MICROFP_BASE,
+-        FLOATREG_MICROFP1,
+-        FLOATREG_MICROFP2,
+-        FLOATREG_MICROFP3,
+-        FLOATREG_MICROFP4,
+-        FLOATREG_MICROFP5,
+-        FLOATREG_MICROFP6,
+-        FLOATREG_MICROFP7,
+-
+-        NUM_FLOATREGS = FLOATREG_MICROFP_BASE + NumMicroFpRegs
+-    };
+-
+-    static inline FloatRegIndex
+-    FLOATREG_MMX(int index)
+-    {
+-        return (FloatRegIndex)(FLOATREG_MMX_BASE + index);
+-    }
+-
+-    static inline FloatRegIndex
+-    FLOATREG_FPR(int index)
+-    {
+-        return (FloatRegIndex)(FLOATREG_FPR_BASE + index);
+-    }
+-
+-    static inline FloatRegIndex
+-    FLOATREG_XMM_LOW(int index)
+-    {
+-        return (FloatRegIndex)(FLOATREG_XMM_BASE + 2 * index);
+-    }
+-
+-    static inline FloatRegIndex
+-    FLOATREG_XMM_HIGH(int index)
+-    {
+-        return (FloatRegIndex)(FLOATREG_XMM_BASE + 2 * index + 1);
+-    }
+-
+-    static inline FloatRegIndex
+-    FLOATREG_MICROFP(int index)
+-    {
+-        return (FloatRegIndex)(FLOATREG_MICROFP_BASE + index);
+-    }
+-
+-    static inline FloatRegIndex
+-    FLOATREG_STACK(int index, int top)
+-    {
+-        return FLOATREG_FPR((top + index + 8) % 8);
+-    }
+-
+-    // Each 128 bit xmm register is broken into two effective 64 bit registers.
+-    // Add 8 for the indices that are mapped over the fp stack
+-    const int NumFloatRegs =
+-        NumMMXRegs + 2 * NumXMMRegs + NumMicroFpRegs + 8;
++namespace float_reg
++{
++enum FloatRegIndex
++{
++    // MMX/X87 registers
++    MmxBase,
++    FprBase = MmxBase,
++    _Mmx0Idx = MmxBase,
++    _Mmx1Idx,
++    _Mmx2Idx,
++    _Mmx3Idx,
++    _Mmx4Idx,
++    _Mmx5Idx,
++    _Mmx6Idx,
++    _Mmx7Idx,
++
++    _Fpr0Idx = FprBase,
++    _Fpr1Idx,
++    _Fpr2Idx,
++    _Fpr3Idx,
++    _Fpr4Idx,
++    _Fpr5Idx,
++    _Fpr6Idx,
++    _Fpr7Idx,
++
++    XmmBase = MmxBase + NumMMXRegs,
++    _Xmm0LowIdx = XmmBase,
++    _Xmm0HighIdx,
++    _Xmm1LowIdx,
++    _Xmm1HighIdx,
++    _Xmm2LowIdx,
++    _Xmm2HighIdx,
++    _Xmm3LowIdx,
++    _Xmm3HighIdx,
++    _Xmm4LowIdx,
++    _Xmm4HighIdx,
++    _Xmm5LowIdx,
++    _Xmm5HighIdx,
++    _Xmm6LowIdx,
++    _Xmm6HighIdx,
++    _Xmm7LowIdx,
++    _Xmm7HighIdx,
++    _Xmm8LowIdx,
++    _Xmm8HighIdx,
++    _Xmm9LowIdx,
++    _Xmm9HighIdx,
++    _Xmm10LowIdx,
++    _Xmm10HighIdx,
++    _Xmm11LowIdx,
++    _Xmm11HighIdx,
++    _Xmm12LowIdx,
++    _Xmm12HighIdx,
++    _Xmm13LowIdx,
++    _Xmm13HighIdx,
++    _Xmm14LowIdx,
++    _Xmm14HighIdx,
++    _Xmm15LowIdx,
++    _Xmm15HighIdx,
++
++    MicrofpBase = XmmBase + 2 * NumXMMRegs,
++    _Microfp0Idx = MicrofpBase,
++    _Microfp1Idx,
++    _Microfp2Idx,
++    _Microfp3Idx,
++    _Microfp4Idx,
++    _Microfp5Idx,
++    _Microfp6Idx,
++    _Microfp7Idx,
++
++    NumRegs = MicrofpBase + NumMicroFpRegs
++};
++
++static inline RegId
++mmx(int index)
++{
++    return RegId(FloatRegClass, MmxBase + index);
++}
++
++static inline RegId
++fpr(int index)
++{
++    return RegId(FloatRegClass, FprBase + index);
++}
++
++static inline RegId
++xmm(int index)
++{
++    return RegId(FloatRegClass, XmmBase + index);
++}
++
++static inline RegId
++xmmLow(int index)
++{
++    return RegId(FloatRegClass, XmmBase + 2 * index);
++}
++
++static inline RegId
++xmmHigh(int index)
++{
++    return RegId(FloatRegClass, XmmBase + 2 * index + 1);
++}
++
++static inline RegId
++microfp(int index)
++{
++    return RegId(FloatRegClass, MicrofpBase + index);
++}
++
++static inline RegId
++stack(int index, int top)
++{
++    return fpr((top + index + 8) % 8);
++}
++
++} // namespace float_reg
+ 
+ } // namespace X86ISA
+ } // namespace gem5
+-- 
+1.8.3.1
+

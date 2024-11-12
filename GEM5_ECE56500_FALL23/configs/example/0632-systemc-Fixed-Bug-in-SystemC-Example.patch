@@ -1,0 +1,29 @@
+From f355f1f258b19f0e6e39f290d39d05d39128e701 Mon Sep 17 00:00:00 2001
+From: Matthias Jung <matthias.jung@iese.fraunhofer.de>
+Date: Tue, 10 May 2022 19:33:30 +0200
+Subject: [PATCH 632/757] systemc: Fixed Bug in SystemC Example
+
+Change-Id: I857a181470a491874c8ab9f7d467c89dafd97e6e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59550
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/systemc/systemc_within_gem5/systemc_simple_object/SConscript | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/util/systemc/systemc_within_gem5/systemc_simple_object/SConscript b/util/systemc/systemc_within_gem5/systemc_simple_object/SConscript
+index bb4b9f2..511ed62 100644
+--- a/util/systemc/systemc_within_gem5/systemc_simple_object/SConscript
++++ b/util/systemc/systemc_within_gem5/systemc_simple_object/SConscript
+@@ -25,6 +25,6 @@
+ 
+ Import('*')
+ 
+-SimObject('SystemC_Example.py')
++SimObject('SystemC_Example.py', sim_objects=["SystemC_Printer", "Gem5_Feeder"])
+ Source('printer.cc')
+ Source('feeder.cc')
+-- 
+1.8.3.1
+

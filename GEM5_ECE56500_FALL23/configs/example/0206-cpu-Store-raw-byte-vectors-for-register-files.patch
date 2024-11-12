@@ -1,0 +1,568 @@
+From d0b7de0f870d22f7d271ad0c698567b24d38fe80 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 25 Apr 2021 04:51:45 -0700
+Subject: [PATCH 206/757] cpu: Store raw byte vectors for register files.
+
+Individual register files, like the ones for scalar integer, floating
+point, or condition code registers, are now declared as vectors of their
+actual type. Accessing them is simple, since the register you want can
+be accessed simply by indexing into the vector.
+
+Unfortunately, that means the code that sets up that storage has to know
+what that underlying type is, and that means knowing (and hard coding)
+information about the ISA being built.
+
+Instead, this change makes the SimpleThread and O3 PhysRegFile classes
+store registers as vectors of bytes, and offsets into those vectors
+using computed offsets. Because the elements of the register files are
+forced to be offset by powers of 2, computing the offsets can be done
+with a shift rather than a multiplication.
+
+The accessors which actually pull values in and out of these vectors are
+still specific to each register type and need to know what the
+underlying type is, but this change pulls that one level out of the CPUs
+towards their peripheral APIs. Later changes will factor these uses out
+as well.
+
+Change-Id: I5e19d359a0e83e5827ae263d369999f90c7aa63d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49105
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/cpu/o3/regfile.cc    | 30 +++++++++---------
+ src/cpu/o3/regfile.hh    | 51 +++++++++++++++---------------
+ src/cpu/regfile.hh       | 80 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/cpu/simple_thread.cc | 14 ++++-----
+ src/cpu/simple_thread.hh | 67 +++++++++++++++++++++++-----------------
+ 5 files changed, 165 insertions(+), 77 deletions(-)
+ create mode 100644 src/cpu/regfile.hh
+
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index d3c1c57..4fa79dd 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -54,21 +54,21 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+                          unsigned _numPhysicalVecRegs,
+                          unsigned _numPhysicalVecPredRegs,
+                          unsigned _numPhysicalCCRegs,
+-                         const BaseISA::RegClasses &classes)
+-    : intRegFile(_numPhysicalIntRegs),
+-      floatRegFile(_numPhysicalFloatRegs),
+-      vectorRegFile(_numPhysicalVecRegs),
+-      vectorElemRegFile(_numPhysicalVecRegs * (
+-                  classes.at(VecElemClass).numRegs() /
+-                  classes.at(VecRegClass).numRegs())),
+-      vecPredRegFile(_numPhysicalVecPredRegs),
+-      ccRegFile(_numPhysicalCCRegs),
++                         const BaseISA::RegClasses &reg_classes)
++    : intRegFile(reg_classes.at(IntRegClass), _numPhysicalIntRegs),
++      floatRegFile(reg_classes.at(FloatRegClass), _numPhysicalFloatRegs),
++      vectorRegFile(reg_classes.at(VecRegClass), _numPhysicalVecRegs),
++      vectorElemRegFile(reg_classes.at(VecElemClass), _numPhysicalVecRegs * (
++                  reg_classes.at(VecElemClass).numRegs() /
++                  reg_classes.at(VecRegClass).numRegs())),
++      vecPredRegFile(reg_classes.at(VecPredRegClass), _numPhysicalVecPredRegs),
++      ccRegFile(reg_classes.at(CCRegClass), _numPhysicalCCRegs),
+       numPhysicalIntRegs(_numPhysicalIntRegs),
+       numPhysicalFloatRegs(_numPhysicalFloatRegs),
+       numPhysicalVecRegs(_numPhysicalVecRegs),
+       numPhysicalVecElemRegs(_numPhysicalVecRegs * (
+-                  classes.at(VecElemClass).numRegs() /
+-                  classes.at(VecRegClass).numRegs())),
++                  reg_classes.at(VecElemClass).numRegs() /
++                  reg_classes.at(VecRegClass).numRegs())),
+       numPhysicalVecPredRegs(_numPhysicalVecPredRegs),
+       numPhysicalCCRegs(_numPhysicalCCRegs),
+       totalNumRegs(_numPhysicalIntRegs
+@@ -76,8 +76,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+                    + _numPhysicalVecRegs
+                    + numPhysicalVecElemRegs
+                    + _numPhysicalVecPredRegs
+-                   + _numPhysicalCCRegs),
+-      regClasses(classes)
++                   + _numPhysicalCCRegs)
+ {
+     RegIndex phys_reg;
+     RegIndex flat_reg_idx = 0;
+@@ -87,7 +86,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+         intRegIds.emplace_back(IntRegClass, phys_reg, flat_reg_idx++);
+     }
+ 
+-    zeroReg = RegId(IntRegClass, regClasses.at(IntRegClass).zeroReg());
++    zeroReg = RegId(IntRegClass, reg_classes.at(IntRegClass).zeroReg());
+ 
+     // The next batch of the registers are the floating-point physical
+     // registers; put them onto the floating-point free list.
+@@ -98,7 +97,6 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+     // The next batch of the registers are the vector physical
+     // registers; put them onto the vector free list.
+     for (phys_reg = 0; phys_reg < numPhysicalVecRegs; phys_reg++) {
+-        vectorRegFile[phys_reg].zero();
+         vecRegIds.emplace_back(VecRegClass, phys_reg, flat_reg_idx++);
+     }
+     // The next batch of the registers are the vector element physical
+@@ -120,7 +118,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+     }
+ 
+     // Misc regs have a fixed mapping but still need PhysRegIds.
+-    for (phys_reg = 0; phys_reg < regClasses.at(MiscRegClass).numRegs();
++    for (phys_reg = 0; phys_reg < reg_classes.at(MiscRegClass).numRegs();
+             phys_reg++) {
+         miscRegIds.emplace_back(MiscRegClass, phys_reg, 0);
+     }
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index b98d5ef..cffa382 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -49,6 +49,7 @@
+ #include "base/trace.hh"
+ #include "config/the_isa.hh"
+ #include "cpu/o3/comm.hh"
++#include "cpu/regfile.hh"
+ #include "debug/IEW.hh"
+ 
+ namespace gem5
+@@ -72,28 +73,28 @@ class PhysRegFile
+                               PhysIds::iterator>;
+   private:
+     /** Integer register file. */
+-    std::vector<RegVal> intRegFile;
++    RegFile intRegFile;
+     std::vector<PhysRegId> intRegIds;
+     RegId zeroReg;
+ 
+     /** Floating point register file. */
+-    std::vector<RegVal> floatRegFile;
++    RegFile floatRegFile;
+     std::vector<PhysRegId> floatRegIds;
+ 
+     /** Vector register file. */
+-    std::vector<TheISA::VecRegContainer> vectorRegFile;
++    RegFile vectorRegFile;
+     std::vector<PhysRegId> vecRegIds;
+ 
+     /** Vector element register file. */
+-    std::vector<RegVal> vectorElemRegFile;
++    RegFile vectorElemRegFile;
+     std::vector<PhysRegId> vecElemIds;
+ 
+     /** Predicate register file. */
+-    std::vector<TheISA::VecPredRegContainer> vecPredRegFile;
++    RegFile vecPredRegFile;
+     std::vector<PhysRegId> vecPredRegIds;
+ 
+     /** Condition-code register file. */
+-    std::vector<RegVal> ccRegFile;
++    RegFile ccRegFile;
+     std::vector<PhysRegId> ccRegIds;
+ 
+     /** Misc Reg Ids */
+@@ -132,8 +133,6 @@ class PhysRegFile
+     /** Total number of physical registers. */
+     unsigned totalNumRegs;
+ 
+-    const BaseISA::RegClasses &regClasses;
+-
+   public:
+     /**
+      * Constructs a physical register file with the specified amount of
+@@ -185,8 +184,8 @@ class PhysRegFile
+         assert(phys_reg->is(IntRegClass));
+ 
+         DPRINTF(IEW, "RegFile: Access to int register %i, has data "
+-                "%#x\n", phys_reg->index(), intRegFile[phys_reg->index()]);
+-        return intRegFile[phys_reg->index()];
++                "%#x\n", phys_reg->index(), intRegFile.reg(phys_reg->index()));
++        return intRegFile.reg(phys_reg->index());
+     }
+ 
+     RegVal
+@@ -194,7 +193,7 @@ class PhysRegFile
+     {
+         assert(phys_reg->is(FloatRegClass));
+ 
+-        RegVal floatRegBits = floatRegFile[phys_reg->index()];
++        RegVal floatRegBits = floatRegFile.reg(phys_reg->index());
+ 
+         DPRINTF(IEW, "RegFile: Access to float register %i as int, "
+                 "has data %#x\n", phys_reg->index(), floatRegBits);
+@@ -210,9 +209,9 @@ class PhysRegFile
+ 
+         DPRINTF(IEW, "RegFile: Access to vector register %i, has "
+                 "data %s\n", int(phys_reg->index()),
+-                vectorRegFile[phys_reg->index()]);
++                vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index()));
+ 
+-        return vectorRegFile[phys_reg->index()];
++        return vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index());
+     }
+ 
+     /** Reads a vector register for modification. */
+@@ -228,10 +227,9 @@ class PhysRegFile
+     readVecElem(PhysRegIdPtr phys_reg) const
+     {
+         assert(phys_reg->is(VecElemClass));
+-        RegVal val = vectorElemRegFile[phys_reg->index()];
++        RegVal val = vectorElemRegFile.reg(phys_reg->index());
+         DPRINTF(IEW, "RegFile: Access to vector register element %d,"
+                 " has data %#x\n", phys_reg->index(), val);
+-
+         return val;
+     }
+ 
+@@ -243,9 +241,11 @@ class PhysRegFile
+ 
+         DPRINTF(IEW, "RegFile: Access to predicate register %i, has "
+                 "data %s\n", int(phys_reg->index()),
+-                vecPredRegFile[phys_reg->index()]);
++                vecPredRegFile.reg<TheISA::VecPredRegContainer>(
++                    phys_reg->index()));
+ 
+-        return vecPredRegFile[phys_reg->index()];
++        return vecPredRegFile.reg<TheISA::VecPredRegContainer>(
++                phys_reg->index());
+     }
+ 
+     TheISA::VecPredRegContainer&
+@@ -264,9 +264,9 @@ class PhysRegFile
+ 
+         DPRINTF(IEW, "RegFile: Access to cc register %i, has "
+                 "data %#x\n", phys_reg->index(),
+-                ccRegFile[phys_reg->index()]);
++                ccRegFile.reg(phys_reg->index()));
+ 
+-        return ccRegFile[phys_reg->index()];
++        return ccRegFile.reg(phys_reg->index());
+     }
+ 
+     /** Sets an integer register to the given value. */
+@@ -279,7 +279,7 @@ class PhysRegFile
+                 phys_reg->index(), val);
+ 
+         if (phys_reg->index() != zeroReg.index())
+-            intRegFile[phys_reg->index()] = val;
++            intRegFile.reg(phys_reg->index()) = val;
+     }
+ 
+     void
+@@ -290,7 +290,7 @@ class PhysRegFile
+         DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
+                 phys_reg->index(), (uint64_t)val);
+ 
+-        floatRegFile[phys_reg->index()] = val;
++        floatRegFile.reg(phys_reg->index()) = val;
+     }
+ 
+     /** Sets a vector register to the given value. */
+@@ -302,7 +302,7 @@ class PhysRegFile
+         DPRINTF(IEW, "RegFile: Setting vector register %i to %s\n",
+                 int(phys_reg->index()), val);
+ 
+-        vectorRegFile[phys_reg->index()] = val;
++        vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index()) = val;
+     }
+ 
+     /** Sets a vector register to the given value. */
+@@ -314,7 +314,7 @@ class PhysRegFile
+         DPRINTF(IEW, "RegFile: Setting vector register element %d to %#x\n",
+                 phys_reg->index(), val);
+ 
+-        vectorElemRegFile[phys_reg->index()] = val;
++        vectorElemRegFile.reg(phys_reg->index()) = val;
+     }
+ 
+     /** Sets a predicate register to the given value. */
+@@ -327,7 +327,8 @@ class PhysRegFile
+         DPRINTF(IEW, "RegFile: Setting predicate register %i to %s\n",
+                 int(phys_reg->index()), val);
+ 
+-        vecPredRegFile[phys_reg->index()] = val;
++        vecPredRegFile.reg<TheISA::VecPredRegContainer>(
++                phys_reg->index()) = val;
+     }
+ 
+     /** Sets a condition-code register to the given value. */
+@@ -339,7 +340,7 @@ class PhysRegFile
+         DPRINTF(IEW, "RegFile: Setting cc register %i to %#x\n",
+                 phys_reg->index(), (uint64_t)val);
+ 
+-        ccRegFile[phys_reg->index()] = val;
++        ccRegFile.reg(phys_reg->index()) = val;
+     }
+ 
+     /**
+diff --git a/src/cpu/regfile.hh b/src/cpu/regfile.hh
+new file mode 100644
+index 0000000..22a15d6
+--- /dev/null
++++ b/src/cpu/regfile.hh
+@@ -0,0 +1,80 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __CPU_REGFILE_HH__
++#define __CPU_REGFILE_HH__
++
++#include <cassert>
++#include <vector>
++
++#include "cpu/reg_class.hh"
++
++namespace gem5
++{
++
++class RegFile
++{
++  private:
++    std::vector<uint8_t> data;
++    const size_t _size;
++    const size_t _regShift;
++    const size_t _regBytes;
++
++  public:
++    RegFile(const RegClass &info, const size_t new_size) :
++        data(new_size << info.regShift()), _size(new_size),
++        _regShift(info.regShift()), _regBytes(info.regBytes())
++    {}
++
++    RegFile(const RegClass &info) : RegFile(info, info.numRegs()) {}
++
++    size_t size() const { return _size; }
++    size_t regShift() const { return _regShift; }
++    size_t regBytes() const { return _regBytes; }
++
++    template <typename Reg=RegVal>
++    Reg &
++    reg(size_t idx)
++    {
++        assert(sizeof(Reg) == _regBytes && idx < _size);
++        return *reinterpret_cast<Reg *>(data.data() + (idx << _regShift));
++    }
++    template <typename Reg=RegVal>
++    const Reg &
++    reg(size_t idx) const
++    {
++        assert(sizeof(Reg) == _regBytes && idx < _size);
++        return *reinterpret_cast<const Reg *>(
++                data.data() + (idx << _regShift));
++    }
++
++    void clear() { std::fill(data.begin(), data.end(), 0); }
++};
++
++} // namespace gem5
++
++#endif // __CPU_REGFILE_HH__
+diff --git a/src/cpu/simple_thread.cc b/src/cpu/simple_thread.cc
+index fd12719..1620bda 100644
+--- a/src/cpu/simple_thread.cc
++++ b/src/cpu/simple_thread.cc
+@@ -70,20 +70,18 @@ SimpleThread::SimpleThread(BaseCPU *_cpu, int _thread_num, System *_sys,
+                            Process *_process, BaseMMU *_mmu,
+                            BaseISA *_isa, InstDecoder *_decoder)
+     : ThreadState(_cpu, _thread_num, _process),
++      floatRegs(_isa->regClasses().at(FloatRegClass)),
++      intRegs(_isa->regClasses().at(IntRegClass)),
++      vecRegs(_isa->regClasses().at(VecRegClass)),
++      vecElemRegs(_isa->regClasses().at(VecElemClass)),
++      vecPredRegs(_isa->regClasses().at(VecPredRegClass)),
++      ccRegs(_isa->regClasses().at(CCRegClass)),
+       isa(dynamic_cast<TheISA::ISA *>(_isa)),
+       predicate(true), memAccPredicate(true),
+       comInstEventQueue("instruction-based event queue"),
+       system(_sys), mmu(_mmu), decoder(_decoder),
+       htmTransactionStarts(0), htmTransactionStops(0)
+ {
+-    assert(isa);
+-    const auto &regClasses = isa->regClasses();
+-    intRegs.resize(regClasses.at(IntRegClass).numRegs());
+-    floatRegs.resize(regClasses.at(FloatRegClass).numRegs());
+-    vecRegs.resize(regClasses.at(VecRegClass).numRegs());
+-    vecElemRegs.resize(regClasses.at(VecElemClass).numRegs());
+-    vecPredRegs.resize(regClasses.at(VecPredRegClass).numRegs());
+-    ccRegs.resize(regClasses.at(CCRegClass).numRegs());
+     clearArchRegs();
+ }
+ 
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index ab6ce03..4d17ff1 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -53,6 +53,7 @@
+ #include "arch/vecregs.hh"
+ #include "base/types.hh"
+ #include "config/the_isa.hh"
++#include "cpu/regfile.hh"
+ #include "cpu/thread_context.hh"
+ #include "cpu/thread_state.hh"
+ #include "debug/CCRegs.hh"
+@@ -96,12 +97,12 @@ class SimpleThread : public ThreadState, public ThreadContext
+     typedef ThreadContext::Status Status;
+ 
+   protected:
+-    std::vector<RegVal> floatRegs;
+-    std::vector<RegVal> intRegs;
+-    std::vector<TheISA::VecRegContainer> vecRegs;
+-    std::vector<RegVal> vecElemRegs;
+-    std::vector<TheISA::VecPredRegContainer> vecPredRegs;
+-    std::vector<RegVal> ccRegs;
++    RegFile floatRegs;
++    RegFile intRegs;
++    RegFile vecRegs;
++    RegFile vecElemRegs;
++    RegFile vecPredRegs;
++    RegFile ccRegs;
+     TheISA::ISA *const isa;    // one "instance" of the current ISA.
+ 
+     std::unique_ptr<PCStateBase> _pcState;
+@@ -249,14 +250,12 @@ class SimpleThread : public ThreadState, public ThreadContext
+     clearArchRegs() override
+     {
+         set(_pcState, isa->newPCState());
+-        std::fill(intRegs.begin(), intRegs.end(), 0);
+-        std::fill(floatRegs.begin(), floatRegs.end(), 0);
+-        for (auto &vec_reg: vecRegs)
+-            vec_reg.zero();
+-        std::fill(vecElemRegs.begin(), vecElemRegs.end(), 0);
+-        for (auto &pred_reg: vecPredRegs)
+-            pred_reg.reset();
+-        std::fill(ccRegs.begin(), ccRegs.end(), 0);
++        intRegs.clear();
++        floatRegs.clear();
++        vecRegs.clear();
++        vecElemRegs.clear();
++        vecPredRegs.clear();
++        ccRegs.clear();
+         isa->clear();
+     }
+ 
+@@ -483,75 +482,87 @@ class SimpleThread : public ThreadState, public ThreadContext
+         storeCondFailures = sc_failures;
+     }
+ 
+-    RegVal readIntRegFlat(RegIndex idx) const override { return intRegs[idx]; }
++    RegVal
++    readIntRegFlat(RegIndex idx) const override
++    {
++        return intRegs.reg(idx);
++    }
+     void
+     setIntRegFlat(RegIndex idx, RegVal val) override
+     {
+-        intRegs[idx] = val;
++        intRegs.reg(idx) = val;
+     }
+ 
+     RegVal
+     readFloatRegFlat(RegIndex idx) const override
+     {
+-        return floatRegs[idx];
++        return floatRegs.reg(idx);
+     }
+     void
+     setFloatRegFlat(RegIndex idx, RegVal val) override
+     {
+-        floatRegs[idx] = val;
++        floatRegs.reg(idx) = val;
+     }
+ 
+     const TheISA::VecRegContainer &
+     readVecRegFlat(RegIndex reg) const override
+     {
+-        return vecRegs[reg];
++        return vecRegs.reg<TheISA::VecRegContainer>(reg);
+     }
+ 
+     TheISA::VecRegContainer &
+     getWritableVecRegFlat(RegIndex reg) override
+     {
+-        return vecRegs[reg];
++        return vecRegs.reg<TheISA::VecRegContainer>(reg);
+     }
+ 
+     void
+     setVecRegFlat(RegIndex reg, const TheISA::VecRegContainer &val) override
+     {
+-        vecRegs[reg] = val;
++        vecRegs.reg<TheISA::VecRegContainer>(reg) = val;
+     }
+ 
+     RegVal
+     readVecElemFlat(RegIndex reg) const override
+     {
+-        return vecElemRegs[reg];
++        return vecElemRegs.reg(reg);
+     }
+ 
+     void
+     setVecElemFlat(RegIndex reg, RegVal val) override
+     {
+-        vecElemRegs[reg] = val;
++        vecElemRegs.reg(reg) = val;
+     }
+ 
+     const TheISA::VecPredRegContainer &
+     readVecPredRegFlat(RegIndex reg) const override
+     {
+-        return vecPredRegs[reg];
++        return vecPredRegs.reg<TheISA::VecPredRegContainer>(reg);
+     }
+ 
+     TheISA::VecPredRegContainer &
+     getWritableVecPredRegFlat(RegIndex reg) override
+     {
+-        return vecPredRegs[reg];
++        return vecPredRegs.reg<TheISA::VecPredRegContainer>(reg);
+     }
+ 
+     void
+     setVecPredRegFlat(RegIndex reg,
+             const TheISA::VecPredRegContainer &val) override
+     {
+-        vecPredRegs[reg] = val;
++        vecPredRegs.reg<TheISA::VecPredRegContainer>(reg) = val;
+     }
+ 
+-    RegVal readCCRegFlat(RegIndex idx) const override { return ccRegs[idx]; }
+-    void setCCRegFlat(RegIndex idx, RegVal val) override { ccRegs[idx] = val; }
++    RegVal
++    readCCRegFlat(RegIndex idx) const override
++    {
++        return ccRegs.reg(idx);
++    }
++    void
++    setCCRegFlat(RegIndex idx, RegVal val) override
++    {
++        ccRegs.reg(idx) = val;
++    }
+ 
+     // hardware transactional memory
+     void htmAbortTransaction(uint64_t htm_uid,
+-- 
+1.8.3.1
+

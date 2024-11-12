@@ -1,0 +1,68 @@
+From 2bc3f873a983dc19417f022c50c0d314b111d5af Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 20 Dec 2021 13:41:11 -0800
+Subject: [PATCH 065/757] scons: Add werror explicitly when checking for
+ compatible options.
+
+When checking whether a given option is supported, we try to compile or
+link a small test program and see if that succeeded or not. There are
+some options which are not really supported, but if you use them the
+compiler might produce an error instead of failing to build. An example
+of that is clang (version 9 at least) which will warn if you try to
+disabled a warning it doesn't know about.
+
+On the develop branch, this is fine since we have werror enabled, and
+even these warnings will prevent the options from being enabled. On the
+release branches where we disable werror for better future
+compatibility, this causes a problem because these options still pass
+the test and end up being enabled. This doesn't break the build, but
+can cause a bunch of annoying and unnecessary warnings which clutter
+up the build output.
+
+To remove this inconsistency, we can enable werror just for the test
+compiles or links which decide whether or not an option is supported.
+That won't necessarily differentiate *why* a warning was generated, so
+if through some strange combination of circumstances something else
+causes a warning pervasively through the build, then this may think
+an option is to blame and not enable it even though it's fine. This
+seems unlikely though, and not worth worrying about without a specific
+example showing that it can/will actually happen.
+
+Change-Id: I6a1e3273c0b646a5636dc9986c70dcd5332f6f64
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54624
+Maintainer: Gabe Black <gabeblack@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ site_scons/gem5_scons/configure.py | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/site_scons/gem5_scons/configure.py b/site_scons/gem5_scons/configure.py
+index b335673..835ef44 100644
+--- a/site_scons/gem5_scons/configure.py
++++ b/site_scons/gem5_scons/configure.py
+@@ -48,7 +48,10 @@ def CheckCxxFlag(context, flag, autoadd=True):
+     context.Message("Checking for compiler %s support... " % flag)
+     last_cxxflags = context.env['CXXFLAGS']
+     context.env.Append(CXXFLAGS=[flag])
++    pre_werror = context.env['CXXFLAGS']
++    context.env.Append(CXXFLAGS=['-Werror'])
+     ret = context.TryCompile('// CheckCxxFlag DO NOTHING', '.cc')
++    context.env['CXXFLAGS'] = pre_werror
+     if not (ret and autoadd):
+         context.env['CXXFLAGS'] = last_cxxflags
+     context.Result(ret)
+@@ -58,7 +61,10 @@ def CheckLinkFlag(context, flag, autoadd=True, set_for_shared=True):
+     context.Message("Checking for linker %s support... " % flag)
+     last_linkflags = context.env['LINKFLAGS']
+     context.env.Append(LINKFLAGS=[flag])
++    pre_werror = context.env['LINKFLAGS']
++    context.env.Append(CXXFLAGS=['-Werror'])
+     ret = context.TryLink('int main(int, char *[]) { return 0; }', '.cc')
++    context.env['LINKFLAGS'] = pre_werror
+     if not (ret and autoadd):
+         context.env['LINKFLAGS'] = last_linkflags
+     if (ret and set_for_shared):
+-- 
+1.8.3.1
+

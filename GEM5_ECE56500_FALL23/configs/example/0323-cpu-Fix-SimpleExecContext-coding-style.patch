@@ -1,0 +1,56 @@
+From a3e481c0247b3f8459fcf423e5d774938d350c48 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 26 Oct 2021 15:47:25 +0100
+Subject: [PATCH 323/757] cpu: Fix SimpleExecContext coding style
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I3b9107943732503055008f843a21925574dad930
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56597
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/simple/exec_context.hh | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/src/cpu/simple/exec_context.hh b/src/cpu/simple/exec_context.hh
+index 98adf36..22ccafe 100644
+--- a/src/cpu/simple/exec_context.hh
++++ b/src/cpu/simple/exec_context.hh
+@@ -430,20 +430,23 @@ class SimpleExecContext : public ExecContext
+             byte_enable);
+     }
+ 
+-    Fault amoMem(Addr addr, uint8_t *data, unsigned int size,
+-                 Request::Flags flags, AtomicOpFunctorPtr amo_op) override
++    Fault
++    amoMem(Addr addr, uint8_t *data, unsigned int size,
++           Request::Flags flags, AtomicOpFunctorPtr amo_op) override
+     {
+         return cpu->amoMem(addr, data, size, flags, std::move(amo_op));
+     }
+ 
+-    Fault initiateMemAMO(Addr addr, unsigned int size,
+-                         Request::Flags flags,
+-                         AtomicOpFunctorPtr amo_op) override
++    Fault
++    initiateMemAMO(Addr addr, unsigned int size,
++                   Request::Flags flags,
++                   AtomicOpFunctorPtr amo_op) override
+     {
+         return cpu->initiateMemAMO(addr, size, flags, std::move(amo_op));
+     }
+ 
+-    Fault initiateHtmCmd(Request::Flags flags) override
++    Fault
++    initiateHtmCmd(Request::Flags flags) override
+     {
+         return cpu->initiateHtmCmd(flags);
+     }
+-- 
+1.8.3.1
+

@@ -1,0 +1,256 @@
+From db05eb9d890acf31b5e7ed3f9809ff060769622e Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 28 Sep 2021 12:14:08 +0100
+Subject: [PATCH 010/757] arch-arm: Use ArmRelease in MMU and TableWalker
+
+Change-Id: I210c73e0e66390f702dad6e7d737c8271b119091
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/51408
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/ArmMMU.py       |  4 ++++
+ src/arch/arm/mmu.cc          | 13 +++++++------
+ src/arch/arm/mmu.hh          |  5 +++--
+ src/arch/arm/table_walker.cc | 26 ++++++++++++++++----------
+ src/arch/arm/table_walker.hh |  8 ++------
+ 5 files changed, 32 insertions(+), 24 deletions(-)
+
+diff --git a/src/arch/arm/ArmMMU.py b/src/arch/arm/ArmMMU.py
+index d32cbff..abf36e0 100644
+--- a/src/arch/arm/ArmMMU.py
++++ b/src/arch/arm/ArmMMU.py
+@@ -35,6 +35,7 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
++from m5.objects.ArmSystem import ArmRelease
+ from m5.objects.ArmTLB import ArmTLB, ArmStage2TLB
+ from m5.objects.BaseMMU import BaseMMU
+ from m5.objects.ClockedObject import ClockedObject
+@@ -89,6 +90,9 @@ class ArmMMU(BaseMMU):
+ 
+     sys = Param.System(Parent.any, "system object parameter")
+ 
++    release_se = Param.ArmRelease(Parent.isa[0].release_se,
++        "Set of features/extensions to use in SE mode")
++
+     @classmethod
+     def walkerPorts(cls):
+         return ["mmu.itb_walker.port", "mmu.dtb_walker.port",
+diff --git a/src/arch/arm/mmu.cc b/src/arch/arm/mmu.cc
+index ce052f1..cffbb20 100644
+--- a/src/arch/arm/mmu.cc
++++ b/src/arch/arm/mmu.cc
+@@ -66,21 +66,22 @@ MMU::MMU(const ArmMMUParams &p)
+     miscRegContext(0),
+     s1State(this, false), s2State(this, true),
+     _attr(0),
++    _release(nullptr),
+     stats(this)
+ {
+     // Cache system-level properties
+     if (FullSystem) {
+         ArmSystem *arm_sys = dynamic_cast<ArmSystem *>(p.sys);
+         assert(arm_sys);
+-        haveLPAE = arm_sys->has(ArmExtension::LPAE);
+-        haveVirtualization = arm_sys->has(ArmExtension::VIRTUALIZATION);
+         haveLargeAsid64 = arm_sys->haveLargeAsid64();
+         physAddrRange = arm_sys->physAddrRange();
++
++        _release = arm_sys->releaseFS();
+     } else {
+-        haveLPAE = false;
+-        haveVirtualization = false;
+         haveLargeAsid64 = false;
+         physAddrRange = 48;
++
++        _release = p.release_se;
+     }
+ 
+     m5opRange = p.sys->m5opRange();
+@@ -1249,7 +1250,7 @@ MMU::CachedState::updateMiscReg(ThreadContext *tc,
+ 
+         scr = tc->readMiscReg(MISCREG_SCR_EL3);
+         isPriv = aarch64EL != EL0;
+-        if (mmu->haveVirtualization) {
++        if (mmu->release()->has(ArmExtension::VIRTUALIZATION)) {
+             vmid = getVMID(tc);
+             isHyp = aarch64EL == EL2;
+             isHyp |= tran_type & HypMode;
+@@ -1312,7 +1313,7 @@ MMU::CachedState::updateMiscReg(ThreadContext *tc,
+                                !isSecure));
+         hcr  = tc->readMiscReg(MISCREG_HCR);
+ 
+-        if (mmu->haveVirtualization) {
++        if (mmu->release()->has(ArmExtension::VIRTUALIZATION)) {
+             vmid   = bits(tc->readMiscReg(MISCREG_VTTBR), 55, 48);
+             isHyp  = cpsr.mode == MODE_HYP;
+             isHyp |=  tran_type & HypMode;
+diff --git a/src/arch/arm/mmu.hh b/src/arch/arm/mmu.hh
+index 2d0ef7b..2f353c7 100644
+--- a/src/arch/arm/mmu.hh
++++ b/src/arch/arm/mmu.hh
+@@ -342,6 +342,8 @@ class MMU : public BaseMMU
+         _attr = attr;
+     }
+ 
++    const ArmRelease* release() const { return _release; }
++
+     /**
+      * Determine the EL to use for the purpose of a translation given
+      * a specific translation type. If the translation type doesn't
+@@ -432,8 +434,7 @@ class MMU : public BaseMMU
+     uint64_t _attr;      // Memory attributes for last accessed TLB entry
+ 
+     // Cached copies of system-level properties
+-    bool haveLPAE;
+-    bool haveVirtualization;
++    const ArmRelease *_release;
+     bool haveLargeAsid64;
+     uint8_t physAddrRange;
+ 
+diff --git a/src/arch/arm/table_walker.cc b/src/arch/arm/table_walker.cc
+index 96170d3..c70d856 100644
+--- a/src/arch/arm/table_walker.cc
++++ b/src/arch/arm/table_walker.cc
+@@ -66,6 +66,7 @@ TableWalker::TableWalker(const Params &p)
+       isStage2(p.is_stage2), tlb(NULL),
+       currState(NULL), pending(false),
+       numSquashable(p.num_squash_per_cycle),
++      release(nullptr),
+       stats(this),
+       pendingReqs(0),
+       pendingChangeTick(curTick()),
+@@ -85,13 +86,9 @@ TableWalker::TableWalker(const Params &p)
+     if (FullSystem) {
+         ArmSystem *arm_sys = dynamic_cast<ArmSystem *>(p.sys);
+         assert(arm_sys);
+-        haveSecurity = arm_sys->has(ArmExtension::SECURITY);
+-        _haveLPAE = arm_sys->has(ArmExtension::LPAE);
+-        _haveVirtualization = arm_sys->has(ArmExtension::VIRTUALIZATION);
+         _physAddrRange = arm_sys->physAddrRange();
+         _haveLargeAsid64 = arm_sys->haveLargeAsid64();
+     } else {
+-        haveSecurity = _haveLPAE = _haveVirtualization = false;
+         _haveLargeAsid64 = false;
+         _physAddrRange = 48;
+     }
+@@ -118,6 +115,13 @@ TableWalker::getPort(const std::string &if_name, PortID idx)
+     return ClockedObject::getPort(if_name, idx);
+ }
+ 
++void
++TableWalker::setMmu(MMU *_mmu)
++{
++    mmu = _mmu;
++    release = mmu->release();
++}
++
+ TableWalker::WalkerState::WalkerState() :
+     tc(nullptr), aarch64(false), el(EL0), physAddrRange(0), req(nullptr),
+     asid(0), vmid(0), isHyp(false), transState(nullptr),
+@@ -388,12 +392,12 @@ TableWalker::walk(const RequestPtr &_req, ThreadContext *_tc, uint16_t _asid,
+             currState->tcr = currState->tc->readMiscReg(MISCREG_TCR_EL1);
+             break;
+           case EL2:
+-            assert(_haveVirtualization);
++            assert(release->has(ArmExtension::VIRTUALIZATION));
+             currState->sctlr = currState->tc->readMiscReg(MISCREG_SCTLR_EL2);
+             currState->tcr = currState->tc->readMiscReg(MISCREG_TCR_EL2);
+             break;
+           case EL3:
+-            assert(haveSecurity);
++            assert(release->has(ArmExtension::SECURITY));
+             currState->sctlr = currState->tc->readMiscReg(MISCREG_SCTLR_EL3);
+             currState->tcr = currState->tc->readMiscReg(MISCREG_TCR_EL3);
+             break;
+@@ -579,6 +583,7 @@ TableWalker::processWalk()
+     // If translation isn't enabled, we shouldn't be here
+     assert(currState->sctlr.m || isStage2);
+     const bool is_atomic = currState->req->isAtomic();
++    const bool have_security = release->has(ArmExtension::SECURITY);
+ 
+     DPRINTF(TLB, "Beginning table walk for address %#x, TTBCR: %#x, bits:%#x\n",
+             currState->vaddr_tainted, currState->ttbcr, mbits(currState->vaddr, 31,
+@@ -590,7 +595,7 @@ TableWalker::processWalk()
+                                           32 - currState->ttbcr.n)) {
+         DPRINTF(TLB, " - Selecting TTBR0\n");
+         // Check if table walk is allowed when Security Extensions are enabled
+-        if (haveSecurity && currState->ttbcr.pd0) {
++        if (have_security && currState->ttbcr.pd0) {
+             if (currState->isFetch)
+                 return std::make_shared<PrefetchAbort>(
+                     currState->vaddr_tainted,
+@@ -610,7 +615,7 @@ TableWalker::processWalk()
+     } else {
+         DPRINTF(TLB, " - Selecting TTBR1\n");
+         // Check if table walk is allowed when Security Extensions are enabled
+-        if (haveSecurity && currState->ttbcr.pd1) {
++        if (have_security && currState->ttbcr.pd1) {
+             if (currState->isFetch)
+                 return std::make_shared<PrefetchAbort>(
+                     currState->vaddr_tainted,
+@@ -1414,7 +1419,7 @@ void
+ TableWalker::memAttrsLPAE(ThreadContext *tc, TlbEntry &te,
+     LongDescriptor &l_descriptor)
+ {
+-    assert(_haveLPAE);
++    assert(release->has(ArmExtension::LPAE));
+ 
+     uint8_t attr;
+     uint8_t sh = l_descriptor.sh();
+@@ -2250,6 +2255,7 @@ TableWalker::fetchDescriptor(Addr descAddr, uint8_t *data, int numBytes,
+ void
+ TableWalker::insertTableEntry(DescriptorBase &descriptor, bool long_descriptor)
+ {
++    const bool have_security = release->has(ArmExtension::SECURITY);
+     TlbEntry te;
+ 
+     // Create and fill a new page table entry
+@@ -2264,7 +2270,7 @@ TableWalker::insertTableEntry(DescriptorBase &descriptor, bool long_descriptor)
+     te.pfn            = descriptor.pfn();
+     te.domain         = descriptor.domain();
+     te.lookupLevel    = descriptor.lookupLevel;
+-    te.ns             = !descriptor.secure(haveSecurity, currState);
++    te.ns             = !descriptor.secure(have_security, currState);
+     te.nstid          = !currState->isSecure;
+     te.xn             = descriptor.xn();
+     te.type           = currState->mode == BaseMMU::Execute ?
+diff --git a/src/arch/arm/table_walker.hh b/src/arch/arm/table_walker.hh
+index e16bff7..554bc2b 100644
+--- a/src/arch/arm/table_walker.hh
++++ b/src/arch/arm/table_walker.hh
+@@ -1040,9 +1040,7 @@ class TableWalker : public ClockedObject
+     unsigned numSquashable;
+ 
+     /** Cached copies of system-level properties */
+-    bool haveSecurity;
+-    bool _haveLPAE;
+-    bool _haveVirtualization;
++    const ArmRelease *release;
+     uint8_t _physAddrRange;
+     bool _haveLargeAsid64;
+ 
+@@ -1076,8 +1074,6 @@ class TableWalker : public ClockedObject
+     TableWalker(const Params &p);
+     virtual ~TableWalker();
+ 
+-    bool haveLPAE() const { return _haveLPAE; }
+-    bool haveVirtualization() const { return _haveVirtualization; }
+     bool haveLargeAsid64() const { return _haveLargeAsid64; }
+     uint8_t physAddrRange() const { return _physAddrRange; }
+     /** Checks if all state is cleared and if so, completes drain */
+@@ -1096,7 +1092,7 @@ class TableWalker : public ClockedObject
+                bool timing, bool functional, bool secure,
+                MMU::ArmTranslationType tranType, bool _stage2Req);
+ 
+-    void setMmu(MMU *_mmu) { mmu = _mmu; }
++    void setMmu(MMU *_mmu);
+     void setTlb(TLB *_tlb) { tlb = _tlb; }
+     TLB* getTlb() { return tlb; }
+     void memAttrs(ThreadContext *tc, TlbEntry &te, SCTLR sctlr,
+-- 
+1.8.3.1
+

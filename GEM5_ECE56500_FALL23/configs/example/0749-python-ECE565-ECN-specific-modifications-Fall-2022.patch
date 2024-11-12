@@ -1,0 +1,78 @@
+From 5395c45750d03088ae8d6f4991ed130ebef89217 Mon Sep 17 00:00:00 2001
+From: Mithuna Thottethodi <mithuna@purdue.edu>
+Date: Wed, 5 Oct 2022 21:55:05 -0400
+Subject: [PATCH 749/757] python: ECE565+ECN specific modifications - Fall 2022
+
+Change-Id: I78bc6bf5759c6521c7831662dbdf2e9dd94a9c7a
+---
+ build_opts/ECE565-ARM    |  4 ++++
+ build_opts/ECE565-X86    |  4 ++++
+ src/base/stats/SConsopts | 11 ++++++-----
+ src/proto/SConsopts      |  7 ++++---
+ 4 files changed, 18 insertions(+), 8 deletions(-)
+ create mode 100644 build_opts/ECE565-ARM
+ create mode 100644 build_opts/ECE565-X86
+
+diff --git a/build_opts/ECE565-ARM b/build_opts/ECE565-ARM
+new file mode 100644
+index 0000000..68f1b3f
+--- /dev/null
++++ b/build_opts/ECE565-ARM
+@@ -0,0 +1,4 @@
++TARGET_ISA = 'arm'
++CPU_MODELS = 'AtomicSimpleCPU,O3CPU,TimingSimpleCPU,MinorCPU'
++PROTOCOL = 'MI_example'
++
+diff --git a/build_opts/ECE565-X86 b/build_opts/ECE565-X86
+new file mode 100644
+index 0000000..5612787
+--- /dev/null
++++ b/build_opts/ECE565-X86
+@@ -0,0 +1,4 @@
++TARGET_ISA = 'x86'
++CPU_MODELS = 'AtomicSimpleCPU,O3CPU,TimingSimpleCPU,MinorCPU'
++PROTOCOL = 'MI_example'
++
+diff --git a/src/base/stats/SConsopts b/src/base/stats/SConsopts
+index ce0e880..ee568ff 100644
+--- a/src/base/stats/SConsopts
++++ b/src/base/stats/SConsopts
+@@ -41,11 +41,12 @@ with gem5_scons.Configure(main) as conf:
+     # include path and library path provided by pkg-config. We perform
+     # this check even if there isn't a pkg-config configuration for hdf5
+     # since some installations don't use pkg-config.
+-    conf.env['CONF']['HAVE_HDF5'] = \
+-            conf.CheckLibWithHeader('hdf5', 'hdf5.h', 'C',
+-                                    'H5Fcreate("", 0, 0, 0);') and \
+-            conf.CheckLibWithHeader('hdf5_cpp', 'H5Cpp.h', 'C++',
+-                                    'H5::H5File("", 0);')
++    conf.env['CONF']['HAVE_HDF5'] = 0
++#\
++#            conf.CheckLibWithHeader('hdf5', 'hdf5.h', 'C',
++#                                    'H5Fcreate("", 0, 0, 0);') and \
++#            conf.CheckLibWithHeader('hdf5_cpp', 'H5Cpp.h', 'C++',
++#                                    'H5::H5File("", 0);')
+ 
+     if conf.env['CONF']['HAVE_HDF5']:
+         conf.env.TagImplies('hdf5', 'gem5 lib')
+diff --git a/src/proto/SConsopts b/src/proto/SConsopts
+index 6b5b25d..63549bf 100644
+--- a/src/proto/SConsopts
++++ b/src/proto/SConsopts
+@@ -65,9 +65,10 @@ with gem5_scons.Configure(main) as conf:
+     # automatically added to the LIBS environment variable. After
+     # this, we can use the HAVE_PROTOBUF flag to determine if we have
+     # got both protoc and libprotobuf available.
+-    conf.env['CONF']['HAVE_PROTOBUF'] = conf.env['HAVE_PROTOC'] and \
+-        conf.CheckLibWithHeader('protobuf', 'google/protobuf/message.h',
+-                                'C++', 'GOOGLE_PROTOBUF_VERIFY_VERSION;')
++    conf.env['CONF']['HAVE_PROTOBUF'] = False
++#conf.env['HAVE_PROTOC'] and \
++#       conf.CheckLibWithHeader('protobuf', 'google/protobuf/message.h',
++#                                'C++', 'GOOGLE_PROTOBUF_VERIFY_VERSION;')
+ 
+ # If we have the compiler but not the library, print another warning.
+ if main['HAVE_PROTOC'] and not main['CONF']['HAVE_PROTOBUF']:
+-- 
+1.8.3.1
+

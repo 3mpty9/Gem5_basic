@@ -1,0 +1,168 @@
+From 2f48aa9e5c4e97b9ec931f653427866101fddca2 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 14 Feb 2022 14:52:35 -0800
+Subject: [PATCH 422/757] tests: Add 'kvm' tag to tests
+
+Some of our tests require KVM. Tagging these tests as such allow us to
+filter them in or out during testing.
+
+Change-Id: I3f188d3e268409535043cc32b64d99e4657638cd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56829
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/testlib/configuration.py                                   |  2 ++
+ tests/gem5/fs/linux/arm/test.py                                |  6 ++++--
+ .../gem5_library_example_tests/test_gem5_library_examples.py   |  4 ++++
+ tests/gem5/kvm-fork-tests/test_kvm_fork_run.py                 |  1 +
+ tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py             |  1 +
+ tests/gem5/parsec-benchmarks/test_parsec.py                    |  1 +
+ tests/gem5/suite.py                                            | 10 +++++++++-
+ 7 files changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/ext/testlib/configuration.py b/ext/testlib/configuration.py
+index 95800de..c61a809 100644
+--- a/ext/testlib/configuration.py
++++ b/ext/testlib/configuration.py
+@@ -254,6 +254,8 @@ def define_constants(constants):
+     constants.host_x86_64_tag = 'x86_64'
+     constants.host_arm_tag = 'aarch64'
+ 
++    constants.kvm_tag = 'kvm'
++
+     constants.supported_tags = {
+         constants.isa_tag_type : (
+             constants.x86_tag,
+diff --git a/tests/gem5/fs/linux/arm/test.py b/tests/gem5/fs/linux/arm/test.py
+index 5b64c80..6184a75 100644
+--- a/tests/gem5/fs/linux/arm/test.py
++++ b/tests/gem5/fs/linux/arm/test.py
+@@ -135,7 +135,8 @@ for name in arm_fs_quick_tests:
+         valid_isas=(constants.arm_tag,),
+         length=constants.quick_tag,
+         valid_hosts=valid_hosts,
+-        fixtures=(arm_fs_binaries,)
++        fixtures=(arm_fs_binaries,),
++        uses_kvm= name in arm_fs_kvm_tests,
+     )
+ 
+ for name in arm_fs_long_tests:
+@@ -151,5 +152,6 @@ for name in arm_fs_long_tests:
+         config_args=args,
+         valid_isas=(constants.arm_tag,),
+         length=constants.long_tag,
+-        fixtures=(arm_fs_binaries,)
++        fixtures=(arm_fs_binaries,),
++        uses_kvm= name in arm_fs_kvm_tests,
+     )
+diff --git a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+index 6f3300d..f05bb6d 100644
+--- a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
++++ b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+@@ -70,6 +70,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         valid_isas=(constants.x86_tag,),
+         valid_hosts=constants.supported_hosts,
+         length=constants.long_tag,
++        uses_kvm=True,
+     )
+ 
+ gem5_verify_config(
+@@ -108,6 +109,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         protocol="MESI_Two_Level",
+         valid_hosts=constants.supported_hosts,
+         length=constants.long_tag,
++        uses_kvm=True,
+     )
+ 
+ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+@@ -135,6 +137,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         protocol="MESI_Two_Level",
+         valid_hosts=constants.supported_hosts,
+         length=constants.long_tag,
++        uses_kvm=True,
+     )
+ 
+ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+@@ -156,6 +159,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         protocol="MESI_Two_Level",
+         valid_hosts=constants.supported_hosts,
+         length=constants.long_tag,
++        uses_kvm=True,
+     )
+ 
+ gem5_verify_config(
+diff --git a/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py b/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
+index e3a6e64..ddb91c1 100644
+--- a/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
++++ b/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
+@@ -89,6 +89,7 @@ def test_kvm_fork_run(cpu: str, num_cpus: int, mem_system: str, length: str):
+         valid_hosts=constants.supported_hosts,
+         protocol=protocol_to_use,
+         length=length,
++        uses_kvm=True,
+     )
+ 
+ 
+diff --git a/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py b/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
+index 62ae30c..ffddaa0 100644
+--- a/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
++++ b/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
+@@ -87,6 +87,7 @@ def test_kvm_switch(cpu: str, num_cpus: int, mem_system: str, length: str):
+         valid_hosts=constants.supported_hosts,
+         protocol=protocol_to_use,
+         length=length,
++        uses_kvm=True,
+     )
+ 
+ 
+diff --git a/tests/gem5/parsec-benchmarks/test_parsec.py b/tests/gem5/parsec-benchmarks/test_parsec.py
+index 4e10e6e..b659046 100644
+--- a/tests/gem5/parsec-benchmarks/test_parsec.py
++++ b/tests/gem5/parsec-benchmarks/test_parsec.py
+@@ -88,6 +88,7 @@ def test_parsec(
+         valid_isas=(constants.x86_tag,),
+         valid_hosts=constants.supported_hosts,
+         length=length,
++        uses_kvm=True,
+     )
+ 
+ 
+diff --git a/tests/gem5/suite.py b/tests/gem5/suite.py
+index cef3e7d..354c8ef 100644
+--- a/tests/gem5/suite.py
++++ b/tests/gem5/suite.py
+@@ -59,7 +59,9 @@ def gem5_verify_config(name,
+                        valid_variants=constants.supported_variants,
+                        length=constants.supported_lengths[0],
+                        valid_hosts=constants.supported_hosts,
+-                       protocol=None):
++                       protocol=None,
++                       uses_kvm=False,
++                    ):
+     '''
+     Helper class to generate common gem5 tests using verifiers.
+ 
+@@ -84,6 +86,9 @@ def gem5_verify_config(name,
+ 
+     :param valid_variants: An iterable with the variant levels that
+         this test can be ran for. (E.g. opt, debug)
++
++    :param uses_kvm: States if this verifier uses KVM. If so, the "kvm" tag
++        will be included.
+     '''
+     fixtures = list(fixtures)
+     testsuites = []
+@@ -123,6 +128,9 @@ def gem5_verify_config(name,
+                 # Add the isa and variant to tags list.
+                 tags = [isa, opt, length, host]
+ 
++                if uses_kvm:
++                    tags.append(constants.kvm_tag)
++
+                 # Create the gem5 target for the specific architecture and
+                 # variant.
+                 _fixtures = copy.copy(fixtures)
+-- 
+1.8.3.1
+

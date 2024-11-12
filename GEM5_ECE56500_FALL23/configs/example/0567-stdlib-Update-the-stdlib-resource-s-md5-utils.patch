@@ -1,0 +1,323 @@
+From e33f9b830b2a30289adb2145a61c6d96f1bd33a5 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 12 Apr 2022 20:13:44 -0700
+Subject: [PATCH 567/757] stdlib: Update the stdlib resource's md5 utils
+
+The commit does the following:
+
+- Moves the md5 functions to their own Python module (this will allow us
+to use this elsewhere).
+- Add functionality to enable md5 values for directories.
+- Adds Pyunit tests for the md5 functionality.
+
+Change-Id: I224d4584ed6c35fac3a75e221b3cb48d863ffa6f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58849
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/python/SConscript                              |   1 +
+ src/python/gem5/resources/downloader.py            |  43 +++-----
+ src/python/gem5/resources/md5_utils.py             |  65 ++++++++++++
+ tests/pyunit/stdlib/__init__.py                    |   0
+ tests/pyunit/stdlib/resources/__init__.py          |   0
+ .../stdlib/resources/pyunit_md5_utils_check.py     | 116 +++++++++++++++++++++
+ 6 files changed, 194 insertions(+), 31 deletions(-)
+ create mode 100644 src/python/gem5/resources/md5_utils.py
+ create mode 100644 tests/pyunit/stdlib/__init__.py
+ create mode 100644 tests/pyunit/stdlib/resources/__init__.py
+ create mode 100644 tests/pyunit/stdlib/resources/pyunit_md5_utils_check.py
+
+diff --git a/src/python/SConscript b/src/python/SConscript
+index 343a696..63cc406 100644
+--- a/src/python/SConscript
++++ b/src/python/SConscript
+@@ -208,6 +208,7 @@ PySource('gem5.prebuilt.demo', 'gem5/prebuilt/demo/__init__.py')
+ PySource('gem5.prebuilt.demo', 'gem5/prebuilt/demo/x86_demo_board.py')
+ PySource('gem5.resources', 'gem5/resources/__init__.py')
+ PySource('gem5.resources', 'gem5/resources/downloader.py')
++PySource('gem5.resources', 'gem5/resources/md5_utils.py')
+ PySource('gem5.resources', 'gem5/resources/resource.py')
+ PySource('gem5.utils', 'gem5/utils/__init__.py')
+ PySource('gem5.utils', 'gem5/utils/filelock.py')
+diff --git a/src/python/gem5/resources/downloader.py b/src/python/gem5/resources/downloader.py
+index e18c31c..56b27aa 100644
+--- a/src/python/gem5/resources/downloader.py
++++ b/src/python/gem5/resources/downloader.py
+@@ -34,10 +34,13 @@ import hashlib
+ import base64
+ import time
+ import random
++from pathlib import Path
+ from tempfile import gettempdir
+ from urllib.error import HTTPError
+ from typing import List, Dict
+ 
++from .md5_utils import md5_file, md5_dir
++
+ from ..utils.filelock import FileLock
+ 
+ """
+@@ -195,31 +198,6 @@ def _get_resources(resources_group: Dict) -> Dict[str, Dict]:
+ 
+     return to_return
+ 
+-
+-def _get_md5(file: str) -> str:
+-    """
+-    Gets the md5 of a file.
+-
+-    :param file: The file needing an md5 value.
+-
+-    :returns: The md5 of the input file.
+-    """
+-
+-    # Note: This code is slightly more complex than you might expect as
+-    # `hashlib.md5(<file>)` returns malloc errors for large files (such as
+-    # disk images).
+-    md5_object = hashlib.md5()
+-    block_size = 128 * md5_object.block_size
+-    a_file = open(file, "rb")
+-    chunk = a_file.read(block_size)
+-
+-    while chunk:
+-        md5_object.update(chunk)
+-        chunk = a_file.read(block_size)
+-
+-    return md5_object.hexdigest()
+-
+-
+ def _download(
+     url: str,
+     download_to: str,
+@@ -343,17 +321,20 @@ def get_resource(
+ 
+         if os.path.exists(to_path):
+ 
+-            if not os.path.isfile(to_path):
+-                raise Exception(
+-                    "There is a directory at '{}'.".format(to_path)
+-                )
++            if os.path.isfile(to_path):
++                md5 = md5_file(Path(to_path))
++            else:
++                md5 = md5_dir(Path(to_path))
+ 
+-            if _get_md5(to_path) == resource_json["md5sum"]:
++            if md5 == resource_json["md5sum"]:
+                 # In this case, the file has already been download, no need to
+                 # do so again.
+                 return
+             elif download_md5_mismatch:
+-                os.remove(to_path)
++                if os.path.isfile(to_path):
++                    os.remove(to_path)
++                else:
++                    shutil.rmtree(to_path)
+             else:
+                 raise Exception(
+                     "There already a file present at '{}' but "
+diff --git a/src/python/gem5/resources/md5_utils.py b/src/python/gem5/resources/md5_utils.py
+new file mode 100644
+index 0000000..cafaf34
+--- /dev/null
++++ b/src/python/gem5/resources/md5_utils.py
+@@ -0,0 +1,65 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from pathlib import Path
++import hashlib
++from _hashlib import HASH as Hash
++
++def _md5_update_from_file(filename:  Path, hash: Hash) -> Hash:
++    assert filename.is_file()
++    with open(str(filename), "rb") as f:
++        for chunk in iter(lambda: f.read(4096), b""):
++            hash.update(chunk)
++    return hash
++
++def _md5_update_from_dir(directory:  Path, hash: Hash) -> Hash:
++    assert directory.is_dir()
++    for path in sorted(directory.iterdir(), key=lambda p: str(p).lower()):
++        hash.update(path.name.encode())
++        if path.is_file():
++            hash = _md5_update_from_file(path, hash)
++        elif path.is_dir():
++            hash = _md5_update_from_dir(path, hash)
++    return hash
++
++def md5_file(filename:  Path) -> str:
++    """
++    Gives the md5 hash of a file
++
++    :filename: The file in which the md5 is to be calculated.
++    """
++    return str(_md5_update_from_file(filename, hashlib.md5()).hexdigest())
++
++def md5_dir(directory: Path) -> str:
++    """
++    Gives the md5 value of a directory.
++
++    This is achieved by getting the md5 hash of all files in the directory.
++
++    Note: The path of files are also hashed so the md5 of the directory changes
++    if empty files are included or filenames are changed.
++    """
++    return str(_md5_update_from_dir(directory, hashlib.md5()).hexdigest())
+diff --git a/tests/pyunit/stdlib/__init__.py b/tests/pyunit/stdlib/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/pyunit/stdlib/resources/__init__.py b/tests/pyunit/stdlib/resources/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/pyunit/stdlib/resources/pyunit_md5_utils_check.py b/tests/pyunit/stdlib/resources/pyunit_md5_utils_check.py
+new file mode 100644
+index 0000000..65bf335
+--- /dev/null
++++ b/tests/pyunit/stdlib/resources/pyunit_md5_utils_check.py
+@@ -0,0 +1,116 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import unittest
++import tempfile
++import os
++import shutil
++from pathlib import Path
++
++from gem5.resources.md5_utils import md5_file, md5_dir
++
++
++class MD5FileTestSuite(unittest.TestCase):
++    """Test cases for gem5.resources.md5_utils.md5_file()"""
++
++    def test_md5FileConsistency(self) -> None:
++        # This test ensures the md5 algorithm we use does not change the md5
++        # value over time.
++
++        file = tempfile.NamedTemporaryFile(mode="w", delete=False)
++        file.write("This is a test string, to be put in a temp file")
++        file.close()
++        md5 = md5_file(Path(file.name))
++        os.remove(file.name)
++
++        self.assertEquals("b113b29fce251f2023066c3fda2ec9dd", md5)
++
++    def test_identicalFilesIdenticalMd5(self) -> None:
++        # This test ensures that two files with exactly the same contents have
++        # the same md5 value.
++
++        test_str = "This is a test"
++
++        file = tempfile.NamedTemporaryFile(mode="w", delete=False)
++        file.write(test_str)
++        file.close()
++        first_file_md5 = md5_file(Path(file.name))
++
++        os.remove(file.name)
++
++        file = tempfile.NamedTemporaryFile(mode="w", delete=False)
++        file.write(test_str)
++        file.close()
++        second_file_md5 = md5_file(Path(file.name))
++
++        os.remove(file.name)
++
++        self.assertEquals(first_file_md5, second_file_md5)
++
++
++class MD5DirTestSuite(unittest.TestCase):
++    """Test cases for gem5.resources.md5_utils.md5_dir()"""
++
++    def _create_temp_directory(self) -> Path:
++
++        dir = tempfile.mkdtemp()
++
++        with open(os.path.join(dir, "file1"), "w") as f:
++            f.write("Some test data here")
++
++        with open(os.path.join(dir, "file2"), "w") as f:
++            f.write("Some more test data")
++
++        os.mkdir(os.path.join(dir, "dir2"))
++
++        with open(os.path.join(dir, "dir2", "file1"), "w") as f:
++            f.write("Yet more data")
++
++        return Path(dir)
++
++    def test_md5DirConsistency(self) -> None:
++        # This test ensures the md5 algorithm we use does not change the value
++        # given for directories over time.
++
++        dir = self._create_temp_directory()
++        md5 = md5_dir(dir)
++        shutil.rmtree(dir)
++
++        self.assertEquals("ad5ac785de44c9fc2fe2798cab2d7b1a", md5)
++
++    def test_identicalDirsIdenticalMd5(self) -> None:
++        # This test ensures that two directories with exactly the same contents
++        # have the same md5 value.
++
++        dir1 = self._create_temp_directory()
++        first_md5 = md5_dir(dir1)
++        shutil.rmtree(dir1)
++
++        dir2 = self._create_temp_directory()
++        second_md5 = md5_dir(dir2)
++        shutil.rmtree(dir2)
++
++        self.assertEquals(first_md5, second_md5)
+-- 
+1.8.3.1
+

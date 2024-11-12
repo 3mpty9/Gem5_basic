@@ -1,0 +1,165 @@
+From c999905772140d44d1483bdc6eb5c9c0680cbfff Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 17 Dec 2021 16:34:28 -0800
+Subject: [PATCH 072/757] misc: Hardcode docker pulls to v21-2 versions
+
+Change-Id: I404f2c881a00645302c0af5f22e8a59548426cac
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54470
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/compiler-tests.sh    |  2 +-
+ tests/jenkins/presubmit.sh |  4 ++--
+ tests/nightly.sh           | 24 +++++++++++++-----------
+ tests/weekly.sh            |  7 ++++---
+ 4 files changed, 20 insertions(+), 17 deletions(-)
+
+diff --git a/tests/compiler-tests.sh b/tests/compiler-tests.sh
+index 15ffb16..43092da 100755
+--- a/tests/compiler-tests.sh
++++ b/tests/compiler-tests.sh
+@@ -99,7 +99,7 @@ for compiler in ${images[@]}; do
+     # targets for this test
+     build_indices=(${build_permutation[@]:0:$builds_count})
+ 
+-    repo_name="${base_url}/${compiler}:latest"
++    repo_name="${base_url}/${compiler}:v21-2"
+ 
+     # Grab compiler image
+     docker pull $repo_name >/dev/null
+diff --git a/tests/jenkins/presubmit.sh b/tests/jenkins/presubmit.sh
+index 2aa0c04..d15df01 100755
+--- a/tests/jenkins/presubmit.sh
++++ b/tests/jenkins/presubmit.sh
+@@ -37,8 +37,8 @@
+ 
+ set -e
+ 
+-DOCKER_IMAGE_ALL_DEP=gcr.io/gem5-test/ubuntu-20.04_all-dependencies
+-DOCKER_IMAGE_CLANG_COMPILE=gcr.io/gem5-test/clang-version-9
++DOCKER_IMAGE_ALL_DEP=gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2
++DOCKER_IMAGE_CLANG_COMPILE=gcr.io/gem5-test/clang-version-9:v21-2
+ PRESUBMIT_STAGE2=tests/jenkins/presubmit-stage2.sh
+ GEM5ART_TESTS=tests/jenkins/gem5art-tests.sh
+ 
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index c3c5712..190c33d 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -65,7 +65,8 @@ build_target () {
+     # SCons is not perfect, and occasionally does not catch a necessary
+     # compilation: https://gem5.atlassian.net/browse/GEM5-753
+     docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-        "${gem5_root}" --rm gcr.io/gem5-test/ubuntu-20.04_all-dependencies \
++        "${gem5_root}" --rm \
++        gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2 \
+             bash -c "scons build/${isa}/gem5.opt -j${compile_threads} \
+                 || (rm -rf build && scons build/${isa}/gem5.opt -j${compile_threads})"
+ }
+@@ -74,12 +75,13 @@ unit_test () {
+     build=$1
+ 
+     docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-        "${gem5_root}" --rm gcr.io/gem5-test/ubuntu-20.04_all-dependencies \
++        "${gem5_root}" --rm \
++        gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2 \
+             scons build/NULL/unittests.${build} -j${compile_threads}
+ }
+ 
+ # Ensure we have the latest docker images.
+-docker pull gcr.io/gem5-test/ubuntu-20.04_all-dependencies
++docker pull gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2
+ 
+ # Try to build the ISA targets.
+ build_target NULL
+@@ -96,14 +98,14 @@ unit_test debug
+ 
+ # Run the gem5 long tests.
+ docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}"/tests --rm gcr.io/gem5-test/ubuntu-20.04_all-dependencies \
++    "${gem5_root}"/tests --rm \
++    gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2 \
+         ./main.py run --length long -j${compile_threads} -t${run_threads} -vv
+ 
+-# Run the GPU tests.
+ # For the GPU tests we compile and run the GPU ISA inside a gcn-gpu container.
+-docker pull gcr.io/gem5-test/gcn-gpu:latest
++docker pull gcr.io/gem5-test/gcn-gpu:v21-2
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest bash -c \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:v21-2  bash -c \
+     "scons build/${gpu_isa}/gem5.opt -j${compile_threads} \
+         || (rm -rf build && scons build/${gpu_isa}/gem5.opt -j${compile_threads})"
+ 
+@@ -116,7 +118,7 @@ mkdir -p tests/testing-results
+ # Thus, we always want to run this in the nightly regressions to make sure
+ # basic GPU functionality is working.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:v21-2  build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c square
+ 
+ # get HeteroSync
+@@ -127,7 +129,7 @@ wget -qN http://dist.gem5.org/dist/v21-2/test-progs/heterosync/gcn3/allSyncPrims
+ # moderate contention case for the default 4 CU GPU config and help ensure GPU
+ # atomics are tested.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:v21-2 build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c \
+     allSyncPrims-1kernel --options="sleepMutex 10 16 4"
+ 
+@@ -137,7 +139,7 @@ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+ # moderate contention case for the default 4 CU GPU config and help ensure GPU
+ # atomics are tested.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:v21-2  build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c \
+     allSyncPrims-1kernel --options="lfTreeBarrUniq 10 16 4"
+ 
+@@ -147,7 +149,7 @@ build_and_run_SST () {
+     variant=$2
+ 
+     docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-        "${gem5_root}" --rm gcr.io/gem5-test/sst-env \
++        "${gem5_root}" --rm gcr.io/gem5-test/sst-env:v21-2 \
+             bash -c "\
+ scons build/${isa}/libgem5_${variant}.so -j${compile_threads} --without-tcmalloc; \
+ cd ext/sst; \
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index 417eedb..b6eda61 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -55,7 +55,8 @@ fi
+ 
+ # Run the gem5 very-long tests.
+ docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}"/tests --rm gcr.io/gem5-test/ubuntu-20.04_all-dependencies \
++    "${gem5_root}"/tests --rm \
++    gcr.io/gem5-test/ubuntu-20.04_all-dependencies:v21-2 \
+         ./main.py run --length very-long -j${threads} -t${threads} -vv
+ 
+ mkdir -p tests/testing-results
+@@ -63,7 +64,7 @@ mkdir -p tests/testing-results
+ # GPU weekly tests start here
+ # before pulling gem5 resources, make sure it doesn't exist already
+ docker run --rm --volume "${gem5_root}":"${gem5_root}" -w \
+-       "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest bash -c \
++       "${gem5_root}" gcr.io/gem5-test/gcn-gpu:v21-2 bash -c \
+        "rm -rf ${gem5_root}/gem5-resources"
+ # delete Pannotia datasets and output files in case a failed regression run left
+ # them around
+@@ -104,7 +105,7 @@ cd "${gem5_root}"
+ # avoid needing to set all of these, we instead build a docker for it, which
+ # has all these variables pre-set in its Dockerfile
+ # To avoid compiling gem5 multiple times, all GPU benchmarks will use this
+-docker pull gcr.io/gem5-test/gcn-gpu:latest
++docker pull gcr.io/gem5-test/gcn-gpu:v21-2
+ docker build -t hacc-test-weekly ${gem5_root}/gem5-resources/src/gpu/halo-finder
+ 
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-- 
+1.8.3.1
+

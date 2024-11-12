@@ -1,0 +1,145 @@
+From e3f65393fdf9d889560508fe8aed0e76525b3aff Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 31 Mar 2022 10:23:22 -0700
+Subject: [PATCH 538/757] dev-amdgpu,arch-vega: Implement TLB invalidation
+ logic
+
+Add logic to collect pointers to all GPU TLBs in full system. Implement
+the invalid TLBs PM4 packet. The invalidate is done functionally since
+there is really no benefit to simulate it with timing and there is no
+support in the TLB to do so. This allow application with much larger
+data sets which may reuse device memory pages to work in gem5 without
+possibly crashing due to a stale translation being leftover in the TLB.
+
+Change-Id: Ia30cce02154d482d8f75b2280409abb8f8375c24
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58470
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/tlb.cc            |  6 ++++++
+ src/dev/amdgpu/amdgpu_vm.cc            | 18 ++++++++++++++++++
+ src/dev/amdgpu/amdgpu_vm.hh            | 13 +++++++++++++
+ src/dev/amdgpu/pm4_defines.hh          |  1 +
+ src/dev/amdgpu/pm4_packet_processor.cc |  7 +++++++
+ 5 files changed, 45 insertions(+)
+
+diff --git a/src/arch/amdgpu/vega/tlb.cc b/src/arch/amdgpu/vega/tlb.cc
+index 4e6c7b5..5d9a9e5 100644
+--- a/src/arch/amdgpu/vega/tlb.cc
++++ b/src/arch/amdgpu/vega/tlb.cc
+@@ -98,6 +98,12 @@ GpuTLB::GpuTLB(const VegaGPUTLBParams &p)
+ 
+     // assuming one walker per TLB, set our walker's TLB to this TLB.
+     walker->setTLB(this);
++
++    // gpuDevice should be non-null in full system only and is set by GpuTLB
++    // params from the config file.
++    if (gpuDevice) {
++        gpuDevice->getVM().registerTLB(this);
++    }
+ }
+ 
+ GpuTLB::~GpuTLB()
+diff --git a/src/dev/amdgpu/amdgpu_vm.cc b/src/dev/amdgpu/amdgpu_vm.cc
+index 596558a..c0c9209 100644
+--- a/src/dev/amdgpu/amdgpu_vm.cc
++++ b/src/dev/amdgpu/amdgpu_vm.cc
+@@ -32,6 +32,7 @@
+ #include "dev/amdgpu/amdgpu_vm.hh"
+ 
+ #include "arch/amdgpu/vega/pagetable_walker.hh"
++#include "arch/amdgpu/vega/tlb.hh"
+ #include "arch/generic/mmu.hh"
+ #include "base/trace.hh"
+ #include "debug/AMDGPUDevice.hh"
+@@ -163,6 +164,23 @@ AMDGPUVM::writeMMIO(PacketPtr pkt, Addr offset)
+ }
+ 
+ void
++AMDGPUVM::registerTLB(VegaISA::GpuTLB *tlb)
++{
++    DPRINTF(AMDGPUDevice, "Registered a TLB with device\n");
++    gpu_tlbs.push_back(tlb);
++}
++
++void
++AMDGPUVM::invalidateTLBs()
++{
++    DPRINTF(AMDGPUDevice, "Invalidating all TLBs\n");
++    for (auto &tlb : gpu_tlbs) {
++        tlb->invalidateAll();
++        DPRINTF(AMDGPUDevice, " ... TLB invalidated\n");
++    }
++}
++
++void
+ AMDGPUVM::serialize(CheckpointOut &cp) const
+ {
+     Addr vm0PTBase = vmContext0.ptBase;
+diff --git a/src/dev/amdgpu/amdgpu_vm.hh b/src/dev/amdgpu/amdgpu_vm.hh
+index 72745f0..e16975b 100644
+--- a/src/dev/amdgpu/amdgpu_vm.hh
++++ b/src/dev/amdgpu/amdgpu_vm.hh
+@@ -143,6 +143,12 @@ class AMDGPUVM : public Serializable
+     uint64_t mmhubBase = 0x0;
+     uint64_t mmhubTop = 0x0;
+ 
++    /**
++     * List of TLBs associated with the GPU device. This is used for flushing
++     * the TLBs upon a driver request.
++     */
++    std::vector<VegaISA::GpuTLB *> gpu_tlbs;
++
+   public:
+     AMDGPUVM();
+ 
+@@ -276,6 +282,13 @@ class AMDGPUVM : public Serializable
+         return vmContexts[vmid].ptStart;
+     }
+ 
++    /**
++     * Control methods for TLBs associated with the GPU device.
++     */
++    void registerTLB(VegaISA::GpuTLB *tlb);
++    void invalidateTLBs();
++
++
+     void serialize(CheckpointOut &cp) const override;
+     void unserialize(CheckpointIn &cp) override;
+ 
+diff --git a/src/dev/amdgpu/pm4_defines.hh b/src/dev/amdgpu/pm4_defines.hh
+index b7e9952..99e245c 100644
+--- a/src/dev/amdgpu/pm4_defines.hh
++++ b/src/dev/amdgpu/pm4_defines.hh
+@@ -56,6 +56,7 @@ enum it_opcode_type
+     IT_RELEASE_MEM                       = 0x49,
+     IT_SET_UCONFIG_REG                   = 0x79,
+     IT_SWITCH_BUFFER                     = 0x8B,
++    IT_INVALIDATE_TLBS                   = 0x98,
+     IT_MAP_PROCESS                       = 0xA1,
+     IT_MAP_QUEUES                        = 0xA2,
+     IT_UNMAP_QUEUES                      = 0xA3,
+diff --git a/src/dev/amdgpu/pm4_packet_processor.cc b/src/dev/amdgpu/pm4_packet_processor.cc
+index cfd031b..0ee2034 100644
+--- a/src/dev/amdgpu/pm4_packet_processor.cc
++++ b/src/dev/amdgpu/pm4_packet_processor.cc
+@@ -305,6 +305,13 @@ PM4PacketProcessor::decodeHeader(PM4Queue *q, PM4Header header)
+                     dmaBuffer);
+         } break;
+ 
++      case IT_INVALIDATE_TLBS: {
++        DPRINTF(PM4PacketProcessor, "Functionaly invalidating all TLBs\n");
++        gpuDevice->getVM().invalidateTLBs();
++        q->incRptr((header.count + 1) * sizeof(uint32_t));
++        decodeNext(q);
++        } break;
++
+       default: {
+         warn("PM4 packet opcode 0x%x not supported.\n", header.opcode);
+         DPRINTF(PM4PacketProcessor, "PM4 packet opcode 0x%x not supported.\n",
+-- 
+1.8.3.1
+

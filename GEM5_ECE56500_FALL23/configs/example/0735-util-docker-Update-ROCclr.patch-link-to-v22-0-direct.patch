@@ -1,0 +1,31 @@
+From 72fdc257bd2ff76a4c7f10964662913d0cd2b043 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 16:57:54 -0700
+Subject: [PATCH 735/757] util-docker: Update ROCclr.patch link to v22-0
+ directory
+
+Change-Id: Ie58daf751273a28be200c5fe161ac349d0024ca7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60553
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ util/dockerfiles/gcn-gpu/Dockerfile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/util/dockerfiles/gcn-gpu/Dockerfile b/util/dockerfiles/gcn-gpu/Dockerfile
+index c5db896..be58514 100644
+--- a/util/dockerfiles/gcn-gpu/Dockerfile
++++ b/util/dockerfiles/gcn-gpu/Dockerfile
+@@ -69,7 +69,7 @@ RUN git clone -b rocm-4.0.0 \
+ 
+ WORKDIR /ROCclr
+ # The patch allows us to avoid building blit kernels on-the-fly in gem5
+-RUN wget -q -O - dist.gem5.org/dist/develop/rocm_patches/ROCclr.patch | git apply -v
++RUN wget -q -O - dist.gem5.org/dist/v22-0/rocm_patches/ROCclr.patch | git apply -v
+ 
+ WORKDIR /ROCclr/build
+ RUN cmake -DOPENCL_DIR="/ROCm-OpenCL-Runtime" \
+-- 
+1.8.3.1
+

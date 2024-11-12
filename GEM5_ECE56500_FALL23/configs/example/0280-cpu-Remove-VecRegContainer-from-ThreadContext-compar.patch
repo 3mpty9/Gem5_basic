@@ -1,0 +1,47 @@
+From 3e846d20ed27999f26f2d396dc339508b48507af Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 12 Aug 2021 01:54:14 -0700
+Subject: [PATCH 280/757] cpu: Remove VecRegContainer from
+ ThreadContext::compare.
+
+Change-Id: I5a0f9d30fe56806d46fb54d62e1e58d02a319879
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49708
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/thread_context.cc | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/cpu/thread_context.cc b/src/cpu/thread_context.cc
+index 2c2e248..400bc16 100644
+--- a/src/cpu/thread_context.cc
++++ b/src/cpu/thread_context.cc
+@@ -83,13 +83,19 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // Then loop through the vector registers.
+-    for (int i = 0; i < regClasses.at(VecRegClass).numRegs(); ++i) {
++    const auto &vec_class = regClasses.at(VecRegClass);
++    std::vector<uint8_t> vec1(vec_class.regBytes());
++    std::vector<uint8_t> vec2(vec_class.regBytes());
++    for (int i = 0; i < vec_class.numRegs(); ++i) {
+         RegId rid(VecRegClass, i);
+-        const TheISA::VecRegContainer& t1 = one->readVecReg(rid);
+-        const TheISA::VecRegContainer& t2 = two->readVecReg(rid);
+-        if (t1 != t2)
++
++        one->getReg(rid, vec1.data());
++        two->getReg(rid, vec2.data());
++        if (vec1 != vec2) {
+             panic("Vec reg idx %d doesn't match, one: %#x, two: %#x",
+-                  i, t1, t2);
++                  i, vec_class.valString(vec1.data()),
++                  vec_class.valString(vec2.data()));
++        }
+     }
+ 
+     // Then loop through the predicate registers.
+-- 
+1.8.3.1
+

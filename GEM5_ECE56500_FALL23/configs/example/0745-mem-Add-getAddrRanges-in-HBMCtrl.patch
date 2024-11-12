@@ -1,0 +1,57 @@
+From 36c5d05adb450294ca93f41e3aeedd7d6d2d81be Mon Sep 17 00:00:00 2001
+From: Ayaz Akram <yazakram@ucdavis.edu>
+Date: Mon, 18 Jul 2022 22:48:19 -0700
+Subject: [PATCH 745/757] mem: Add getAddrRanges in HBMCtrl
+
+This change adds a missed function in HBMCtrl to make
+sure that XBar connected to the controller can see
+the address ranges covered by both HBM pseudo channels
+
+Change-Id: If88edda42b45a66a6517685e091545a5bba6eab9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61469
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61735
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/mem/hbm_ctrl.cc | 9 +++++++++
+ src/mem/hbm_ctrl.hh | 2 ++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/src/mem/hbm_ctrl.cc b/src/mem/hbm_ctrl.cc
+index 03cfec6..99618c4 100644
+--- a/src/mem/hbm_ctrl.cc
++++ b/src/mem/hbm_ctrl.cc
+@@ -488,5 +488,14 @@ HBMCtrl::drainResume()
+     isTimingMode = system()->isTimingMode();
+ }
+ 
++AddrRangeList
++HBMCtrl::getAddrRanges()
++{
++    AddrRangeList ranges;
++    ranges.push_back(pc0Int->getAddrRange());
++    ranges.push_back(pc1Int->getAddrRange());
++    return ranges;
++}
++
+ } // namespace memory
+ } // namespace gem5
+diff --git a/src/mem/hbm_ctrl.hh b/src/mem/hbm_ctrl.hh
+index 6c73010..9501ff3 100644
+--- a/src/mem/hbm_ctrl.hh
++++ b/src/mem/hbm_ctrl.hh
+@@ -85,6 +85,8 @@ class HBMCtrl : public MemCtrl
+      */
+     void pruneBurstTick() override;
+ 
++    AddrRangeList getAddrRanges() override;
++
+   public:
+     HBMCtrl(const HBMCtrlParams &p);
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,103 @@
+From 9c9b3a5e3d7dcd576dfaf0dda0e86b5c8ec4e109 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 8 Apr 2022 13:03:03 +0100
+Subject: [PATCH 594/757] arch-arm: Split purifyTaggedAddr in two sub-functions
+
+This patch is splitting the purifyTaggedAddr helper in two
+by introducing the maskTaggedAddress utility
+
+* The first part computes the top bit of the address (computeAddrTop)
+(This is required as the MSBs of a VA could be used to store
+tags like in FEAT_Pauth)
+
+* The second part applies some masking to the supplied
+address (maskTaggedAddress) depending on the top bit to
+purify the VA from the TAG
+
+The motivation of this split will be clear in the next patch:
+we want to memoize the expensive computeAddrTop. Memoizing
+purifyTaggedAddr is inefficient as the first argument
+is the VA of the memory request so multiple memory requests
+will allocate multiple entries in the results cache and
+memoization will rarely be used.
+
+We will memoize the VA agnostic computeAddrTop instead
+
+Change-Id: Ib3d8bb521be67a1f21c0891e753396299adf500b
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59150
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/arm/utility.cc | 20 ++++++++++++++------
+ src/arch/arm/utility.hh |  4 +++-
+ 2 files changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index 6852aed..d9649a6 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -469,16 +469,14 @@ computeAddrTop(ThreadContext *tc, bool selbit, bool is_instr,
+     int res = (tbi && (!tbid || !is_instr))? 55: 63;
+     return res;
+ }
++
+ Addr
+-purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+-                 TCR tcr, bool is_instr)
++maskTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
++               int topbit)
+ {
+-    bool selbit = bits(addr, 55);
+-    int topbit = computeAddrTop(tc, selbit, is_instr, tcr, el);
+-
+     if (topbit == 63) {
+         return addr;
+-    } else if (selbit && (el == EL1 || el == EL0 || ELIsInHost(tc, el))) {
++    } else if (bits(addr,55) && (el <= EL1 || ELIsInHost(tc, el))) {
+         uint64_t mask = ((uint64_t)0x1 << topbit) -1;
+         addr = addr | ~mask;
+     } else {
+@@ -489,6 +487,16 @@ purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+ 
+ Addr
+ purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
++                 TCR tcr, bool is_instr)
++{
++    bool selbit = bits(addr, 55);
++    int topbit = computeAddrTop(tc, selbit, is_instr, tcr, el);
++
++    return maskTaggedAddr(addr, tc, el, topbit);
++}
++
++Addr
++purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+                  bool is_instr)
+ {
+ 
+diff --git a/src/arch/arm/utility.hh b/src/arch/arm/utility.hh
+index 00b0acf..523061b 100644
+--- a/src/arch/arm/utility.hh
++++ b/src/arch/arm/utility.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010, 2012-2013, 2016-2020 ARM Limited
++ * Copyright (c) 2010, 2012-2013, 2016-2020, 2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -207,6 +207,8 @@ Addr purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+                       TCR tcr, bool isInstr);
+ Addr purifyTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
+                       bool isInstr);
++Addr maskTaggedAddr(Addr addr, ThreadContext *tc, ExceptionLevel el,
++                    int topbit);
+ int computeAddrTop(ThreadContext *tc, bool selbit, bool isInstr,
+                    TCR tcr, ExceptionLevel el);
+ 
+-- 
+1.8.3.1
+

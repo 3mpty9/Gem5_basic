@@ -1,0 +1,122 @@
+From f12c330f4000e1b42a3a9f9b1a99ad36b1fd6f00 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 01:33:33 -0800
+Subject: [PATCH 287/757] arch-x86: Use different tables for 64 bit prefixes in
+ the decoder.
+
+There are instructions in 64 bit mode which have been turned into the
+REX and VEX prefixes, and which should no longer behave as instructions.
+When not in 64 bit mode however, those instructions still need to behave
+properly.
+
+We were handling that for the REX prefixes by explicitly checking if the
+prefix we found was one of those, and then whether we were in 64 bit
+mode or not. We were not handling the VEX prefixes at all, so those were
+always acting as prefixes, even when not in 64 bit mode.
+
+This change replaces the REX check and possible VEX check by having two
+prefix tables, one for 64 bit mode, and one for otherwise. The REX and
+VEX prefixes are simply left out of the non 64b it mode table, making an
+explicit check for them unnecessary.
+
+Change-Id: Ia2fc17074015e074d1f156177bd499d67da5411d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55587
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/decoder.cc        |  8 ++++----
+ src/arch/x86/decoder.hh        |  3 +--
+ src/arch/x86/decoder_tables.cc | 27 ++++++++++++++++++++++++---
+ 3 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/x86/decoder.cc b/src/arch/x86/decoder.cc
+index 4c79872..5d78c5f 100644
+--- a/src/arch/x86/decoder.cc
++++ b/src/arch/x86/decoder.cc
+@@ -181,11 +181,11 @@ Decoder::doFromCacheState()
+ Decoder::State
+ Decoder::doPrefixState(uint8_t nextByte)
+ {
+-    uint8_t prefix = Prefixes[nextByte];
++    // The REX and VEX prefixes only exist in 64 bit mode, so we use a
++    // different table for that.
++    const int table_idx = emi.mode.submode == SixtyFourBitMode ? 1 : 0;
++    const uint8_t prefix = Prefixes[table_idx][nextByte];
+     State nextState = PrefixState;
+-    // REX prefixes are only recognized in 64 bit mode.
+-    if (prefix == RexPrefix && emi.mode.submode != SixtyFourBitMode)
+-        prefix = 0;
+     if (prefix)
+         consumeByte();
+     switch(prefix) {
+diff --git a/src/arch/x86/decoder.hh b/src/arch/x86/decoder.hh
+index 1f7a7e4..38a5e10 100644
+--- a/src/arch/x86/decoder.hh
++++ b/src/arch/x86/decoder.hh
+@@ -59,7 +59,7 @@ class Decoder : public InstDecoder
+     // These are defined and documented in decoder_tables.cc
+     static const uint8_t SizeTypeToSize[3][10];
+     typedef const uint8_t ByteTable[256];
+-    static ByteTable Prefixes;
++    static ByteTable Prefixes[2];
+ 
+     static ByteTable UsesModRMOneByte;
+     static ByteTable UsesModRMTwoByte;
+@@ -70,7 +70,6 @@ class Decoder : public InstDecoder
+     static ByteTable ImmediateTypeTwoByte;
+     static ByteTable ImmediateTypeThreeByte0F38;
+     static ByteTable ImmediateTypeThreeByte0F3A;
+-    static ByteTable ImmediateTypeVex[10];
+ 
+     static X86ISAInst::MicrocodeRom microcodeRom;
+ 
+diff --git a/src/arch/x86/decoder_tables.cc b/src/arch/x86/decoder_tables.cc
+index b1154e7..8deb63f 100644
+--- a/src/arch/x86/decoder_tables.cc
++++ b/src/arch/x86/decoder_tables.cc
+@@ -59,9 +59,30 @@ namespace X86ISA
+     const uint8_t V2 = Vex2Prefix;
+     const uint8_t V3 = Vex3Prefix;
+ 
+-    //This table identifies whether a byte is a prefix, and if it is,
++    //These table identifies whether a byte is a prefix, and if it is,
+     //which prefix it is.
+-    const Decoder::ByteTable Decoder::Prefixes =
++    const Decoder::ByteTable Decoder::Prefixes[] =
++    {{    //LSB
++// MSB   0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | A | B | C | D | E | F
++/*   0*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   1*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   2*/ 0 , 0 , 0 , 0 , 0 , 0 , ES, 0 , 0 , 0 , 0 , 0 , 0 , 0 , CS, 0,
++/*   3*/ 0 , 0 , 0 , 0 , 0 , 0 , SS, 0 , 0 , 0 , 0 , 0 , 0 , 0 , DS, 0,
++/*   4*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
++/*   5*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   6*/ 0 , 0 , 0 , 0 , FS, GS, OO, AO, 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   7*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   8*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   9*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   A*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   B*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   C*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   D*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   E*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
++/*   F*/ LO, 0 , RN, RE, 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0
++    },
++
++    //This table is the same as the above, except used in 64 bit mode.
+     {    //LSB
+ // MSB   0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | A | B | C | D | E | F
+ /*   0*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
+@@ -80,7 +101,7 @@ namespace X86ISA
+ /*   D*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
+ /*   E*/ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0,
+ /*   F*/ LO, 0 , RN, RE, 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0
+-    };
++    }};
+ 
+     // These tables identify whether a particular opcode uses the ModRM byte.
+     const Decoder::ByteTable Decoder::UsesModRMOneByte =
+-- 
+1.8.3.1
+

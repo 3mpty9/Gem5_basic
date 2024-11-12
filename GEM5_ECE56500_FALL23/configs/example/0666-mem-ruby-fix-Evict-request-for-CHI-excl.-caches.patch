@@ -1,0 +1,90 @@
+From e4274cabd9ab1e6761fd78b2b3b29248123152cf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 17 May 2022 13:20:48 -0500
+Subject: [PATCH 666/757] mem-ruby: fix Evict request for CHI excl. caches
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Assume core C1 with private L1/L2 and a shared exclusive L3.
+C1 has a line in SC state, while the state in the L3 is
+RUSC (L3 has exclusive accesses and upstream requester has line in SC).
+
+When C1 evicts the line (Evict request), the L3 has to issue a
+WriteEvictFull to the home node, however the L3 doesn't have a copy
+of the line.
+
+This fix handling Evict requests when the line state is RUSC. When
+the last sharer issues an Evict request, the responder may issue
+SnpOnce the obtain a copy the line if needed.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: Ic8f4e10b38d95cd6d84f8d65b87b0c94fcf52eea
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59991
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 35 ++++++++++++++++++--------
+ 1 file changed, 25 insertions(+), 10 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 9c59bf2..8b248a5 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -897,18 +897,26 @@ action(Finish_CopyBack_Stale, desc="") {
+ }
+ 
+ action(Initiate_Evict, desc="") {
+-  tbe.actions.push(Event:SendCompIResp);
+-
+-  assert(tbe.dir_sharers.isElement(tbe.requestor));
+-  assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
+-  tbe.dir_sharers.remove(tbe.requestor);
+-
+-  if ((is_HN == false) && (tbe.dir_sharers.count() == 0) &&
++  if ((is_HN == false) && (tbe.dir_sharers.count() == 1) &&
+       (tbe.dataValid == false)) {
+-    tbe.actions.push(Event:SendEvict);
++    // last sharer and we also don't have a copy the line, so we also need to
++    // send an eviction downstream
++    if (tbe.dataUnique) {
++      // we need to send a WriteEvictFull so need the upstream data before
++      // we ack the evict
++      tbe.actions.push(Event:SendSnpOnce);
++      tbe.actions.push(Event:SendCompIResp);
++      tbe.actions.push(Event:SendWriteBackOrWriteEvict);
++      tbe.actions.push(Event:WriteBEPipe);
++      tbe.actions.push(Event:SendWBData);
++    } else {
++      tbe.actions.push(Event:SendCompIResp);
++      tbe.actions.push(Event:SendEvict);
++    }
++  } else {
++    tbe.actions.push(Event:SendCompIResp);
+   }
+-
+-  tbe.actions.pushNB(Event:TagArrayWrite);
++  tbe.actions.push(Event:TagArrayWrite);
+ }
+ 
+ action(Initiate_MaintainCoherence, desc="") {
+@@ -2518,6 +2526,13 @@ action(Send_RespSepData, desc="") {
+ 
+ action(Send_CompI, desc="") {
+   assert(is_valid(tbe));
++
++  // Used to ack Evict request
++  assert(tbe.dir_sharers.isElement(tbe.requestor));
++  assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
++
++  tbe.dir_sharers.remove(tbe.requestor);
++
+   enqueue(rspOutPort, CHIResponseMsg, response_latency) {
+     out_msg.addr := address;
+     out_msg.type := CHIResponseType:Comp_I;
+-- 
+1.8.3.1
+

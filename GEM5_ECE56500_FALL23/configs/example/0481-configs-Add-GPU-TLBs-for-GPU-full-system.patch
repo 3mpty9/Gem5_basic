@@ -1,0 +1,220 @@
+From 8b30b6520ac19f3d5c6064de7a9c6b6954c0d9f8 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 14 Mar 2022 21:45:08 -0500
+Subject: [PATCH 481/757] configs: Add GPU TLBs for GPU full system
+
+Add the constructors for the Vega TLB and TLB coalescers in the python
+config. These need a pointer to the gpu device which is added as a
+parameter. The last level TLB's page table walker is added as a dma
+device to the system so that the port is connected to the GPU device
+memory in the disjoint VIPER configuration file.
+
+A portion of the the GPUFS system configuration file needs to be
+shuffled around so that the shader CPU is created before the TLBs are
+created so they can be connected to the shader's ports. This means the
+real CPU init code needs to break once reaching the shader. The vendor
+string must also be set after createThreads is called on real CPUs.
+
+Change-Id: I36ed93db262b21427f3eaf4904a1c897a2894835
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57649
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/GPUTLBConfig.py         | 87 ++++++++++++++++++++++++----------
+ configs/example/gpufs/system/system.py | 23 +++++----
+ 2 files changed, 77 insertions(+), 33 deletions(-)
+
+diff --git a/configs/common/GPUTLBConfig.py b/configs/common/GPUTLBConfig.py
+index f6aaccf..740c748 100644
+--- a/configs/common/GPUTLBConfig.py
++++ b/configs/common/GPUTLBConfig.py
+@@ -34,41 +34,69 @@
+ import m5
+ from m5.objects import *
+ 
+-def TLB_constructor(level):
+-
+-    constructor_call = "X86GPUTLB(size = options.L%(level)dTLBentries, \
+-            assoc = options.L%(level)dTLBassoc, \
+-            hitLatency = options.L%(level)dAccessLatency,\
+-            missLatency2 = options.L%(level)dMissLatency,\
+-            maxOutstandingReqs = options.L%(level)dMaxOutstandingReqs,\
+-            accessDistance = options.L%(level)dAccessDistanceStat,\
+-            clk_domain = SrcClockDomain(\
+-                clock = options.gpu_clock,\
+-                voltage_domain = VoltageDomain(\
+-                    voltage = options.gpu_voltage)))" % locals()
+-    return constructor_call
+-
+-def Coalescer_constructor(level):
+-
+-    constructor_call = "TLBCoalescer(probesPerCycle = \
+-                options.L%(level)dProbesPerCycle, \
+-                coalescingWindow = options.L%(level)dCoalescingWindow,\
+-                disableCoalescing = options.L%(level)dDisableCoalescing,\
++def TLB_constructor(options, level, gpu_ctrl=None, full_system=False):
++
++    if full_system:
++        constructor_call = "VegaGPUTLB(\
++                gpu_device = gpu_ctrl, \
++                size = options.L%(level)dTLBentries, \
++                assoc = options.L%(level)dTLBassoc, \
++                hitLatency = options.L%(level)dAccessLatency,\
++                missLatency1 = options.L%(level)dMissLatency,\
++                missLatency2 = options.L%(level)dMissLatency,\
++                maxOutstandingReqs = options.L%(level)dMaxOutstandingReqs,\
+                 clk_domain = SrcClockDomain(\
+                     clock = options.gpu_clock,\
+                     voltage_domain = VoltageDomain(\
+                         voltage = options.gpu_voltage)))" % locals()
++    else:
++        constructor_call = "X86GPUTLB(size = options.L%(level)dTLBentries, \
++                assoc = options.L%(level)dTLBassoc, \
++                hitLatency = options.L%(level)dAccessLatency,\
++                missLatency2 = options.L%(level)dMissLatency,\
++                maxOutstandingReqs = options.L%(level)dMaxOutstandingReqs,\
++                accessDistance = options.L%(level)dAccessDistanceStat,\
++                clk_domain = SrcClockDomain(\
++                    clock = options.gpu_clock,\
++                    voltage_domain = VoltageDomain(\
++                        voltage = options.gpu_voltage)))" % locals()
++    return constructor_call
++
++def Coalescer_constructor(options, level, full_system):
++
++    if full_system:
++        constructor_call = "VegaTLBCoalescer(probesPerCycle = \
++            options.L%(level)dProbesPerCycle, \
++            tlb_level  = %(level)d ,\
++            coalescingWindow = options.L%(level)dCoalescingWindow,\
++            disableCoalescing = options.L%(level)dDisableCoalescing,\
++            clk_domain = SrcClockDomain(\
++                clock = options.gpu_clock,\
++                voltage_domain = VoltageDomain(\
++                    voltage = options.gpu_voltage)))" % locals()
++    else:
++        constructor_call = "TLBCoalescer(probesPerCycle = \
++            options.L%(level)dProbesPerCycle, \
++            coalescingWindow = options.L%(level)dCoalescingWindow,\
++            disableCoalescing = options.L%(level)dDisableCoalescing,\
++            clk_domain = SrcClockDomain(\
++                clock = options.gpu_clock,\
++                voltage_domain = VoltageDomain(\
++                    voltage = options.gpu_voltage)))" % locals()
+     return constructor_call
+ 
+ def create_TLB_Coalescer(options, my_level, my_index, tlb_name,
+-    coalescer_name):
++                         coalescer_name, gpu_ctrl=None, full_system=False):
+     # arguments: options, TLB level, number of private structures for this
+     # Level, TLB name and  Coalescer name
+     for i in range(my_index):
+-        tlb_name.append(eval(TLB_constructor(my_level)))
+-        coalescer_name.append(eval(Coalescer_constructor(my_level)))
++        tlb_name.append(
++            eval(TLB_constructor(options, my_level, gpu_ctrl, full_system)))
++        coalescer_name.append(
++            eval(Coalescer_constructor(options, my_level, full_system)))
+ 
+-def config_tlb_hierarchy(options, system, shader_idx):
++def config_tlb_hierarchy(options, system, shader_idx, gpu_ctrl=None,
++                         full_system=False):
+     n_cu = options.num_compute_units
+ 
+     if options.TLB_config == "perLane":
+@@ -121,7 +149,7 @@ def config_tlb_hierarchy(options, system, shader_idx):
+                     options.L1TLBassoc = options.L1TLBentries
+             # call the constructors for the TLB and the Coalescer
+             create_TLB_Coalescer(options, level, TLB_index,\
+-                TLB_array, Coalescer_array)
++                TLB_array, Coalescer_array, gpu_ctrl, full_system)
+ 
+             system_TLB_name = TLB_type['name'] + '_tlb'
+             system_Coalescer_name = TLB_type['name'] + '_coalescer'
+@@ -198,8 +226,17 @@ def config_tlb_hierarchy(options, system, shader_idx):
+                     system.l2_coalescer[0].cpu_side_ports[%d]' % \
+                     (name, index, l2_coalescer_index))
+             l2_coalescer_index += 1
++
+     # L2 <-> L3
+     system.l2_tlb[0].mem_side_ports[0] = \
+         system.l3_coalescer[0].cpu_side_ports[0]
+ 
++    # L3 TLB Vega page table walker to memory for full system only
++    if full_system:
++        for TLB_type in L3:
++            name = TLB_type['name']
++            for index in range(TLB_type['width']):
++                exec('system._dma_ports.append(system.%s_tlb[%d].walker)' % \
++                        (name, index))
++
+     return system
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 3eb8dbc..8c9895f 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -33,6 +33,7 @@ from m5.util import panic
+ 
+ from common.Benchmarks import *
+ from common.FSConfig import *
++from common import GPUTLBConfig
+ from common import Simulation
+ from ruby import Ruby
+ 
+@@ -90,6 +91,10 @@ def makeGpuFSSystem(args):
+     shader = createGPU(system, args)
+     connectGPU(system, args)
+ 
++    # The shader core will be whatever is after the CPU cores are accounted for
++    shader_idx = args.num_cpus
++    system.cpu.append(shader)
++
+     # This arbitrary address is something in the X86 I/O hole
+     hsapp_gpu_map_paddr = 0xe00000000
+     hsapp_pt_walker = VegaPagetableWalker()
+@@ -150,9 +155,12 @@ def makeGpuFSSystem(args):
+     device_ih.pio = system.iobus.mem_side_ports
+     pm4_pkt_proc.pio = system.iobus.mem_side_ports
+ 
+-    # Create Ruby system using Ruby.py for now
+-    #Ruby.create_system(args, True, system, system.iobus,
+-    #                   system._dma_ports)
++    # Full system needs special TLBs for SQC, Scalar, and vector data ports
++    args.full_system = True
++    GPUTLBConfig.config_tlb_hierarchy(args, system, shader_idx,
++                                      system.pc.south_bridge.gpu, True)
++
++    # Create Ruby system using disjoint VIPER topology
+     system.ruby = Disjoint_VIPER()
+     system.ruby.create(args, system, system.iobus, system._dma_ports)
+ 
+@@ -161,6 +169,10 @@ def makeGpuFSSystem(args):
+                                    voltage_domain = system.voltage_domain)
+ 
+     for (i, cpu) in enumerate(system.cpu):
++        # Break once we reach the shader "CPU"
++        if i == args.num_cpus:
++            break
++
+         #
+         # Tie the cpu ports to the correct ruby system ports
+         #
+@@ -170,14 +182,9 @@ def makeGpuFSSystem(args):
+ 
+         system.ruby._cpu_ports[i].connectCpuPorts(cpu)
+ 
+-    for i in range(len(system.cpu)):
+         for j in range(len(system.cpu[i].isa)):
+             system.cpu[i].isa[j].vendor_string = "AuthenticAMD"
+ 
+-    # The shader core will be whatever is after the CPU cores are accounted for
+-    shader_idx = args.num_cpus
+-    system.cpu.append(shader)
+-
+     gpu_port_idx = len(system.ruby._cpu_ports) \
+                    - args.num_compute_units - args.num_sqc \
+                    - args.num_scalar_cache
+-- 
+1.8.3.1
+

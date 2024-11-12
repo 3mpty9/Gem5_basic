@@ -1,0 +1,42 @@
+From 4387321bedeea878722b00d3c3551d1c6c1f6ec3 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 23 Mar 2022 14:44:03 -0500
+Subject: [PATCH 533/757] configs: Exit GPUFS script if DKMS module does not
+ exist
+
+The supported version of ROCm in GPUFS only supports the DKMS build of
+the amdgpu driver. However, since a gem5 user can potentially pass in
+any Linux kernel as a parameter, it is possible that the DKMS package
+for that kernel was not installed on the disk image. This would result
+in the simulation appearing to work when in reality it is just spinning
+waiting for commands from the driver. This check exits gem5 early in the
+simulation and outputs an error on the console to sanity check the
+correct driver is being used.
+
+Change-Id: I708912e5625e47eba15dcb2f722772a3b2928b98
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58129
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/vega10_kvm.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/configs/example/gpufs/vega10_kvm.py b/configs/example/gpufs/vega10_kvm.py
+index 593f6e1..aa3dbb2 100644
+--- a/configs/example/gpufs/vega10_kvm.py
++++ b/configs/example/gpufs/vega10_kvm.py
+@@ -49,6 +49,10 @@ export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+ export HSA_ENABLE_SDMA=0
+ dmesg -n8
+ dd if=/root/roms/vega10.rom of=/dev/mem bs=1k seek=768 count=128
++if [ ! -f /lib/modules/`uname -r`/updates/dkms/amdgpu.ko ]; then
++    echo "ERROR: Missing DKMS package for kernel `uname -r`. Exiting gem5."
++    /sbin/m5 exit
++fi
+ modprobe -v amdgpu ip_block_mask=0xff ppfeaturemask=0 dpm=0 audio=0
+ echo "Running {} {}"
+ echo "{}" | base64 -d > myapp
+-- 
+1.8.3.1
+

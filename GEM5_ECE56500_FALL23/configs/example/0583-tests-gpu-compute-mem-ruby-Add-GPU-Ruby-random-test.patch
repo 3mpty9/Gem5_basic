@@ -1,0 +1,99 @@
+From bcabf189fbac6a2bc2a86b37101d3f7a4b4368dd Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 28 Mar 2022 10:37:53 -0700
+Subject: [PATCH 583/757] tests,gpu-compute,mem-ruby: Add GPU Ruby random test
+
+This adds the GPU protocol random tester to the quick/Kokoro tests. The
+input has been sized to take around 20 seconds and provides good
+coverage for the coherence protocol.
+
+This test can be run with the following:
+
+```
+cd tests
+./main.py run -j`nproc` gem5/gpu
+```
+
+Change-Id: I08d199f0de8cca985f992b7f39b5f82e4218c82d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58270
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+---
+ tests/gem5/gpu/test_gpu_ruby_random.py | 63 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+ create mode 100644 tests/gem5/gpu/test_gpu_ruby_random.py
+
+diff --git a/tests/gem5/gpu/test_gpu_ruby_random.py b/tests/gem5/gpu/test_gpu_ruby_random.py
+new file mode 100644
+index 0000000..83ea6e7
+--- /dev/null
++++ b/tests/gem5/gpu/test_gpu_ruby_random.py
+@@ -0,0 +1,63 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++"""
++This test will first run the GPU protocol random tester -- it should take about
++30 seconds to run and provides good coverage for the coherence protocol.
++
++Input choices (some are default and thus implicit):
++ - use small cache size to encourage races
++ - use small system size to encourage races since more requests per CU (and
++   faster sim)
++ - use small address range to encourage more races
++ - use small episode length to encourage more races
++ - 50K tests runs in ~30 seconds with reasonably good coverage
++ - num-dmas = 0 because VIPER doesn't support partial cache line writes, which
++   DMAs need
++"""
++
++from testlib import *
++
++gem5_verify_config(
++    name="ruby-gpu-random-test",
++    fixtures=(),
++    verifiers=(),
++    config=joinpath(
++        config.base_dir,
++        "configs",
++        "example",
++        "ruby_gpu_random_test.py",
++    ),
++    config_args=[
++        "--test-length",
++        "50000",
++        "--num-dmas",
++        "0",
++    ],
++    valid_isas=(constants.vega_x86_tag,),
++    valid_hosts=constants.supported_hosts,
++    length=constants.quick_tag,
++)
+-- 
+1.8.3.1
+

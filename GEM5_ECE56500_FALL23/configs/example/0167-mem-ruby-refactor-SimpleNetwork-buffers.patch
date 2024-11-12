@@ -1,0 +1,350 @@
+From f748fbe7e1d383b02934b5d53c150f7f05831bf6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Mon, 20 Jul 2020 20:12:21 -0500
+Subject: [PATCH 167/757] mem-ruby: refactor SimpleNetwork buffers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This removes the int_link_buffers param from SimpleNetwork. Internal
+link buffers are now created as children of SimpleIntLink objects.
+This results in a cleaner configuration and simplifies some code in
+SimpleNetwork.cc.
+
+setup_buffers is also split between Switch.setup_buffers and
+SimpleIntLink.setup_buffers for clarity.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I68ad36ec0e682b8d5600c2950bcb56debe186af3
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41859
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/BasicLink.py            |  4 ++
+ src/mem/ruby/network/simple/SimpleLink.cc    | 22 +++++---
+ src/mem/ruby/network/simple/SimpleLink.hh    | 13 +++++
+ src/mem/ruby/network/simple/SimpleLink.py    | 34 +++++++++++++
+ src/mem/ruby/network/simple/SimpleNetwork.cc | 21 ++------
+ src/mem/ruby/network/simple/SimpleNetwork.hh |  1 -
+ src/mem/ruby/network/simple/SimpleNetwork.py | 75 +++++++++++++++-------------
+ 7 files changed, 112 insertions(+), 58 deletions(-)
+
+diff --git a/src/mem/ruby/network/BasicLink.py b/src/mem/ruby/network/BasicLink.py
+index 39f2282..5c5fcca 100644
+--- a/src/mem/ruby/network/BasicLink.py
++++ b/src/mem/ruby/network/BasicLink.py
+@@ -37,6 +37,10 @@ class BasicLink(SimObject):
+     # Width of the link in bytes
+     # Only used by simple network.
+     # Garnet models this by flit size
++    # For the simple links, the bandwidth factor translates to the
++    # bandwidth multiplier.  The multipiler, in combination with the
++    # endpoint bandwidth multiplier - message size multiplier ratio,
++    # determines the link bandwidth in bytes
+     bandwidth_factor = Param.Int("generic bandwidth factor, usually in bytes")
+     weight = Param.Int(1, "used to restrict routing in shortest path analysis")
+     supported_vnets = VectorParam.Int([], "Vnets supported Default:All([])")
+diff --git a/src/mem/ruby/network/simple/SimpleLink.cc b/src/mem/ruby/network/simple/SimpleLink.cc
+index 0f55545..8aea3f3 100644
+--- a/src/mem/ruby/network/simple/SimpleLink.cc
++++ b/src/mem/ruby/network/simple/SimpleLink.cc
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 2011 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+@@ -51,13 +63,11 @@ SimpleExtLink::print(std::ostream& out) const
+ }
+ 
+ SimpleIntLink::SimpleIntLink(const Params &p)
+-    : BasicIntLink(p)
++    : BasicIntLink(p),
++      m_bw_multiplier(p.bandwidth_factor),
++      m_buffers(p.buffers)
+ {
+-    // For the simple links, the bandwidth factor translates to the
+-    // bandwidth multiplier.  The multipiler, in combination with the
+-    // endpoint bandwidth multiplier - message size multiplier ratio,
+-    // determines the link bandwidth in bytes
+-    m_bw_multiplier = p.bandwidth_factor;
++
+ }
+ 
+ void
+diff --git a/src/mem/ruby/network/simple/SimpleLink.hh b/src/mem/ruby/network/simple/SimpleLink.hh
+index 2f2582c..a311392 100644
+--- a/src/mem/ruby/network/simple/SimpleLink.hh
++++ b/src/mem/ruby/network/simple/SimpleLink.hh
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 2011 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+@@ -73,6 +85,7 @@ class SimpleIntLink : public BasicIntLink
+     void print(std::ostream& out) const;
+ 
+     int m_bw_multiplier;
++    const std::vector<MessageBuffer*> m_buffers;
+ };
+ 
+ inline std::ostream&
+diff --git a/src/mem/ruby/network/simple/SimpleLink.py b/src/mem/ruby/network/simple/SimpleLink.py
+index de9eb76..ccf6b92 100644
+--- a/src/mem/ruby/network/simple/SimpleLink.py
++++ b/src/mem/ruby/network/simple/SimpleLink.py
+@@ -1,3 +1,15 @@
++# Copyright (c) 2021 ARM Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright (c) 2011 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+@@ -26,8 +38,10 @@
+ 
+ from m5.params import *
+ from m5.proxy import *
++from m5.util import fatal
+ from m5.SimObject import SimObject
+ from m5.objects.BasicLink import BasicIntLink, BasicExtLink
++from m5.objects.MessageBuffer import MessageBuffer
+ 
+ class SimpleExtLink(BasicExtLink):
+     type = 'SimpleExtLink'
+@@ -38,3 +52,23 @@ class SimpleIntLink(BasicIntLink):
+     type = 'SimpleIntLink'
+     cxx_header = "mem/ruby/network/simple/SimpleLink.hh"
+     cxx_class = 'gem5::ruby::SimpleIntLink'
++
++    # Buffers for this internal link.
++    # One buffer is allocated per vnet when setup_buffers is called.
++    # These are created by setup_buffers and the user should not
++    # set these manually.
++    buffers = VectorParam.MessageBuffer([], "Buffers for int_links")
++
++    def setup_buffers(self, network):
++        if len(self.buffers) > 0:
++            fatal("User should not manually set links' \
++                   in_buffers or out_buffers")
++        # Note that all SimpleNetwork MessageBuffers are currently ordered
++
++        # The network needs number_of_virtual_networks buffers per
++        # in and out port
++        buffers = []
++        for i in range(int(network.number_of_virtual_networks)):
++            buffers.append(MessageBuffer(ordered = True,
++                                    buffer_size = network.vnet_buffer_size(i)))
++        self.buffers = buffers
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.cc b/src/mem/ruby/network/simple/SimpleNetwork.cc
+index 7bda404..c30bd79 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.cc
++++ b/src/mem/ruby/network/simple/SimpleNetwork.cc
+@@ -71,9 +71,6 @@ SimpleNetwork::SimpleNetwork(const Params &p)
+         s->init_net_ptr(this);
+     }
+ 
+-    m_int_link_buffers = p.int_link_buffers;
+-    m_num_connected_buffers = 0;
+-
+     const std::vector<int> &physical_vnets_channels =
+         p.physical_vnets_channels;
+     const std::vector<int> &physical_vnets_bandwidth =
+@@ -144,25 +141,17 @@ SimpleNetwork::makeInternalLink(SwitchID src, SwitchID dest, BasicLink* link,
+                                 PortDirection src_outport,
+                                 PortDirection dst_inport)
+ {
+-    // Create a set of new MessageBuffers
+-    std::vector<MessageBuffer*> queues(m_virtual_networks);
+-
+-    for (int i = 0; i < m_virtual_networks; i++) {
+-        // allocate a buffer
+-        assert(m_num_connected_buffers < m_int_link_buffers.size());
+-        MessageBuffer* buffer_ptr = m_int_link_buffers[m_num_connected_buffers];
+-        m_num_connected_buffers++;
+-        queues[i] = buffer_ptr;
+-    }
+-
+     // Connect it to the two switches
+     SimpleIntLink *simple_link = safe_cast<SimpleIntLink*>(link);
+ 
+-    m_switches[dest]->addInPort(queues);
+-    m_switches[src]->addOutPort(queues, routing_table_entry[0],
++    m_switches[dest]->addInPort(simple_link->m_buffers);
++    m_switches[src]->addOutPort(simple_link->m_buffers, routing_table_entry[0],
+                                 simple_link->m_latency,
+                                 simple_link->m_bw_multiplier,
+                                 dst_inport);
++    // Maitain a global list of buffers (used for functional accesses only)
++    m_int_link_buffers.insert(m_int_link_buffers.end(),
++            simple_link->m_buffers.begin(), simple_link->m_buffers.end());
+ }
+ 
+ void
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.hh b/src/mem/ruby/network/simple/SimpleNetwork.hh
+index f8a4e90..e336492 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.hh
++++ b/src/mem/ruby/network/simple/SimpleNetwork.hh
+@@ -104,7 +104,6 @@ class SimpleNetwork : public Network
+ 
+     std::vector<Switch*> m_switches;
+     std::vector<MessageBuffer*> m_int_link_buffers;
+-    int m_num_connected_buffers;
+     const int m_buffer_size;
+     const int m_endpoint_bandwidth;
+ 
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.py b/src/mem/ruby/network/simple/SimpleNetwork.py
+index f24dc9c..94806b4 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.py
++++ b/src/mem/ruby/network/simple/SimpleNetwork.py
+@@ -39,6 +39,7 @@
+ from m5.params import *
+ from m5.proxy import *
+ 
++from m5.util import fatal
+ from m5.SimObject import SimObject
+ from m5.objects.Network import RubyNetwork
+ from m5.objects.BasicRouter import BasicRouter
+@@ -49,10 +50,9 @@ class SimpleNetwork(RubyNetwork):
+     cxx_header = "mem/ruby/network/simple/SimpleNetwork.hh"
+     cxx_class = 'gem5::ruby::SimpleNetwork'
+ 
+-    buffer_size = Param.Int(0,
+-        "default buffer size; 0 indicates infinite buffering")
++    buffer_size = Param.Int(0, "default internal buffer size for links and\
++                                routers; 0 indicates infinite buffering")
+     endpoint_bandwidth = Param.Int(1000, "bandwidth adjustment factor")
+-    int_link_buffers = VectorParam.MessageBuffer("Buffers for int_links")
+ 
+     physical_vnets_channels = VectorParam.Int([],
+         "Set to emulate multiple channels for each vnet."
+@@ -76,39 +76,11 @@ class SimpleNetwork(RubyNetwork):
+             return self.buffer_size * self.physical_vnets_channels[vnet]
+ 
+     def setup_buffers(self):
+-        # Note that all SimpleNetwork MessageBuffers are currently ordered
+-        network_buffers = []
++        # Setup internal buffers for links and routers
+         for link in self.int_links:
+-            # The network needs number_of_virtual_networks buffers per
+-            # int_link port
+-            for i in range(int(self.number_of_virtual_networks)):
+-                network_buffers.append(MessageBuffer(ordered = True,
+-                                     buffer_size = self.vnet_buffer_size(i)))
+-                network_buffers.append(MessageBuffer(ordered = True,
+-                                     buffer_size = self.vnet_buffer_size(i)))
+-        self.int_link_buffers = network_buffers
+-
+-        # Also add buffers for all router-link connections
++            link.setup_buffers(self)
+         for router in self.routers:
+-            router_buffers = []
+-            # Add message buffers to routers at the end of each
+-            # unidirectional internal link
+-            for link in self.int_links:
+-                if link.dst_node == router:
+-                    for i in range(int(self.number_of_virtual_networks)):
+-                        router_buffers.append(MessageBuffer(ordered = True,
+-                                     allow_zero_latency = True,
+-                                     buffer_size = self.vnet_buffer_size(i)))
+-
+-            # Add message buffers to routers for each external link connection
+-            for link in self.ext_links:
+-                # Routers can only be int_nodes on ext_links
+-                if link.int_node in self.routers:
+-                    for i in range(int(self.number_of_virtual_networks)):
+-                        router_buffers.append(MessageBuffer(ordered = True,
+-                                     allow_zero_latency = True,
+-                                     buffer_size = self.vnet_buffer_size(i)))
+-            router.port_buffers = router_buffers
++            router.setup_buffers(self)
+ 
+ 
+ class BaseRoutingUnit(SimObject):
+@@ -126,6 +98,11 @@ class WeightBased(BaseRoutingUnit):
+     adaptive_routing = Param.Bool(False, "enable adaptive routing")
+ 
+ 
++class SwitchPortBuffer(MessageBuffer):
++    """MessageBuffer type used internally by the Switch port buffers"""
++    ordered = True
++    allow_zero_latency = True
++
+ class Switch(BasicRouter):
+     type = 'Switch'
+     cxx_header = 'mem/ruby/network/simple/Switch.hh'
+@@ -133,8 +110,36 @@ class Switch(BasicRouter):
+ 
+     virt_nets = Param.Int(Parent.number_of_virtual_networks,
+                           "number of virtual networks")
+-    port_buffers = VectorParam.MessageBuffer("Port buffers")
++
++    # Internal port buffers used between the PerfectSwitch and
++    # Throttle objects. There is one buffer per virtual network
++    # and per output port.
++    # These are created by setup_buffers and the user should not
++    # set these manually.
++    port_buffers = VectorParam.MessageBuffer([], "Port buffers")
+ 
+     routing_unit = Param.BaseRoutingUnit(
+                         WeightBased(adaptive_routing = False),
+                         "Routing strategy to be used")
++
++    def setup_buffers(self, network):
++        if len(self.port_buffers) > 0:
++            fatal("User should not manually set routers' port_buffers")
++        router_buffers = []
++        # Add message buffers to routers at the end of each
++        # unidirectional internal link
++        for link in network.int_links:
++            if link.dst_node == self:
++                for i in range(int(network.number_of_virtual_networks)):
++                    router_buffers.append(SwitchPortBuffer(
++                                    buffer_size = network.vnet_buffer_size(i)))
++
++        # Add message buffers to routers for each external link connection
++        for link in network.ext_links:
++            # Routers can only be int_nodes on ext_links
++            if link.int_node == self:
++                for i in range(int(network.number_of_virtual_networks)):
++                    router_buffers.append(SwitchPortBuffer(
++                                    buffer_size = network.vnet_buffer_size(i)))
++
++        self.port_buffers = router_buffers
+-- 
+1.8.3.1
+

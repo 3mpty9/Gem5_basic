@@ -1,0 +1,220 @@
+From 986e7b90d37d54e5e0ee382d4a7be97c13f7075f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 19 Aug 2020 19:47:19 -0500
+Subject: [PATCH 169/757] mem-ruby: int/ext SimpleNetwork routing latency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+One now may specify separate routing latencies for internal and
+external links using the router's int_routing_latency and
+ext_routing_latency, respectively.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I5532668bf23fc61d02b978bfd9479023a6ce2b16
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41861
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/simple/PerfectSwitch.cc | 11 +++++++----
+ src/mem/ruby/network/simple/PerfectSwitch.hh | 12 ++++++++++--
+ src/mem/ruby/network/simple/SimpleNetwork.cc |  3 ++-
+ src/mem/ruby/network/simple/SimpleNetwork.py |  5 +++++
+ src/mem/ruby/network/simple/Switch.cc        |  9 +++++++--
+ src/mem/ruby/network/simple/Switch.hh        |  8 +++-----
+ 6 files changed, 34 insertions(+), 14 deletions(-)
+
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.cc b/src/mem/ruby/network/simple/PerfectSwitch.cc
+index 19e1523..665fd0f 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.cc
++++ b/src/mem/ruby/network/simple/PerfectSwitch.cc
+@@ -96,6 +96,7 @@ void
+ PerfectSwitch::addOutPort(const std::vector<MessageBuffer*>& out,
+                           const NetDest& routing_table_entry,
+                           const PortDirection &dst_inport,
++                          Tick routing_latency,
+                           int link_weight)
+ {
+     // Add to routing unit
+@@ -104,7 +105,7 @@ PerfectSwitch::addOutPort(const std::vector<MessageBuffer*>& out,
+                                           routing_table_entry,
+                                           dst_inport,
+                                           link_weight);
+-    m_out.push_back(out);
++    m_out.push_back({routing_latency, out});
+ }
+ 
+ PerfectSwitch::~PerfectSwitch()
+@@ -182,8 +183,9 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+         bool enough = true;
+         for (int i = 0; i < output_links.size(); i++) {
+             int outgoing = output_links[i].m_link_id;
++            OutputPort &out_port = m_out[outgoing];
+ 
+-            if (!m_out[outgoing][vnet]->areNSlotsAvailable(1, current_time))
++            if (!out_port.buffers[vnet]->areNSlotsAvailable(1, current_time))
+                 enough = false;
+ 
+             DPRINTF(RubyNetwork, "Checking if node is blocked ..."
+@@ -220,6 +222,7 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+         // Enqueue it - for all outgoing queues
+         for (int i=0; i<output_links.size(); i++) {
+             int outgoing = output_links[i].m_link_id;
++            OutputPort &out_port = m_out[outgoing];
+ 
+             if (i > 0) {
+                 // create a private copy of the unmodified message
+@@ -236,8 +239,8 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+                     "inport[%d][%d] to outport [%d][%d].\n",
+                     incoming, vnet, outgoing, vnet);
+ 
+-            m_out[outgoing][vnet]->enqueue(msg_ptr, current_time,
+-                                           m_switch->latencyTicks());
++            out_port.buffers[vnet]->enqueue(msg_ptr, current_time,
++                                           out_port.latency);
+         }
+     }
+ }
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.hh b/src/mem/ruby/network/simple/PerfectSwitch.hh
+index 41e9448..446ae83 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.hh
++++ b/src/mem/ruby/network/simple/PerfectSwitch.hh
+@@ -80,6 +80,7 @@ class PerfectSwitch : public Consumer
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+                     const NetDest& routing_table_entry,
+                     const PortDirection &dst_inport,
++                    Tick routing_latency,
+                     int link_weight);
+ 
+     int getInLinks() const { return m_in.size(); }
+@@ -103,9 +104,16 @@ class PerfectSwitch : public Consumer
+     const SwitchID m_switch_id;
+     Switch * const m_switch;
+ 
+-    // vector of queues from the components
++    // Vector of queues associated to each port.
+     std::vector<std::vector<MessageBuffer*> > m_in;
+-    std::vector<std::vector<MessageBuffer*> > m_out;
++
++    // Each output port also has a latency for routing to that port
++    struct OutputPort
++    {
++        Tick latency;
++        std::vector<MessageBuffer*> buffers;
++    };
++    std::vector<OutputPort> m_out;
+ 
+     uint32_t m_virtual_networks;
+     int m_wakeups_wo_switch;
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.cc b/src/mem/ruby/network/simple/SimpleNetwork.cc
+index ec3a25e..8e10081 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.cc
++++ b/src/mem/ruby/network/simple/SimpleNetwork.cc
+@@ -122,7 +122,7 @@ SimpleNetwork::makeExtOutLink(SwitchID src, NodeID global_dest,
+     m_switches[src]->addOutPort(m_fromNetQueues[local_dest],
+                                 routing_table_entry[0],
+                                 simple_link->m_latency, 0,
+-                                simple_link->m_bw_multiplier);
++                                simple_link->m_bw_multiplier, true);
+ }
+ 
+ // From an endpoint node to a switch
+@@ -150,6 +150,7 @@ SimpleNetwork::makeInternalLink(SwitchID src, SwitchID dest, BasicLink* link,
+                                 simple_link->m_latency,
+                                 simple_link->m_weight,
+                                 simple_link->m_bw_multiplier,
++                                false,
+                                 dst_inport);
+     // Maitain a global list of buffers (used for functional accesses only)
+     m_int_link_buffers.insert(m_int_link_buffers.end(),
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.py b/src/mem/ruby/network/simple/SimpleNetwork.py
+index 94806b4..1d4772d 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.py
++++ b/src/mem/ruby/network/simple/SimpleNetwork.py
+@@ -111,6 +111,11 @@ class Switch(BasicRouter):
+     virt_nets = Param.Int(Parent.number_of_virtual_networks,
+                           "number of virtual networks")
+ 
++    int_routing_latency = Param.Cycles(BasicRouter.latency,
++                                    "Routing latency to internal links")
++    ext_routing_latency = Param.Cycles(BasicRouter.latency,
++                                    "Routing latency to external links")
++
+     # Internal port buffers used between the PerfectSwitch and
+     # Throttle objects. There is one buffer per virtual network
+     # and per output port.
+diff --git a/src/mem/ruby/network/simple/Switch.cc b/src/mem/ruby/network/simple/Switch.cc
+index fd43910..a5fc6ed 100644
+--- a/src/mem/ruby/network/simple/Switch.cc
++++ b/src/mem/ruby/network/simple/Switch.cc
+@@ -58,7 +58,9 @@ using stl_helpers::operator<<;
+ 
+ Switch::Switch(const Params &p)
+   : BasicRouter(p),
+-    perfectSwitch(m_id, this, p.virt_nets),  m_latency(p.latency),
++    perfectSwitch(m_id, this, p.virt_nets),
++    m_int_routing_latency(p.int_routing_latency),
++    m_ext_routing_latency(p.ext_routing_latency),
+     m_routing_unit(*p.routing_unit), m_num_connected_buffers(0),
+     switchStats(this)
+ {
+@@ -87,6 +89,7 @@ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+                    const NetDest& routing_table_entry,
+                    Cycles link_latency, int link_weight,
+                    int bw_multiplier,
++                   bool is_external,
+                    PortDirection dst_inport)
+ {
+     const std::vector<int> &physical_vnets_channels =
+@@ -121,9 +124,11 @@ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+         intermediateBuffers.push_back(buffer_ptr);
+     }
+ 
++    Tick routing_latency = is_external ? cyclesToTicks(m_ext_routing_latency) :
++                                         cyclesToTicks(m_int_routing_latency);
+     // Hook the queues to the PerfectSwitch
+     perfectSwitch.addOutPort(intermediateBuffers, routing_table_entry,
+-                             dst_inport, link_weight);
++                             dst_inport, routing_latency, link_weight);
+ 
+     // Hook the queues to the Throttle
+     throttles.back().addLinks(intermediateBuffers, out);
+diff --git a/src/mem/ruby/network/simple/Switch.hh b/src/mem/ruby/network/simple/Switch.hh
+index 39a9716..86abfda 100644
+--- a/src/mem/ruby/network/simple/Switch.hh
++++ b/src/mem/ruby/network/simple/Switch.hh
+@@ -93,6 +93,7 @@ class Switch : public BasicRouter
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+                     const NetDest& routing_table_entry,
+                     Cycles link_latency, int link_weight, int bw_multiplier,
++                    bool is_external,
+                     PortDirection dst_inport = "");
+ 
+     void resetStats();
+@@ -108,10 +109,6 @@ class Switch : public BasicRouter
+     bool functionalRead(Packet *, WriteMask&);
+     uint32_t functionalWrite(Packet *);
+ 
+-    Cycles latencyCycles() const { return m_latency; }
+-
+-    Tick latencyTicks() const { return cyclesToTicks(m_latency); }
+-
+     BaseRoutingUnit& getRoutingUnit() { return m_routing_unit; }
+ 
+   private:
+@@ -123,7 +120,8 @@ class Switch : public BasicRouter
+     SimpleNetwork* m_network_ptr;
+     std::list<Throttle> throttles;
+ 
+-    const Cycles m_latency;
++    const Cycles m_int_routing_latency;
++    const Cycles m_ext_routing_latency;
+ 
+     BaseRoutingUnit &m_routing_unit;
+ 
+-- 
+1.8.3.1
+

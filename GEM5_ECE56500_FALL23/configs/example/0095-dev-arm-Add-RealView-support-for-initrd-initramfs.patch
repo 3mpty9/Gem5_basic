@@ -1,0 +1,35 @@
+From 75cd1ff764f5a27cececee571730d13468a2f68c Mon Sep 17 00:00:00 2001
+From: Alistair Delva <adelva@google.com>
+Date: Tue, 14 Dec 2021 10:26:44 -0800
+Subject: [PATCH 095/757] dev-arm: Add RealView support for initrd/initramfs
+
+Update the RealView bootloader simulator to set up the initrd_addr. The
+load address is derived from the dtb_addr plus the maximum allowable DTB
+blob size.
+
+Change-Id: I2eaeb1ade38d24ad8e02230cc99d12873c2f56f9
+Signed-off-by: Alistair Delva <adelva@google.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54185
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/RealView.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 2b86227..3229983 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -750,6 +750,8 @@ class RealView(Platform):
+         cur_sys.workload.boot_loader = boot_loader
+         cur_sys.workload.load_addr_offset = load_offset
+         cur_sys.workload.dtb_addr = load_offset + dtb_addr
++        # Use 0x200000 as this is the maximum size allowed for a DTB
++        cur_sys.workload.initrd_addr = cur_sys.workload.dtb_addr + 0x200000
+         cur_sys.workload.cpu_release_addr = cur_sys.workload.dtb_addr - 8
+ 
+     def generateDeviceTree(self, state):
+-- 
+1.8.3.1
+

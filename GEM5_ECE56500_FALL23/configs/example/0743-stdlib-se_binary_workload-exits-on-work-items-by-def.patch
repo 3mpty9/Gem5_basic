@@ -1,0 +1,56 @@
+From 25f884a0dbb38db528533dedbacaf6144f329982 Mon Sep 17 00:00:00 2001
+From: Kaustav Goswami <kggoswami@ucdavis.edu>
+Date: Thu, 14 Jul 2022 01:18:46 -0700
+Subject: [PATCH 743/757] stdlib: se_binary_workload exits on work items by
+ default
+
+This change makes the method se_binary_workload to exit automatically
+when work items are encountered during simulation. This makes it
+similar to the method set_kernel_disk_workload in terms of work items.
+
+Change-Id: I8a676e3e174fd65930853b1849e3e0be6a643231
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61311
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61733
+---
+ src/python/gem5/components/boards/se_binary_workload.py | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/python/gem5/components/boards/se_binary_workload.py b/src/python/gem5/components/boards/se_binary_workload.py
+index c166add..6ff81e7 100644
+--- a/src/python/gem5/components/boards/se_binary_workload.py
++++ b/src/python/gem5/components/boards/se_binary_workload.py
+@@ -39,7 +39,11 @@ class SEBinaryWorkload:
+     AbstractBoard).
+     """
+ 
+-    def set_se_binary_workload(self, binary: AbstractResource) -> None:
++    def set_se_binary_workload(
++        self,
++        binary: AbstractResource,
++        exit_on_work_items: bool = True
++    ) -> None:
+         """Set up the system to run a specific binary.
+ 
+         **Limitations**
+@@ -48,6 +52,8 @@ class SEBinaryWorkload:
+           ISA and the simulated ISA are the same.
+ 
+         :param binary: The resource encapsulating the binary to be run.
++        :param exit_on_work_items: Whether the simulation should exit on work
++        items. True by default.
+         """
+ 
+         # We assume this this is in a multiple-inheritance setup with an
+@@ -63,3 +69,6 @@ class SEBinaryWorkload:
+         process = Process()
+         process.cmd = [binary.get_local_path()]
+         self.get_processor().get_cores()[0].set_workload(process)
++
++        # Set whether to exit on work items for the se_workload
++        self.exit_on_work_items = exit_on_work_items
+-- 
+1.8.3.1
+

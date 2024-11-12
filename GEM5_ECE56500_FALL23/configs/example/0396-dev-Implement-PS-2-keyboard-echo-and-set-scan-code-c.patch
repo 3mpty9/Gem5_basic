@@ -1,0 +1,55 @@
+From cc07c6d2f3382d51cad9963214ce7b1d3f608210 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 03:38:29 -0800
+Subject: [PATCH 396/757] dev: Implement PS/2 keyboard echo and set scan code
+ commands.
+
+Don't actually let anyone set a scan code set other than 2, since that's
+all our converter knows about. It's probably all anyone will want
+anyway.
+
+Change-Id: Ief2f35448adc80e30e8fdf13ef9d64d6f19447eb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55807
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/ps2/keyboard.cc | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/dev/ps2/keyboard.cc b/src/dev/ps2/keyboard.cc
+index fb63d48..e3b13ac 100644
+--- a/src/dev/ps2/keyboard.cc
++++ b/src/dev/ps2/keyboard.cc
+@@ -128,9 +128,26 @@ PS2Keyboard::recv(const std::vector<uint8_t> &data)
+             return true;
+         }
+       case keyboard::DiagnosticEcho:
+-        panic("Keyboard diagnostic echo unimplemented.\n");
++        send(keyboard::DiagnosticEcho);
++        return true;
+       case keyboard::AlternateScanCodes:
+-        panic("Accessing alternate scan codes unimplemented.\n");
++        if (data.size() == 1) {
++            DPRINTF(PS2, "Got scan code set command.\n");
++            sendAck();
++            return false;
++        } else {
++            sendAck();
++            uint8_t scan_code = data[1];
++            if (scan_code == 0) {
++                DPRINTF(PS2, "Sending hard coded current scan code set 2.\n");
++                send(0x2);
++            } else {
++                DPRINTF(PS2, "Setting scan code set to %d.\n", scan_code);
++                panic_if(scan_code != 0x2,
++                        "PS/2 scan code set %d not supported.", scan_code);
++            }
++        }
++        return true;
+       case keyboard::TypematicInfo:
+         if (data.size() == 1) {
+             DPRINTF(PS2, "Setting typematic info.\n");
+-- 
+1.8.3.1
+

@@ -1,0 +1,672 @@
+From 53500ac611fee75ff9d6600e4a3b63daf965c103 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 15 Apr 2022 15:04:32 -0700
+Subject: [PATCH 650/757] stdlib: Introduce an ARM Board
+
+This changes adds a new board to the gem5 stdlib, which is capable
+of simulating an ARM based full system. It also adds an example
+config script to perform a boot-test using an Ubuntu 18.04 disk
+image. A test has been added in the gem5-library-example for the
+same.
+
+Change-Id: Ic95ee56084a444c7f1cf21cdcbf40585dcf5274a
+Signed-off-by: Kaustav Goswami <kggoswami@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58910
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ .../example/gem5_library/arm-ubuntu-boot-exit.py   | 149 ++++++++
+ src/python/SConscript                              |   1 +
+ src/python/gem5/components/boards/arm_board.py     | 377 +++++++++++++++++++++
+ .../gem5/components/boards/kernel_disk_workload.py |  12 +-
+ .../gem5/components/processors/simple_core.py      |  13 +-
+ .../test_gem5_library_examples.py                  |  17 +
+ 6 files changed, 567 insertions(+), 2 deletions(-)
+ create mode 100644 configs/example/gem5_library/arm-ubuntu-boot-exit.py
+ create mode 100644 src/python/gem5/components/boards/arm_board.py
+
+diff --git a/configs/example/gem5_library/arm-ubuntu-boot-exit.py b/configs/example/gem5_library/arm-ubuntu-boot-exit.py
+new file mode 100644
+index 0000000..7125e48
+--- /dev/null
++++ b/configs/example/gem5_library/arm-ubuntu-boot-exit.py
+@@ -0,0 +1,149 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++"""
++This script shows an example of booting an ARM based full system Ubuntu
++disk image using the gem5's standard library. This simulation boots the disk
++image using 2 TIMING CPU cores. The simulation ends when the startup is
++completed successfully (i.e. when an `m5_exit instruction is reached on
++successful boot).
++
++Usage
++-----
++
++```
++scons build/ARM/gem5.opt -j<NUM_CPUS>
++./build/ARM/gem5.opt configs/example/gem5_library/arm-ubuntu-boot-exit.py
++```
++
++"""
++
++import os
++from gem5.isas import ISA
++from m5.objects import ArmDefaultRelease
++from gem5.utils.requires import requires
++from gem5.resources.resource import Resource
++from gem5.simulate.simulator import Simulator
++from m5.objects import VExpress_GEM5_Foundation
++from gem5.components.boards.arm_board import ArmBoard
++from gem5.components.memory import DualChannelDDR4_2400
++from gem5.components.processors.cpu_types import CPUTypes
++from gem5.resources.resource import CustomDiskImageResource
++from gem5.components.processors.simple_processor import SimpleProcessor
++
++# This runs a check to ensure the gem5 binary is compiled for ARM.
++
++requires(
++    isa_required=ISA.ARM,
++)
++
++# With ARM, we use simple caches.
++
++from gem5.components.cachehierarchies.classic\
++    .private_l1_private_l2_cache_hierarchy import (
++    PrivateL1PrivateL2CacheHierarchy,
++)
++
++
++# Here we setup the parameters of the l1 and l2 caches.
++
++cache_hierarchy = PrivateL1PrivateL2CacheHierarchy(
++    l1d_size="16kB",
++    l1i_size="16kB",
++    l2_size="256kB",
++)
++
++# Memory: Dual Channel DDR4 2400 DRAM device.
++
++memory = DualChannelDDR4_2400(size = "2GB")
++
++# Here we setup the processor. We use a simple TIMING processor. The config
++# script was also tested with ATOMIC processor.
++
++processor = SimpleProcessor(
++    cpu_type=CPUTypes.TIMING,
++    num_cores=2,
++)
++
++# The ArmBoard requires a `release` to be specified. This adds all the
++# extensions or features to the system. We are setting this to Armv8
++# (ArmDefaultRelease) in this example config script.
++
++release = ArmDefaultRelease()
++
++# The platform sets up the memory ranges of all the on-chip and off-chip
++# devices present on the ARM system.
++
++platform = VExpress_GEM5_Foundation()
++
++# Here we setup the board. The ArmBoard allows for Full-System ARM simulations.
++
++board = ArmBoard(
++    clk_freq = "3GHz",
++    processor = processor,
++    memory = memory,
++    cache_hierarchy = cache_hierarchy,
++    release = release,
++    platform = platform
++)
++
++# Here we set the Full System workload.
++
++# The `set_kernel_disk_workload` function on the ArmBoard accepts an ARM
++# kernel, a disk image, and, path to the bootloader.
++
++board.set_kernel_disk_workload(
++
++    # The ARM kernel will be automatically downloaded to the `~/.cache/gem5`
++    # directory if not already present. The arm-ubuntu-boot-exit was tested
++    # with `vmlinux.arm64`
++
++    kernel = Resource("arm64-linux-kernel-5.4.49"),
++
++    # The ARM ubuntu image will be automatically downloaded to the
++    # `~/.cache/gem5` directory if not already present.
++
++    disk_image = Resource("arm64-ubuntu-18.04-img"),
++
++    # We need to specify the path for the bootloader file `boot.arm64`.
++
++    bootloader = Resource("arm64-bootloader"),
++
++    # For the arm64-ubuntu-18.04.img, we need to specify the readfile content
++
++    readfile_contents = "m5 exit"
++)
++
++# We define the system with the aforementioned system defined.
++
++simulator = Simulator(board = board)
++
++# Once the system successfully boots, it encounters an
++# `m5_exit instruction encountered`. We stop the simulation then. When the
++# simulation has ended you may inspect `m5out/board.terminal` to see
++# the stdout.
++
++simulator.run()
+diff --git a/src/python/SConscript b/src/python/SConscript
+index 47e577a..b595ba9 100644
+--- a/src/python/SConscript
++++ b/src/python/SConscript
+@@ -50,6 +50,7 @@ PySource('gem5.components.boards.experimental',
+ PySource('gem5.components.boards', 'gem5/components/boards/simple_board.py')
+ PySource('gem5.components.boards', 'gem5/components/boards/test_board.py')
+ PySource('gem5.components.boards', 'gem5/components/boards/x86_board.py')
++PySource('gem5.components.boards', 'gem5/components/boards/arm_board.py')
+ PySource('gem5.components.boards',
+     "gem5/components/boards/kernel_disk_workload.py")
+ PySource('gem5.components.boards',
+diff --git a/src/python/gem5/components/boards/arm_board.py b/src/python/gem5/components/boards/arm_board.py
+new file mode 100644
+index 0000000..73002e9
+--- /dev/null
++++ b/src/python/gem5/components/boards/arm_board.py
+@@ -0,0 +1,377 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.objects import (
++    Port,
++    IOXBar,
++    Bridge,
++    BadAddr,
++    Terminal,
++    PciVirtIO,
++    VncServer,
++    AddrRange,
++    ArmSystem,
++    ArmRelease,
++    ArmFsLinux,
++    VirtIOBlock,
++    CowDiskImage,
++    RawDiskImage,
++    VoltageDomain,
++    SrcClockDomain,
++    ArmDefaultRelease,
++    VExpress_GEM5_Base,
++    VExpress_GEM5_Foundation,
++)
++
++import os
++import m5
++from abc import ABCMeta
++from ...isas import ISA
++from typing import List
++from m5.util import fatal
++from ...utils.requires import requires
++from ...utils.override import overrides
++from .abstract_board import AbstractBoard
++from ...resources.resource import AbstractResource
++from .kernel_disk_workload import KernelDiskWorkload
++from ..cachehierarchies.classic.no_cache import NoCache
++from ..processors.abstract_processor import AbstractProcessor
++from ..memory.abstract_memory_system import AbstractMemorySystem
++from ..cachehierarchies.abstract_cache_hierarchy import AbstractCacheHierarchy
++
++class ArmBoard(ArmSystem, AbstractBoard, KernelDiskWorkload):
++    """
++    A board capable of full system simulation for ARM instructions. It is based
++    ARMv8.
++
++    The board is based on Arm Motherboard Express uATX (V2M-P1), Arm
++    CoreTile Express A15x2 (V2P-CA15) and on Armv8-A FVP Foundation platform
++    v11.8, depending on the simulated platform. These boards are parts of ARM's
++    Versatile(TM) Express family of boards.
++
++    **Limitations**
++    * The board currently does not support ruby caches.
++    * stage2 walker ports are ignored.
++    """
++    __metaclass__ = ABCMeta
++
++    def __init__(
++        self,
++        clk_freq: str,
++        processor: AbstractProcessor,
++        memory: AbstractMemorySystem,
++        cache_hierarchy: AbstractCacheHierarchy,
++        platform: VExpress_GEM5_Base = VExpress_GEM5_Foundation(),
++        release: ArmRelease = ArmDefaultRelease()
++    ) -> None:
++        super().__init__()
++        AbstractBoard.__init__(
++            self,
++            clk_freq = clk_freq,
++            processor = processor,
++            memory = memory,
++            cache_hierarchy = cache_hierarchy,
++        )
++
++        # This board requires ARM ISA to work.
++
++        requires(isa_required = ISA.ARM)
++
++        # Setting the voltage domain here.
++
++        self.voltage_domain = self.clk_domain.voltage_domain
++
++        # Setting up ARM release here. We use the ARM default release, which
++        # corresponds to an ARMv8 system.
++
++        self.release = release
++
++        # RealView sets up most of the on-chip and off-chip devices and GIC
++        # for the ARM board. These devices' iformation is also used to
++        # generate the dtb file.
++
++        self._setup_realview(platform)
++
++        # ArmBoard's memory can only be setup once realview is initialized.
++
++        self._setup_arm_memory_ranges()
++
++        # Setting multi_proc of ArmSystem by counting the number of processors.
++
++        if processor.get_num_cores() != 1:
++            self.multi_proc = False
++        else:
++            self.multi_proc = True
++
++    @overrides(AbstractBoard)
++    def _setup_board(self) -> None:
++
++        # This board is expected to run full-system simulation.
++        # Loading ArmFsLinux() from `src/arch/arm/ArmFsWorkload.py`
++
++        self.workload = ArmFsLinux()
++
++        # We are fixing the following variable for the ArmSystem to work. The
++        # security extension is checked while generating the dtb file in
++        # realview. This board does not have security extention enabled.
++
++        self._have_psci = False
++
++        # highest_el_is_64 is set to True. True if the register width of the
++        # highest implemented exception level is 64 bits.
++
++        self.highest_el_is_64 = True
++
++        # Setting up the voltage and the clock domain here for the ARM board.
++        # The ArmSystem/RealView expects voltage_domain to be a parameter.
++        # The voltage and the clock frequency are taken from the devices.py
++        # file from configs/example/arm
++
++        self.voltage_domain = VoltageDomain(voltage="1.0V")
++        self.clk_domain = SrcClockDomain(
++            clock="1GHz", voltage_domain=self.voltage_domain
++        )
++
++        # The ARM board supports both Terminal and VncServer.
++
++        self.terminal = Terminal()
++        self.vncserver = VncServer()
++
++        # Incoherent I/O Bus
++
++        self.iobus = IOXBar()
++        self.iobus.badaddr_responder = BadAddr()
++        self.iobus.default = self.iobus.badaddr_responder.pio
++
++    def _setup_io_devices(self) -> None:
++        """
++        This method connects the I/O devices to the I/O bus.
++        """
++
++        # We setup the iobridge for the ARM Board. The default
++        # cache_hierarchy's NoCache class has an iobridge has a latency of
++        # 10. We are using an iobridge with latency = 50ns, taken from the
++        # configs/example/arm/devices.py
++
++        self.iobridge = Bridge(delay="50ns")
++        self.iobridge.mem_side_port = self.iobus.cpu_side_ports
++        self.iobridge.cpu_side_port = (
++            self.cache_hierarchy.get_mem_side_port()
++        )
++
++        # We either have iocache or dmabridge depending upon the
++        # cache_hierarchy. If we have "NoCache", then we use the dmabridge.
++        # Otherwise, we use the iocache on the board.
++
++        if isinstance(self.cache_hierarchy, NoCache) is False:
++
++            # The ArmBoard does not support ruby caches.
++
++            if self.get_cache_hierarchy().is_ruby():
++                fatal("Ruby caches are not supported by the ArmBoard.")
++
++            # The classic caches are setup in the  _setup_io_cache() method,
++            # defined under the cachehierarchy class. Verified it with both
++            # PrivateL1PrivateL2CacheHierarchy and PrivateL1CacheHierarchy
++            # classes.
++
++        else:
++
++            # This corresponds to a machine without caches. We have a DMA
++            # beidge in this case. Parameters of this bridge are also taken
++            # from the common/example/arm/devices.py file.
++
++            self.dmabridge = Bridge(
++                delay="50ns", ranges=self.mem_ranges
++            )
++
++            self.dmabridge.mem_side_port = self.get_dma_ports()[0]
++            self.dmabridge.cpu_side_port = self.get_dma_ports()[1]
++
++        self.realview.attachOnChipIO(
++            self.cache_hierarchy.membus, self.iobridge
++        )
++        self.realview.attachIO(self.iobus)
++
++    def _setup_realview(self, platform) -> None:
++        """
++        Notes:
++        The ARM Board has realview platform. Most of the on-chip and
++        off-chip devices are setup by the RealView platform. Currently, there
++        are 5 different types of realview platforms supported by the ArmBoard.
++
++        :param platform: the user can specify the platform while instantiating
++        an ArmBoard object.
++        """
++
++        # Currently, the ArmBoard supports VExpress_GEM5_V1,
++        # VExpress_GEM5_V1_HDLcd and VExpress_GEM5_Foundation.
++        # VExpress_GEM5_V2 and VExpress_GEM5_V2_HDLcd are not supported by the
++        # ArmBoard.
++
++        self.realview = platform
++
++        # We need to setup the global interrupt controller (GIC) addr for the
++        # realview system.
++
++        if hasattr(self.realview.gic, "cpu_addr"):
++            self.gic_cpu_addr = self.realview.gic.cpu_addr
++
++    def _setup_io_cache(self):
++        pass
++
++    @overrides(AbstractBoard)
++    def has_io_bus(self) -> bool:
++        return True
++
++    @overrides(AbstractBoard)
++    def get_io_bus(self) -> IOXBar:
++        return [self.iobus.cpu_side_ports, self.iobus.mem_side_ports]
++
++    @overrides(AbstractBoard)
++    def has_coherent_io(self) -> bool:
++        return True
++
++    @overrides(AbstractBoard)
++    def get_mem_side_coherent_io_port(self) -> Port:
++        return self.iobus.mem_side_ports
++
++    @overrides(AbstractBoard)
++    def has_dma_ports(self) -> bool:
++        return True
++
++    def _setup_coherent_io_bridge(self, board: AbstractBoard) -> None:
++        pass
++
++    @overrides(AbstractBoard)
++    def get_dma_ports(self) -> List[Port]:
++        return [
++            self.cache_hierarchy.get_cpu_side_port(),
++            self.iobus.mem_side_ports
++        ]
++
++    @overrides(AbstractBoard)
++    def connect_system_port(self, port: Port) -> None:
++        self.system_port = port
++
++    @overrides(KernelDiskWorkload)
++    def get_disk_device(self):
++        return "/dev/vda"
++
++    @overrides(KernelDiskWorkload)
++    def _add_disk_to_board(self, disk_image: AbstractResource):
++
++        # We define the image.
++
++        image = CowDiskImage(
++            child=RawDiskImage(read_only=True), read_only=False
++        )
++
++        self.pci_devices = [PciVirtIO(vio=VirtIOBlock(image=image))]
++        self.realview.attachPciDevice(
++                self.pci_devices[0], self.iobus
++        )
++
++        # Now that the disk and workload are set, we can generate the device
++        # tree file. We will generate the dtb file everytime the board is
++        # boot-up.
++
++        image.child.image_file = disk_image.get_local_path()
++
++        # _setup_io_devices needs to be implemented.
++
++        self._setup_io_devices()
++
++        # Specifying the dtb file location to the workload.
++
++        self.workload.dtb_filename = os.path.join(
++                m5.options.outdir, "device.dtb"
++        )
++
++        # Calling generateDtb from class ArmSystem to add memory information to
++        # the dtb file.
++
++        self.generateDtb(self.workload.dtb_filename)
++
++        # Finally we need to setup the bootloader for the ArmBoard. An ARM
++        # system requires three inputs to simulate a full system: a disk image,
++        # the kernel file and the bootloader file(s).
++
++        self.realview.setupBootLoader(
++                self, self.workload.dtb_filename, self._bootloader)
++
++    def _get_memory_ranges(self, mem_size) -> list:
++        """
++        This method is taken from configs/example/arm/devices.py. It sets up
++        all the memory ranges for the board.
++        """
++        mem_ranges = []
++
++        for mem_range in self.realview._mem_regions:
++            size_in_range = min(mem_size, mem_range.size())
++            mem_ranges.append(
++                AddrRange(start = mem_range.start, size = size_in_range)
++            )
++
++            mem_size -= size_in_range
++            if mem_size == 0:
++                return mem_ranges
++
++        raise ValueError("Memory size too big for platform capabilities")
++
++    @overrides(AbstractBoard)
++    def _setup_memory_ranges(self) -> None:
++        """
++        The ArmBoard's memory can only be setup after realview is setup. Once
++        realview is initialized, we call _setup_arm_memory_ranges() to
++        correctly setup the memory ranges.
++        """
++        pass
++
++    def _setup_arm_memory_ranges(self) -> None:
++
++        # We setup the memory here. The memory size is specified in the run
++        # script that the user uses.
++
++        memory = self.get_memory()
++        mem_size = memory.get_size()
++
++        self.mem_ranges = self._get_memory_ranges(mem_size)
++        memory.set_memory_range(self.mem_ranges)
++
++    @overrides(KernelDiskWorkload)
++    def get_default_kernel_args(self) -> List[str]:
++
++        # The default kernel string is taken from the devices.py file.
++
++        return [
++            "console=ttyAMA0",
++            "lpj=19988480",
++            "norandmaps",
++            "root={root_value}",
++            "rw",
++            "mem=%s" % self.get_memory().get_size(),
++        ]
+diff --git a/src/python/gem5/components/boards/kernel_disk_workload.py b/src/python/gem5/components/boards/kernel_disk_workload.py
+index 1f4b8d7..23824d1 100644
+--- a/src/python/gem5/components/boards/kernel_disk_workload.py
++++ b/src/python/gem5/components/boards/kernel_disk_workload.py
+@@ -134,6 +134,7 @@ class KernelDiskWorkload:
+         self,
+         kernel: AbstractResource,
+         disk_image: AbstractResource,
++        bootloader: Optional[AbstractResource] = None,
+         readfile: Optional[str] = None,
+         readfile_contents: Optional[str] = None,
+         kernel_args: Optional[List[str]] = None,
+@@ -145,6 +146,8 @@ class KernelDiskWorkload:
+ 
+         :param kernel: The kernel to boot.
+         :param disk_image: The disk image to mount.
++        :param bootloader: The current implementation of the ARM board requires
++        three resources to operate -- kernel, disk image, and, a bootloader.
+         :param readfile: An optional parameter stating the file to be read by
+         by `m5 readfile`.
+         :param readfile_contents: An optional parameter stating the contents of
+@@ -175,6 +178,13 @@ class KernelDiskWorkload:
+             root_value=self.get_default_kernel_root_val(disk_image=disk_image)
+         )
+ 
++        # Setting the bootloader information for ARM board. The current
++        # implementation of the ArmBoard class expects a boot loader file to be
++        # provided along with the kernel and the disk image.
++
++        if bootloader is not None:
++            self._bootloader = [bootloader.get_local_path()]
++
+         # Set the readfile.
+         if readfile:
+             self.readfile = readfile
+@@ -190,4 +200,4 @@ class KernelDiskWorkload:
+         self._add_disk_to_board(disk_image=disk_image)
+ 
+         # Set whether to exit on work items.
+-        self.exit_on_work_items = exit_on_work_items
+\ No newline at end of file
++        self.exit_on_work_items = exit_on_work_items
+diff --git a/src/python/gem5/components/processors/simple_core.py b/src/python/gem5/components/processors/simple_core.py
+index d4469e2..92290a3 100644
+--- a/src/python/gem5/components/processors/simple_core.py
++++ b/src/python/gem5/components/processors/simple_core.py
+@@ -79,7 +79,18 @@ class SimpleCore(AbstractCore):
+ 
+     @overrides(AbstractCore)
+     def connect_walker_ports(self, port1: Port, port2: Port) -> None:
+-        self.core.mmu.connectWalkerPorts(port1, port2)
++        if self.get_isa() == ISA.ARM:
++
++            # Unlike X86 and RISCV MMU, the ARM MMU has two L1 TLB walker ports
++            # named `walker` and `stage2_walker` for both data and instruction.
++            # The gem5 standard library currently supports one TLB walker port
++            # per cache level. Therefore, we are explicitly setting the walker
++            # ports and not setting the stage2_walker ports for ARM systems.
++
++            self.core.mmu.itb_walker.port = port1
++            self.core.mmu.dtb_walker.port = port2
++        else:
++            self.core.mmu.connectWalkerPorts(port1, port2)
+ 
+     @overrides(AbstractCore)
+     def set_workload(self, process: Process) -> None:
+diff --git a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+index f90a077..6db082a 100644
+--- a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
++++ b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+@@ -195,3 +195,20 @@ gem5_verify_config(
+     valid_hosts=constants.supported_hosts,
+     length=constants.long_tag,
+ )
++
++gem5_verify_config(
++    name="test-gem5-library-example-arm-ubuntu-boot-test",
++    fixtures=(),
++    verifiers=(),
++    config=joinpath(
++        config.base_dir,
++        "configs",
++        "example",
++        "gem5_library",
++        "arm-ubuntu-boot-exit.py",
++    ),
++    config_args=[],
++    valid_isas=(constants.arm_tag,),
++    valid_hosts=constants.supported_hosts,
++    length=constants.long_tag,
++)
+-- 
+1.8.3.1
+

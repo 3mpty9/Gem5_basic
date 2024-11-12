@@ -1,0 +1,172 @@
+From 2cab6b8d654fea5a5ead76fb1b228f99138d45d1 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 17 Mar 2022 09:38:29 +0000
+Subject: [PATCH 461/757] arch-arm: Fix RW permission access for _EL12
+ registers
+
+_EL12 registers are supposed to be used in VHE only to access _EL1
+registers. They are not accessible at EL1
+
+Change-Id: I33c0a2b689e523d05712f0242da48e1b73580d6d
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58114
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.cc | 48 +++++++++++++++++++++++++++++++----------------
+ 1 file changed, 32 insertions(+), 16 deletions(-)
+
+diff --git a/src/arch/arm/regs/misc.cc b/src/arch/arm/regs/misc.cc
+index 9ceb67d..d1d8756 100644
+--- a/src/arch/arm/regs/misc.cc
++++ b/src/arch/arm/regs/misc.cc
+@@ -2744,7 +2744,8 @@ ISA::initializeMiscRegMetadata()
+                      | (LSMAOE ? 0 : 0x10000000))
+       .mapsTo(MISCREG_SCTLR_NS);
+     InitReg(MISCREG_SCTLR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .res0( 0x20440 | (EnDB   ? 0 :     0x2000)
+                      | (IESB   ? 0 :   0x200000)
+                      | (EnDA   ? 0 :  0x8000000)
+@@ -2761,7 +2762,8 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_CPACR);
+     InitReg(MISCREG_CPACR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_CPACR_EL1);
+     InitReg(MISCREG_SCTLR_EL2)
+       .hyp().mon()
+@@ -2815,19 +2817,22 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_TTBR0_NS);
+     InitReg(MISCREG_TTBR0_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_TTBR0_EL1);
+     InitReg(MISCREG_TTBR1_EL1)
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_TTBR1_NS);
+     InitReg(MISCREG_TTBR1_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_TTBR1_EL1);
+     InitReg(MISCREG_TCR_EL1)
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_TTBCR_NS);
+     InitReg(MISCREG_TCR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_TTBCR_NS);
+     InitReg(MISCREG_TTBR0_EL2)
+       .hyp().mon()
+@@ -2858,12 +2863,14 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_SPSR_SVC); // NAM C5.2.17 SPSR_EL1
+     InitReg(MISCREG_SPSR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_SPSR_SVC);
+     InitReg(MISCREG_ELR_EL1)
+       .allPrivileges().exceptUserMode();
+     InitReg(MISCREG_ELR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_ELR_EL1);
+     InitReg(MISCREG_SP_EL0)
+       .allPrivileges().exceptUserMode();
+@@ -2914,18 +2921,21 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_ADFSR_NS);
+     InitReg(MISCREG_AFSR0_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_ADFSR_NS);
+     InitReg(MISCREG_AFSR1_EL1)
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_AIFSR_NS);
+     InitReg(MISCREG_AFSR1_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_AIFSR_NS);
+     InitReg(MISCREG_ESR_EL1)
+       .allPrivileges().exceptUserMode();
+     InitReg(MISCREG_ESR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_ESR_EL1);
+     InitReg(MISCREG_IFSR32_EL2)
+       .hyp().mon()
+@@ -2951,7 +2961,8 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_DFAR_NS, MISCREG_IFAR_NS);
+     InitReg(MISCREG_FAR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_DFAR_NS, MISCREG_IFAR_NS);
+     InitReg(MISCREG_FAR_EL2)
+       .hyp().mon()
+@@ -3135,13 +3146,15 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_PRRR_NS, MISCREG_NMRR_NS);
+     InitReg(MISCREG_MAIR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_PRRR_NS, MISCREG_NMRR_NS);
+     InitReg(MISCREG_AMAIR_EL1)
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_AMAIR0_NS, MISCREG_AMAIR1_NS);
+     InitReg(MISCREG_AMAIR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_AMAIR0_NS, MISCREG_AMAIR1_NS);
+     InitReg(MISCREG_MAIR_EL2)
+       .hyp().mon()
+@@ -3161,7 +3174,8 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_VBAR_NS);
+     InitReg(MISCREG_VBAR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_VBAR_NS);
+     InitReg(MISCREG_RVBAR_EL1)
+       .allPrivileges().exceptUserMode().writes(0);
+@@ -3183,7 +3197,8 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges().exceptUserMode()
+       .mapsTo(MISCREG_CONTEXTIDR_NS);
+     InitReg(MISCREG_CONTEXTIDR_EL12)
+-      .allPrivileges().exceptUserMode()
++      .monE2H()
++      .hypE2H()
+       .mapsTo(MISCREG_CONTEXTIDR_NS);
+     InitReg(MISCREG_TPIDR_EL1)
+       .allPrivileges().exceptUserMode()
+@@ -3899,7 +3914,8 @@ ISA::initializeMiscRegMetadata()
+     InitReg(MISCREG_ZCR_EL2)
+         .hyp().mon();
+     InitReg(MISCREG_ZCR_EL12)
+-        .allPrivileges().exceptUserMode()
++        .monE2H()
++        .hypE2H()
+         .mapsTo(MISCREG_ZCR_EL1);
+     InitReg(MISCREG_ZCR_EL1)
+         .allPrivileges().exceptUserMode();
+-- 
+1.8.3.1
+

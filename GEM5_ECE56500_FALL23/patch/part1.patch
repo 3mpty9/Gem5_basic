@@ -1,0 +1,47 @@
+diff --git a/configs/example/se.py b/configs/example/se.py
+index 3a8203d..534b7ad 100644
+--- a/configs/example/se.py
++++ b/configs/example/se.py
+@@ -49,6 +49,7 @@ from m5.defines import buildEnv
+ from m5.objects import *
+ from m5.params import NULL
+ from m5.util import addToPath, fatal, warn
++#from MyMinorCPU import MyMinorCPU
+ 
+ addToPath('../')
+ 
+@@ -64,6 +65,13 @@ from common.FileSystemConfig import config_filesystem
+ from common.Caches import *
+ from common.cpu2000 import *
+ 
++
++"""class MyOptions:
++    def __init__(self, opLat=6,issueLat=1):
++        self.fpu_operation_latency = opLat
++        self.fpu_issue_latency = issueLat
++"""
++
+ def get_processes(args):
+     """Interprets provided args and returns a list of processes"""
+ 
+@@ -164,10 +172,20 @@ if args.smt and args.num_cpus > 1:
+ 
+ np = args.num_cpus
+ mp0_path = multiprocesses[0].executable
++
+ system = System(cpu = [CPUClass(cpu_id=i) for i in range(np)],
+                 mem_mode = test_mem_mode,
+                 mem_ranges = [AddrRange(args.mem_size)],
+                 cache_line_size = args.cacheline_size)
++"""
++
++#MyMinorCPU
++options = MyOptions(opLat=2,issueLat=5)
++system = System(cpu = [MyMinorCPU(options)],
++                mem_mode = 'timing',
++                mem_ranges = [AddrRange(args.mem_size)],
++                cache_line_size = args.cacheline_size)
++"""
+ 
+ if numThreads > 1:
+     system.multi_thread = True

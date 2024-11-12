@@ -1,0 +1,178 @@
+From 3ecd28a222d8548579220980a725e1f94c8fd915 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 12 Jan 2022 15:52:56 -0600
+Subject: [PATCH 145/757] arch-vega: Update FLAT memory access helpers to
+ support LDS
+
+This patch ports the changes from a similar patch for arch-gcn3:
+https://gem5-review.googlesource.com/c/public/gem5/+/48343. Vega already
+has an helper function to send to the correct pipe depending on the
+scope, however the initMem helpers currently always assume global scope.
+
+In addition the MUBUF WBINVL1 instructions are updated similarly to the
+GCN3 patch.
+
+Change-Id: I612b9198cb56e226721a90e72bba64395c84ebcd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55465
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/insts/instructions.cc | 16 +++++-
+ src/arch/amdgpu/vega/insts/op_encodings.hh | 82 ++++++++++++++++++++++++++++--
+ 2 files changed, 91 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index bd7ef70..32d048e 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -39848,7 +39848,13 @@ namespace VegaISA
+         gpuDynInst->execUnitId = wf->execUnitId;
+         gpuDynInst->latency.init(gpuDynInst->computeUnit());
+         gpuDynInst->latency.set(gpuDynInst->computeUnit()->clockPeriod());
+-        gpuDynInst->computeUnit()->globalMemoryPipe.issueRequest(gpuDynInst);
++
++        if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++            gpuDynInst->computeUnit()->globalMemoryPipe.
++                issueRequest(gpuDynInst);
++        } else {
++            fatal("Unsupported scope for flat instruction.\n");
++        }
+     } // execute
+ 
+     void
+@@ -39901,7 +39907,13 @@ namespace VegaISA
+         gpuDynInst->execUnitId = wf->execUnitId;
+         gpuDynInst->latency.init(gpuDynInst->computeUnit());
+         gpuDynInst->latency.set(gpuDynInst->computeUnit()->clockPeriod());
+-        gpuDynInst->computeUnit()->globalMemoryPipe.issueRequest(gpuDynInst);
++
++        if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++            gpuDynInst->computeUnit()->globalMemoryPipe.
++                issueRequest(gpuDynInst);
++        } else {
++            fatal("Unsupported scope for flat instruction.\n");
++        }
+     } // execute
+     void
+     Inst_MUBUF__BUFFER_WBINVL1_VOL::initiateAcc(GPUDynInstPtr gpuDynInst)
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.hh b/src/arch/amdgpu/vega/insts/op_encodings.hh
+index da16dbd..a6dc58c 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.hh
++++ b/src/arch/amdgpu/vega/insts/op_encodings.hh
+@@ -800,35 +800,107 @@ namespace VegaISA
+         void
+         initMemRead(GPUDynInstPtr gpuDynInst)
+         {
+-            initMemReqHelper<T, 1>(gpuDynInst, MemCmd::ReadReq);
++            if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++                initMemReqHelper<T, 1>(gpuDynInst, MemCmd::ReadReq);
++            } else if (gpuDynInst->executedAs() == enums::SC_GROUP) {
++                Wavefront *wf = gpuDynInst->wavefront();
++                for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++                    if (gpuDynInst->exec_mask[lane]) {
++                        Addr vaddr = gpuDynInst->addr[lane];
++                        (reinterpret_cast<T*>(gpuDynInst->d_data))[lane]
++                            = wf->ldsChunk->read<T>(vaddr);
++                    }
++                }
++            }
+         }
+ 
+         template<int N>
+         void
+         initMemRead(GPUDynInstPtr gpuDynInst)
+         {
+-            initMemReqHelper<VecElemU32, N>(gpuDynInst, MemCmd::ReadReq);
++            if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++                initMemReqHelper<VecElemU32, N>(gpuDynInst, MemCmd::ReadReq);
++            } else if (gpuDynInst->executedAs() == enums::SC_GROUP) {
++                Wavefront *wf = gpuDynInst->wavefront();
++                for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++                    if (gpuDynInst->exec_mask[lane]) {
++                        Addr vaddr = gpuDynInst->addr[lane];
++                        for (int i = 0; i < N; ++i) {
++                            (reinterpret_cast<VecElemU32*>(
++                                gpuDynInst->d_data))[lane * N + i]
++                                = wf->ldsChunk->read<VecElemU32>(
++                                        vaddr + i*sizeof(VecElemU32));
++                        }
++                    }
++                }
++            }
+         }
+ 
+         template<typename T>
+         void
+         initMemWrite(GPUDynInstPtr gpuDynInst)
+         {
+-            initMemReqHelper<T, 1>(gpuDynInst, MemCmd::WriteReq);
++            if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++                initMemReqHelper<T, 1>(gpuDynInst, MemCmd::WriteReq);
++            } else if (gpuDynInst->executedAs() == enums::SC_GROUP) {
++                Wavefront *wf = gpuDynInst->wavefront();
++                for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++                    if (gpuDynInst->exec_mask[lane]) {
++                        Addr vaddr = gpuDynInst->addr[lane];
++                        wf->ldsChunk->write<T>(vaddr,
++                            (reinterpret_cast<T*>(gpuDynInst->d_data))[lane]);
++                    }
++                }
++            }
+         }
+ 
+         template<int N>
+         void
+         initMemWrite(GPUDynInstPtr gpuDynInst)
+         {
+-            initMemReqHelper<VecElemU32, N>(gpuDynInst, MemCmd::WriteReq);
++            if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++                initMemReqHelper<VecElemU32, N>(gpuDynInst, MemCmd::WriteReq);
++            } else if (gpuDynInst->executedAs() == enums::SC_GROUP) {
++                Wavefront *wf = gpuDynInst->wavefront();
++                for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++                    if (gpuDynInst->exec_mask[lane]) {
++                        Addr vaddr = gpuDynInst->addr[lane];
++                        for (int i = 0; i < N; ++i) {
++                            wf->ldsChunk->write<VecElemU32>(
++                                vaddr + i*sizeof(VecElemU32),
++                                (reinterpret_cast<VecElemU32*>(
++                                    gpuDynInst->d_data))[lane * N + i]);
++                        }
++                    }
++                }
++            }
+         }
+ 
+         template<typename T>
+         void
+         initAtomicAccess(GPUDynInstPtr gpuDynInst)
+         {
+-            initMemReqHelper<T, 1>(gpuDynInst, MemCmd::SwapReq, true);
++            if (gpuDynInst->executedAs() == enums::SC_GLOBAL) {
++                initMemReqHelper<T, 1>(gpuDynInst, MemCmd::SwapReq, true);
++            } else if (gpuDynInst->executedAs() == enums::SC_GROUP) {
++                Wavefront *wf = gpuDynInst->wavefront();
++                for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++                    if (gpuDynInst->exec_mask[lane]) {
++                        Addr vaddr = gpuDynInst->addr[lane];
++                        auto amo_op =
++                            gpuDynInst->makeAtomicOpFunctor<T>(
++                                &(reinterpret_cast<T*>(
++                                    gpuDynInst->a_data))[lane],
++                                &(reinterpret_cast<T*>(
++                                    gpuDynInst->x_data))[lane]);
++
++                        T tmp = wf->ldsChunk->read<T>(vaddr);
++                        (*amo_op)(reinterpret_cast<uint8_t *>(&tmp));
++                        wf->ldsChunk->write<T>(vaddr, tmp);
++                        (reinterpret_cast<T*>(gpuDynInst->d_data))[lane] = tmp;
++                    }
++                }
++            }
+         }
+ 
+         void
+-- 
+1.8.3.1
+

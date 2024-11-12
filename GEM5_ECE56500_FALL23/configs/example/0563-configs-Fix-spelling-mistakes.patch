@@ -1,0 +1,130 @@
+From 1680d7dab4a278ea7a04b7a34df32e1470b210f5 Mon Sep 17 00:00:00 2001
+From: GWDx <gwdx@mail.ustc.edu.cn>
+Date: Sun, 27 Mar 2022 20:53:13 +0800
+Subject: [PATCH 563/757] configs: Fix spelling mistakes.
+
+Replace "fequency" to "frequency".
+
+Change-Id: I307c8b6d8e60cfcb213f22aca3f6abd43c6b5b1e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58229
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/hmc_hello.py                 | 2 +-
+ configs/example/hmctest.py                   | 2 +-
+ configs/learning_gem5/part1/simple.py        | 2 +-
+ configs/learning_gem5/part1/two_level.py     | 2 +-
+ configs/learning_gem5/part2/simple_cache.py  | 2 +-
+ configs/learning_gem5/part2/simple_memobj.py | 2 +-
+ configs/learning_gem5/part3/ruby_test.py     | 2 +-
+ configs/learning_gem5/part3/simple_ruby.py   | 2 +-
+ 8 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/configs/example/hmc_hello.py b/configs/example/hmc_hello.py
+index 4507768..11d52c0 100644
+--- a/configs/example/hmc_hello.py
++++ b/configs/example/hmc_hello.py
+@@ -49,7 +49,7 @@ options = parser.parse_args()
+ system = System()
+ # use timing mode for the interaction between requestor-responder ports
+ system.mem_mode = 'timing'
+-# set the clock fequency of the system
++# set the clock frequency of the system
+ clk = '1GHz'
+ vd = VoltageDomain(voltage='1V')
+ system.clk_domain = SrcClockDomain(clock=clk, voltage_domain=vd)
+diff --git a/configs/example/hmctest.py b/configs/example/hmctest.py
+index f4c0a2c..429ea4a 100644
+--- a/configs/example/hmctest.py
++++ b/configs/example/hmctest.py
+@@ -50,7 +50,7 @@ def build_system(options):
+     system = System()
+     # use timing mode for the interaction between requestor-responder ports
+     system.mem_mode = 'timing'
+-    # set the clock fequency of the system
++    # set the clock frequency of the system
+     clk = '100GHz'
+     vd = VoltageDomain(voltage='1V')
+     system.clk_domain = SrcClockDomain(clock=clk, voltage_domain=vd)
+diff --git a/configs/learning_gem5/part1/simple.py b/configs/learning_gem5/part1/simple.py
+index 235165b..7810c3d 100644
+--- a/configs/learning_gem5/part1/simple.py
++++ b/configs/learning_gem5/part1/simple.py
+@@ -43,7 +43,7 @@ from m5.objects import *
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+diff --git a/configs/learning_gem5/part1/two_level.py b/configs/learning_gem5/part1/two_level.py
+index 591be0c..7a7956c 100644
+--- a/configs/learning_gem5/part1/two_level.py
++++ b/configs/learning_gem5/part1/two_level.py
+@@ -70,7 +70,7 @@ args = SimpleOpts.parse_args()
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+diff --git a/configs/learning_gem5/part2/simple_cache.py b/configs/learning_gem5/part2/simple_cache.py
+index adda386..dc3a162 100644
+--- a/configs/learning_gem5/part2/simple_cache.py
++++ b/configs/learning_gem5/part2/simple_cache.py
+@@ -39,7 +39,7 @@ from m5.objects import *
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+diff --git a/configs/learning_gem5/part2/simple_memobj.py b/configs/learning_gem5/part2/simple_memobj.py
+index 49b0846..eaceae9 100644
+--- a/configs/learning_gem5/part2/simple_memobj.py
++++ b/configs/learning_gem5/part2/simple_memobj.py
+@@ -39,7 +39,7 @@ from m5.objects import *
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+diff --git a/configs/learning_gem5/part3/ruby_test.py b/configs/learning_gem5/part3/ruby_test.py
+index d0c3910..05096ec 100644
+--- a/configs/learning_gem5/part3/ruby_test.py
++++ b/configs/learning_gem5/part3/ruby_test.py
+@@ -44,7 +44,7 @@ from test_caches import TestCacheSystem
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+diff --git a/configs/learning_gem5/part3/simple_ruby.py b/configs/learning_gem5/part3/simple_ruby.py
+index 2e65ebd..3d9fe9a 100644
+--- a/configs/learning_gem5/part3/simple_ruby.py
++++ b/configs/learning_gem5/part3/simple_ruby.py
+@@ -53,7 +53,7 @@ from msi_caches import MyCacheSystem
+ # create the system we are going to simulate
+ system = System()
+ 
+-# Set the clock fequency of the system (and all of its children)
++# Set the clock frequency of the system (and all of its children)
+ system.clk_domain = SrcClockDomain()
+ system.clk_domain.clock = '1GHz'
+ system.clk_domain.voltage_domain = VoltageDomain()
+-- 
+1.8.3.1
+

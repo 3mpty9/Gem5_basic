@@ -1,0 +1,197 @@
+From b64467025d3d7b49e16aa32115b90add905d7df7 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 31 Mar 2022 11:25:56 -0700
+Subject: [PATCH 546/757] arch-vega: Implement SOP2 S_MUL_HI instructions
+
+Two new 32-bit signed and unsigned variants of S_MUL were added in
+gfx900 which operate similar to S_MUL expect they shift the product by
+32 bits after multiplication. Tested with Histogram HIP-Sample and
+b+tree in rodinia 3.0 HIP port.
+
+Change-Id: I1bed32b17ccda7aa47f3b59528eb3304912d3610
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58473
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/decoder.cc            |  5 +--
+ src/arch/amdgpu/vega/insts/instructions.cc | 62 +++++++++++++++++++++++++++
+ src/arch/amdgpu/vega/insts/instructions.hh | 68 ++++++++++++++++++++++++++++++
+ 3 files changed, 132 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/decoder.cc b/src/arch/amdgpu/vega/decoder.cc
+index 3344365..f716636 100644
+--- a/src/arch/amdgpu/vega/decoder.cc
++++ b/src/arch/amdgpu/vega/decoder.cc
+@@ -4438,14 +4438,13 @@ namespace VegaISA
+     GPUStaticInst*
+     Decoder::decode_OP_SOP2__S_MUL_HI_U32(MachInst iFmt)
+     {
+-        fatal("Trying to decode instruction without a class\n");
+-        return nullptr;
++        return new Inst_SOP2__S_MUL_HI_U32(&iFmt->iFmt_SOP2);
+     }
+ 
+     GPUStaticInst*
+     Decoder::decode_OP_SOP2__S_MUL_HI_I32(MachInst iFmt)
+     {
+-        return new Inst_SOP2__S_MUL_I32(&iFmt->iFmt_SOP2);
++        return new Inst_SOP2__S_MUL_HI_I32(&iFmt->iFmt_SOP2);
+     }
+ 
+     GPUStaticInst*
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index 32d048e..edf908d 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -1473,6 +1473,68 @@ namespace VegaISA
+     {
+         panicUnimplemented();
+     } // execute
++    // --- Inst_SOP2__S_MUL_HI_U32 class methods ---
++
++    Inst_SOP2__S_MUL_HI_U32::Inst_SOP2__S_MUL_HI_U32(InFmt_SOP2 *iFmt)
++        : Inst_SOP2(iFmt, "s_mul_hi_u32")
++    {
++        setFlag(ALU);
++    } // Inst_SOP2__S_MUL_HI_U32
++
++    Inst_SOP2__S_MUL_HI_U32::~Inst_SOP2__S_MUL_HI_U32()
++    {
++    } // ~Inst_SOP2__S_MUL_HI_U32
++
++    // --- description from .arch file ---
++    // D.u = (S0.u * S1.u) >> 32;
++    void
++    Inst_SOP2__S_MUL_HI_U32::execute(GPUDynInstPtr gpuDynInst)
++    {
++        ConstScalarOperandU32 src0(gpuDynInst, instData.SSRC0);
++        ConstScalarOperandU32 src1(gpuDynInst, instData.SSRC1);
++        ScalarOperandU32 sdst(gpuDynInst, instData.SDST);
++
++        src0.read();
++        src1.read();
++
++        VecElemU64 tmp_dst =
++            ((VecElemU64)src0.rawData() * (VecElemU64)src1.rawData());
++        sdst = (tmp_dst >> 32);
++
++        sdst.write();
++    } // execute
++    // --- Inst_SOP2__S_MUL_HI_I32 class methods ---
++
++    Inst_SOP2__S_MUL_HI_I32::Inst_SOP2__S_MUL_HI_I32(InFmt_SOP2 *iFmt)
++        : Inst_SOP2(iFmt, "s_mul_hi_i32")
++    {
++        setFlag(ALU);
++    } // Inst_SOP2__S_MUL_HI_I32
++
++    Inst_SOP2__S_MUL_HI_I32::~Inst_SOP2__S_MUL_HI_I32()
++    {
++    } // ~Inst_SOP2__S_MUL_HI_I32
++
++    // --- description from .arch file ---
++    // D.u = (S0.u * S1.u) >> 32;
++    void
++    Inst_SOP2__S_MUL_HI_I32::execute(GPUDynInstPtr gpuDynInst)
++    {
++        ConstScalarOperandI32 src0(gpuDynInst, instData.SSRC0);
++        ConstScalarOperandI32 src1(gpuDynInst, instData.SSRC1);
++        ScalarOperandI32 sdst(gpuDynInst, instData.SDST);
++
++        src0.read();
++        src1.read();
++
++        VecElemI64 tmp_src0 =
++            sext<std::numeric_limits<VecElemI64>::digits>(src0.rawData());
++        VecElemI64 tmp_src1 =
++            sext<std::numeric_limits<VecElemI64>::digits>(src1.rawData());
++        sdst = (VecElemI32)((tmp_src0 * tmp_src1) >> 32);
++
++        sdst.write();
++    } // execute
+     // --- Inst_SOPK__S_MOVK_I32 class methods ---
+ 
+     Inst_SOPK__S_MOVK_I32::Inst_SOPK__S_MOVK_I32(InFmt_SOPK *iFmt)
+diff --git a/src/arch/amdgpu/vega/insts/instructions.hh b/src/arch/amdgpu/vega/insts/instructions.hh
+index e14f52f..e9361c3 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.hh
++++ b/src/arch/amdgpu/vega/insts/instructions.hh
+@@ -1538,6 +1538,74 @@ namespace VegaISA
+         void execute(GPUDynInstPtr) override;
+     }; // Inst_SOP2__S_RFE_RESTORE_B64
+ 
++    class Inst_SOP2__S_MUL_HI_U32 : public Inst_SOP2
++    {
++      public:
++        Inst_SOP2__S_MUL_HI_U32(InFmt_SOP2*);
++        ~Inst_SOP2__S_MUL_HI_U32();
++
++        int
++        getNumOperands() override
++        {
++            return numDstRegOperands() + numSrcRegOperands();
++        } // getNumOperands
++
++        int numDstRegOperands() override { return 1; }
++        int numSrcRegOperands() override { return 2; }
++
++        int
++        getOperandSize(int opIdx) override
++        {
++            switch (opIdx) {
++              case 0: //ssrc_0
++                return 4;
++              case 1: //ssrc_1
++                return 4;
++              case 2: //sdst
++                return 4;
++              default:
++                fatal("op idx %i out of bounds\n", opIdx);
++                return -1;
++            }
++        } // getOperandSize
++
++        void execute(GPUDynInstPtr) override;
++    }; // Inst_SOP2__S_MUL_HI_U32
++
++    class Inst_SOP2__S_MUL_HI_I32 : public Inst_SOP2
++    {
++      public:
++        Inst_SOP2__S_MUL_HI_I32(InFmt_SOP2*);
++        ~Inst_SOP2__S_MUL_HI_I32();
++
++        int
++        getNumOperands() override
++        {
++            return numDstRegOperands() + numSrcRegOperands();
++        } // getNumOperands
++
++        int numDstRegOperands() override { return 1; }
++        int numSrcRegOperands() override { return 2; }
++
++        int
++        getOperandSize(int opIdx) override
++        {
++            switch (opIdx) {
++              case 0: //ssrc_0
++                return 4;
++              case 1: //ssrc_1
++                return 4;
++              case 2: //sdst
++                return 4;
++              default:
++                fatal("op idx %i out of bounds\n", opIdx);
++                return -1;
++            }
++        } // getOperandSize
++
++        void execute(GPUDynInstPtr) override;
++    }; // Inst_SOP2__S_MUL_HI_I32
++
+     class Inst_SOPK__S_MOVK_I32 : public Inst_SOPK
+     {
+       public:
+-- 
+1.8.3.1
+

@@ -1,0 +1,56 @@
+From 1876e782ee51afc289c004df395ce91bca8b7b0e Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 15 Mar 2022 12:45:07 -0700
+Subject: [PATCH 515/757] stdlib: Add the MinorCPU type to the stdlib
+
+Issue-on: https://gem5.atlassian.net/browse/GEM5-1161
+Change-Id: I849f164bb33bde9e5d29bbd1d8c74a9193d29daf
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57689
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/components/processors/abstract_core.py    | 3 ++-
+ src/python/gem5/components/processors/cpu_types.py        | 1 +
+ src/python/gem5/components/processors/simple_processor.py | 2 +-
+ 3 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/python/gem5/components/processors/abstract_core.py b/src/python/gem5/components/processors/abstract_core.py
+index 7d4fa77..4da26bf 100644
+--- a/src/python/gem5/components/processors/abstract_core.py
++++ b/src/python/gem5/components/processors/abstract_core.py
+@@ -136,7 +136,8 @@ class AbstractCore(SubSystem):
+             CPUTypes.ATOMIC : "AtomicSimpleCPU",
+             CPUTypes.O3 : "O3CPU",
+             CPUTypes.TIMING : "TimingSimpleCPU",
+-            CPUTypes.KVM : "KvmCPU"
++            CPUTypes.KVM : "KvmCPU",
++            CPUTypes.MINOR : "MinorCPU",
+         }
+ 
+         if isa not in _isa_string_map:
+diff --git a/src/python/gem5/components/processors/cpu_types.py b/src/python/gem5/components/processors/cpu_types.py
+index 6e71dcc..831fe1d 100644
+--- a/src/python/gem5/components/processors/cpu_types.py
++++ b/src/python/gem5/components/processors/cpu_types.py
+@@ -32,3 +32,4 @@ class CPUTypes(Enum):
+     KVM = 2
+     O3 = 3
+     TIMING = 4
++    MINOR = 5
+diff --git a/src/python/gem5/components/processors/simple_processor.py b/src/python/gem5/components/processors/simple_processor.py
+index d4dd85d..3c9c5c8 100644
+--- a/src/python/gem5/components/processors/simple_processor.py
++++ b/src/python/gem5/components/processors/simple_processor.py
+@@ -92,7 +92,7 @@ class SimpleProcessor(AbstractProcessor):
+             board.kvm_vm = self.kvm_vm
+ 
+         # Set the memory mode.
+-        if self._cpu_type == CPUTypes.TIMING or self._cpu_type == CPUTypes.O3:
++        if self._cpu_type in (CPUTypes.TIMING, CPUTypes.O3, CPUTypes.MINOR):
+             board.set_mem_mode(MemMode.TIMING)
+         elif self._cpu_type == CPUTypes.KVM:
+             board.set_mem_mode(MemMode.ATOMIC_NONCACHING)
+-- 
+1.8.3.1
+

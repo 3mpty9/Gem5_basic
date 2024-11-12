@@ -1,0 +1,32 @@
+From 398d4f9d07c6728cc95710b63095a8e798351e05 Mon Sep 17 00:00:00 2001
+From: Jiasen Huang <jiasen.hjs@alibaba-inc.com>
+Date: Tue, 21 Dec 2021 15:48:01 +0800
+Subject: [PATCH 077/757] mem-cache: Init lastTriggerCounter for STeMS
+ Prefetcher
+
+Change-Id: I43a0093e6d35a39799d724e7dee15c95dbc26343
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54643
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+index d0f4119..6030096 100644
+--- a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
++++ b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+@@ -55,7 +55,8 @@ STeMS::STeMS(const STeMSPrefetcherParams &p)
+                          p.pattern_sequence_table_replacement_policy,
+                          ActiveGenerationTableEntry(
+                              spatialRegionSize / blkSize)),
+-    rmob(p.region_miss_order_buffer_entries)
++    rmob(p.region_miss_order_buffer_entries),
++    lastTriggerCounter(0)
+ {
+     fatal_if(!isPowerOf2(spatialRegionSize),
+         "The spatial region size must be a power of 2.");
+-- 
+1.8.3.1
+

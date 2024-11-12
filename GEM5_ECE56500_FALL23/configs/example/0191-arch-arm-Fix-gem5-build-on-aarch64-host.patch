@@ -1,0 +1,45 @@
+From 3e3799dab9b1da037a68c28ca2510f34870324cd Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 2 Feb 2022 15:06:49 +0000
+Subject: [PATCH 191/757] arch-arm: Fix gem5 build on aarch64 host
+
+vm is not a member variable of MuxingKvmGic. This was broken
+by:
+
+https://gem5-review.googlesource.com/c/public/gem5/+/56263
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Iee8a3424eb28cfe2bc20df088dc0af05e9e8a7de
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56346
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index fd3eef7..f6a57da 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -190,6 +190,8 @@ void
+ MuxingKvmGic::startup()
+ {
+     GicV2::startup();
++
++    KvmVM *vm = system.getKvmVM();
+     usingKvm = kernelGic && vm && vm->validEnvironment();
+     if (usingKvm)
+         fromGicToKvm();
+@@ -207,6 +209,8 @@ void
+ MuxingKvmGic::drainResume()
+ {
+     GicV2::drainResume();
++
++    KvmVM *vm = system.getKvmVM();
+     bool use_kvm = kernelGic && vm && vm->validEnvironment();
+     if (use_kvm != usingKvm) {
+         // Should only occur due to CPU switches
+-- 
+1.8.3.1
+

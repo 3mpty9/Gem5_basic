@@ -1,0 +1,90 @@
+From 714b9b2356ed6ed05f62e3fe1052bb65e267e63f Mon Sep 17 00:00:00 2001
+From: Majid Jalili <majid0jalili@gmail.com>
+Date: Tue, 1 Feb 2022 16:30:29 +0000
+Subject: [PATCH 210/757] mem-cache: adding round-robin aribitration to
+ multiprefetchers
+
+To find a candidate in cache base.cc, function getPacket
+is called. In case of multi-prefetchers, we alyways start
+from the first prefetcher. Given the default value for "latency"
+is 1, there is always a candidate ready for prefech by prefetcher 0.
+Hence, we need an arbitration mechansim to cycle through
+all prefechers. To make this fair, we added a variable to save what
+prefetcher first used to get a packet from, and in the next round,
+ we start from the next prefetcher to give every prefetcher a chance
+to be the first one in a round-robin fashion.
+
+JIRA Ticket: https://gem5.atlassian.net/browse/GEM5-1169
+
+Change-Id: I1c6a267b2bf71764559a080371c1d7f8be95ac71
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56265
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/prefetch/multi.cc | 13 +++++++++----
+ src/mem/cache/prefetch/multi.hh |  5 ++++-
+ 2 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/cache/prefetch/multi.cc b/src/mem/cache/prefetch/multi.cc
+index 230db50..ddf0e30 100644
+--- a/src/mem/cache/prefetch/multi.cc
++++ b/src/mem/cache/prefetch/multi.cc
+@@ -48,7 +48,8 @@ namespace prefetch
+ 
+ Multi::Multi(const MultiPrefetcherParams &p)
+   : Base(p),
+-    prefetchers(p.prefetchers.begin(), p.prefetchers.end())
++    prefetchers(p.prefetchers.begin(), p.prefetchers.end()),
++    lastChosenPf(0)
+ {
+ }
+ 
+@@ -73,14 +74,18 @@ Multi::nextPrefetchReadyTime() const
+ PacketPtr
+ Multi::getPacket()
+ {
+-    for (auto pf : prefetchers) {
+-        if (pf->nextPrefetchReadyTime() <= curTick()) {
+-            PacketPtr pkt = pf->getPacket();
++    lastChosenPf = (lastChosenPf + 1) % prefetchers.size();
++    uint8_t pf_turn = lastChosenPf;
++
++    for (int pf = 0 ;  pf < prefetchers.size(); pf++) {
++        if (prefetchers[pf_turn]->nextPrefetchReadyTime() <= curTick()) {
++            PacketPtr pkt = prefetchers[pf_turn]->getPacket();
+             panic_if(!pkt, "Prefetcher is ready but didn't return a packet.");
+             prefetchStats.pfIssued++;
+             issuedPrefetches++;
+             return pkt;
+         }
++        pf_turn = (pf_turn + 1) % prefetchers.size();
+     }
+ 
+     return nullptr;
+diff --git a/src/mem/cache/prefetch/multi.hh b/src/mem/cache/prefetch/multi.hh
+index 037d23e..ff17918 100644
+--- a/src/mem/cache/prefetch/multi.hh
++++ b/src/mem/cache/prefetch/multi.hh
+@@ -38,6 +38,8 @@
+ #ifndef __MEM_CACHE_PREFETCH_MULTI_HH__
+ #define __MEM_CACHE_PREFETCH_MULTI_HH__
+ 
++#include <vector>
++
+ #include "mem/cache/prefetch/base.hh"
+ 
+ namespace gem5
+@@ -70,7 +72,8 @@ class Multi : public Base
+ 
+   protected:
+     /** List of sub-prefetchers ordered by priority. */
+-    std::list<Base*> prefetchers;
++    std::vector<Base*> prefetchers;
++    uint8_t lastChosenPf;
+ };
+ 
+ } // namespace prefetch
+-- 
+1.8.3.1
+

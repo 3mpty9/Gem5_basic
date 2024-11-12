@@ -1,0 +1,34 @@
+From 8a91e933e810a3f89ec14b099481949ceb6f5f9e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 6 Apr 2022 22:48:13 -0700
+Subject: [PATCH 535/757] scons: Use the 'png' tag for the PNG library.
+
+Use that instead of checking HAVE_PNG manually.
+
+Change-Id: I70876982c2506bee1173341fa100f5fae2ae4302
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58709
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/SConscript | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/base/SConscript b/src/base/SConscript
+index 99d4bee..1d40d79 100644
+--- a/src/base/SConscript
++++ b/src/base/SConscript
+@@ -43,8 +43,7 @@ Executable('cprintftime', 'cprintftime.cc', 'cprintf.cc')
+ Source('debug.cc', add_tags=['gem5 trace', 'gem5 events'])
+ GTest('debug.test', 'debug.test.cc', 'debug.cc')
+ Source('fenv.cc', tags='fenv')
+-if env['CONF']['HAVE_PNG']:
+-    SourceLib('png')
++SourceLib('png', tags='png')
+ Source('pngwriter.cc', tags='png')
+ Source('fiber.cc')
+ GTest('fiber.test', 'fiber.test.cc', 'fiber.cc')
+-- 
+1.8.3.1
+

@@ -1,0 +1,65 @@
+From 7b01dbd926b479e18bda8bf9d70b0a8a9d2edd27 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 11 Jan 2022 00:21:48 -0800
+Subject: [PATCH 134/757] arch-x86: Implement real mode far ret.
+
+Change-Id: I4fd3210f30246f19ca03906465f160bcbfbfbccc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55450
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa      |  2 +-
+ .../general_purpose/control_transfer/xreturn.py    | 23 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index 66cb2c3..d129f20 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -388,7 +388,7 @@
+                 0x1: Inst::LEAVE();
+                 0x2: ret_far_Iw();
+                 0x3: decode MODE_SUBMODE {
+-                    0x3, 0x4: ret_far_real();
++                    0x3, 0x4: Inst::RET_FAR_REAL();
+                     default: Inst::RET_FAR();
+                 }
+                 0x4: Inst::INT3();
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/xreturn.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/xreturn.py
+index 58b6bfd..b3f09af 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/xreturn.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/xreturn.py
+@@ -62,6 +62,29 @@ def macroop RET_NEAR_I
+     wripi t1, 0
+ };
+ 
++def macroop RET_FAR_REAL {
++    .function_return
++    .control_indirect
++
++    # Pop the return RIP.
++    ld t1, ss, [1, t0, rsp], addressSize=ssz
++    # Pop the return CS.
++    ld t2, ss, [1, t0, rsp], dsz, addressSize=ssz
++    # Adjust RSP.
++    addi rsp, rsp, "2 * env.dataSize", dataSize=ssz
++
++    # Set the CS selector.
++    wrsel cs, t2
++    # Make sure there isn't any junk in the upper bits of the base.
++    mov t2, t0, t2
++    # Compute and set CS base.
++    slli t2, t2, 4, dataSize=8
++    wrbase cs, t2, dataSize=8
++
++    # Set the new RIP.
++    wrip t1, t0
++};
++
+ def macroop RET_FAR {
+     .adjust_env oszIn64Override
+     .function_return
+-- 
+1.8.3.1
+

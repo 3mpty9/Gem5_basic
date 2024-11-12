@@ -1,0 +1,88 @@
+From 446c0ff6badd6b259c52b95d956e5c87b1d737b1 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 29 Apr 2022 14:06:19 +0100
+Subject: [PATCH 615/757] system-arm: Fix GICv3 in multi-cluster configuration
+
+Current way of initializing GICv3 in the gem5 bootloader doesn't
+work when there is a PE labelled with non-zero Aff1, Aff2 or Aff3
+in the MPIDR_EL1 register
+(For example in a multi-cluster configuration).
+
+This is because the bootloader is considering Aff0 only
+
+mrs x0, mpidr_el1
+// extract the primary CPU.
+ldr x1, =0xff00ffffff
+and    x2, x0, #0xff // use Aff0 as cpuid for now...
+
+With this patch we are solving the issue, by considering
+every affinity number. Now the primary cpu is the cpu with
+
+Aff3..Aff0 = 0.
+
+The bootloader was also using Aff0 (stored in x2, see above)
+to let every CPU index their own redistributor memory mapped frames.
+In this model every secondary CPU was in charge of initializing
+their own redistributor registers.
+
+This can't be used anymore as we have a tuple of affinity
+numbers now rather than a single flat index.
+
+We are addressing the issue by letting the primary cpu initialize
+every redistributor in the system. This is done by iterating
+over consecutive frames and by reading GICR_TYPER.Last, which
+is set to 1 if the current frame is the last one.
+
+Change-Id: I2bcad286c2282bf1c47618e5391bf1c2e2b27013
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59393
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ system/arm/bootloader/arm64/boot.S | 21 ++++++++++++---------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/system/arm/bootloader/arm64/boot.S b/system/arm/bootloader/arm64/boot.S
+index 09680a6..f1c2864 100644
+--- a/system/arm/bootloader/arm64/boot.S
++++ b/system/arm/bootloader/arm64/boot.S
+@@ -74,23 +74,26 @@ _start:
+         // extract the primary CPU.
+         ldr x1, =0xff00ffffff
+ #ifdef GICV3
+-        and	x2, x0, #0xff // use Aff0 as cpuid for now...
+         tst	x0, x1 // check for cpuid==zero
+-        b.ne	1f // secondary CPU
++        b.ne	2f // secondary CPU
+ 
+         ldr	x1, =GIC_DIST_BASE // GICD_CTLR
+         mov	w0, #7 // EnableGrp0 | EnableGrp1NS | EnableGrp1S
+         str	w0, [x1]
+ 
+ 
+-1:      ldr	x1, =GIC_REDIST_BASE + 0x10000 + 0x80 // GICR_IGROUPR0
+-        // 128K for each redistributor, 256K strided...
+-        mov	x3, #1 << 18 // GICv4
+-        mul	x3, x3, x2
+-        add	x1, x1, x3
++        ldr	x1, =GIC_REDIST_BASE
++        mov	x2, #1 << 18 // GICv4
+         mov	w0, #~0 // Grp1 interrupts
+-        str	w0, [x1], #4
+-        b.ne	2f // Only local interrupts for secondary CPUs
++1:      add	x5, x1, #0x10000 // SGI base
++        str	w0, [x5, #0x80] // GICR_IGROUPR0
++        ldr	w4, [x1, #0x8] // GICR_TYPER
++        add	x1, x1, x2 // Point to next redistributor
++        // Check GICR_TYPER.Last, which is set to 1
++        // if this is the last redistributor
++        ands	w4, w4, #0x10
++        b.eq	1b // Branch back if not last redistributor
++
+         ldr	x1, =GIC_DIST_BASE + 0x84 // GICD_IGROUPR
+         str	w0, [x1], #4
+         str	w0, [x1], #4
+-- 
+1.8.3.1
+

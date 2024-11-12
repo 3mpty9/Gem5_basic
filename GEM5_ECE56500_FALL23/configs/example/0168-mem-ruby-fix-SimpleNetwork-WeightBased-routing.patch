@@ -1,0 +1,225 @@
+From ac278e44f9587e08c157de0e09c79845cc7f9747 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Thu, 13 Aug 2020 20:37:39 -0500
+Subject: [PATCH 168/757] mem-ruby: fix SimpleNetwork WeightBased routing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Individual link weights are propagated to the routing algorithms and
+WeightBased routing now uses this information to select the output
+link when multiple routing options exist.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I86a4deb610a1b94abf745e9ef249961fb52e9800
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41860
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/simple/PerfectSwitch.cc           |  6 ++++--
+ src/mem/ruby/network/simple/PerfectSwitch.hh           |  3 ++-
+ src/mem/ruby/network/simple/SimpleNetwork.cc           |  4 +++-
+ src/mem/ruby/network/simple/Switch.cc                  |  5 +++--
+ src/mem/ruby/network/simple/Switch.hh                  |  2 +-
+ src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh |  3 ++-
+ src/mem/ruby/network/simple/routing/WeightBased.cc     | 15 ++++++---------
+ src/mem/ruby/network/simple/routing/WeightBased.hh     | 14 +++++++++++++-
+ 8 files changed, 34 insertions(+), 18 deletions(-)
+
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.cc b/src/mem/ruby/network/simple/PerfectSwitch.cc
+index 154e491..19e1523 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.cc
++++ b/src/mem/ruby/network/simple/PerfectSwitch.cc
+@@ -95,13 +95,15 @@ PerfectSwitch::addInPort(const std::vector<MessageBuffer*>& in)
+ void
+ PerfectSwitch::addOutPort(const std::vector<MessageBuffer*>& out,
+                           const NetDest& routing_table_entry,
+-                          const PortDirection &dst_inport)
++                          const PortDirection &dst_inport,
++                          int link_weight)
+ {
+     // Add to routing unit
+     m_switch->getRoutingUnit().addOutPort(m_out.size(),
+                                           out,
+                                           routing_table_entry,
+-                                          dst_inport);
++                                          dst_inport,
++                                          link_weight);
+     m_out.push_back(out);
+ }
+ 
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.hh b/src/mem/ruby/network/simple/PerfectSwitch.hh
+index d6c836b..41e9448 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.hh
++++ b/src/mem/ruby/network/simple/PerfectSwitch.hh
+@@ -79,7 +79,8 @@ class PerfectSwitch : public Consumer
+     void addInPort(const std::vector<MessageBuffer*>& in);
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+                     const NetDest& routing_table_entry,
+-                    const PortDirection &dst_inport);
++                    const PortDirection &dst_inport,
++                    int link_weight);
+ 
+     int getInLinks() const { return m_in.size(); }
+     int getOutLinks() const { return m_out.size(); }
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.cc b/src/mem/ruby/network/simple/SimpleNetwork.cc
+index c30bd79..ec3a25e 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.cc
++++ b/src/mem/ruby/network/simple/SimpleNetwork.cc
+@@ -120,7 +120,8 @@ SimpleNetwork::makeExtOutLink(SwitchID src, NodeID global_dest,
+     m_fromNetQueues[local_dest].resize(num_vnets, nullptr);
+ 
+     m_switches[src]->addOutPort(m_fromNetQueues[local_dest],
+-                                routing_table_entry[0], simple_link->m_latency,
++                                routing_table_entry[0],
++                                simple_link->m_latency, 0,
+                                 simple_link->m_bw_multiplier);
+ }
+ 
+@@ -147,6 +148,7 @@ SimpleNetwork::makeInternalLink(SwitchID src, SwitchID dest, BasicLink* link,
+     m_switches[dest]->addInPort(simple_link->m_buffers);
+     m_switches[src]->addOutPort(simple_link->m_buffers, routing_table_entry[0],
+                                 simple_link->m_latency,
++                                simple_link->m_weight,
+                                 simple_link->m_bw_multiplier,
+                                 dst_inport);
+     // Maitain a global list of buffers (used for functional accesses only)
+diff --git a/src/mem/ruby/network/simple/Switch.cc b/src/mem/ruby/network/simple/Switch.cc
+index 8c0b229..fd43910 100644
+--- a/src/mem/ruby/network/simple/Switch.cc
++++ b/src/mem/ruby/network/simple/Switch.cc
+@@ -85,7 +85,8 @@ Switch::addInPort(const std::vector<MessageBuffer*>& in)
+ void
+ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+                    const NetDest& routing_table_entry,
+-                   Cycles link_latency, int bw_multiplier,
++                   Cycles link_latency, int link_weight,
++                   int bw_multiplier,
+                    PortDirection dst_inport)
+ {
+     const std::vector<int> &physical_vnets_channels =
+@@ -122,7 +123,7 @@ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+ 
+     // Hook the queues to the PerfectSwitch
+     perfectSwitch.addOutPort(intermediateBuffers, routing_table_entry,
+-        dst_inport);
++                             dst_inport, link_weight);
+ 
+     // Hook the queues to the Throttle
+     throttles.back().addLinks(intermediateBuffers, out);
+diff --git a/src/mem/ruby/network/simple/Switch.hh b/src/mem/ruby/network/simple/Switch.hh
+index 70e5340..39a9716 100644
+--- a/src/mem/ruby/network/simple/Switch.hh
++++ b/src/mem/ruby/network/simple/Switch.hh
+@@ -92,7 +92,7 @@ class Switch : public BasicRouter
+     void addInPort(const std::vector<MessageBuffer*>& in);
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+                     const NetDest& routing_table_entry,
+-                    Cycles link_latency, int bw_multiplier,
++                    Cycles link_latency, int link_weight, int bw_multiplier,
+                     PortDirection dst_inport = "");
+ 
+     void resetStats();
+diff --git a/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh b/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
+index 20f27f3..9ebf59d 100644
+--- a/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
++++ b/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
+@@ -69,7 +69,8 @@ class BaseRoutingUnit : public SimObject
+     virtual void addOutPort(LinkID link_id,
+                            const std::vector<MessageBuffer*>& m_out_buffer,
+                            const NetDest& routing_table_entry,
+-                           const PortDirection &direction) = 0;
++                           const PortDirection &direction,
++                           int link_weight) = 0;
+ 
+     struct RouteInfo
+     {
+diff --git a/src/mem/ruby/network/simple/routing/WeightBased.cc b/src/mem/ruby/network/simple/routing/WeightBased.cc
+index 7db4665..a63b0fa 100644
+--- a/src/mem/ruby/network/simple/routing/WeightBased.cc
++++ b/src/mem/ruby/network/simple/routing/WeightBased.cc
+@@ -60,13 +60,15 @@ void
+ WeightBased::addOutPort(LinkID link_id,
+                     const std::vector<MessageBuffer*>& m_out_buffer,
+                     const NetDest& routing_table_entry,
+-                    const PortDirection &direction)
++                    const PortDirection &direction,
++                    int link_weight)
+ {
+     gem5_assert(link_id == m_links.size());
+     m_links.emplace_back(new LinkInfo{link_id,
+                         routing_table_entry,
+                         m_out_buffer,
+-                        static_cast<int>(link_id)});
++                        0, link_weight});
++    sortLinks();
+ }
+ 
+ void
+@@ -81,7 +83,7 @@ WeightBased::route(const Message &msg,
+             // Don't adaptively route
+             // Makes sure ordering is reset
+             for (auto &link : m_links)
+-                link->m_order = static_cast<int>(link->m_link_id);
++                link->m_order = 0;
+         } else {
+             // Find how clogged each link is
+             for (auto &link : m_links) {
+@@ -96,12 +98,7 @@ WeightBased::route(const Message &msg,
+                     (out_queue_length << 8) | random_mt.random(0, 0xff);
+             }
+         }
+-
+-        std::sort(m_links.begin(), m_links.end(),
+-            [](const std::unique_ptr<LinkInfo> &a,
+-               const std::unique_ptr<LinkInfo> &b) {
+-                return a->m_order < b->m_order;
+-            });
++        sortLinks();
+     }
+ 
+     findRoute(msg, out_links);
+diff --git a/src/mem/ruby/network/simple/routing/WeightBased.hh b/src/mem/ruby/network/simple/routing/WeightBased.hh
+index e0a2472..a723e9b 100644
+--- a/src/mem/ruby/network/simple/routing/WeightBased.hh
++++ b/src/mem/ruby/network/simple/routing/WeightBased.hh
+@@ -60,7 +60,8 @@ class WeightBased : public BaseRoutingUnit
+     void addOutPort(LinkID link_id,
+                     const std::vector<MessageBuffer*>& m_out_buffer,
+                     const NetDest& routing_table_entry,
+-                    const PortDirection &direction) override;
++                    const PortDirection &direction,
++                    int link_weight) override;
+ 
+     void route(const Message &msg,
+                 int vnet,
+@@ -74,6 +75,7 @@ class WeightBased : public BaseRoutingUnit
+         const NetDest m_routing_entry;
+         const std::vector<MessageBuffer*> m_out_buffers;
+         int m_order;
++        int m_weight;
+     };
+ 
+     std::vector<std::unique_ptr<LinkInfo>> m_links;
+@@ -81,6 +83,16 @@ class WeightBased : public BaseRoutingUnit
+     void findRoute(const Message &msg,
+                    std::vector<RouteInfo> &out_links) const;
+ 
++    void sortLinks() {
++        std::sort(m_links.begin(), m_links.end(),
++            [](const auto &a, const auto &b) {
++                auto tup = [](const auto &li)
++                { return std::make_tuple(li->m_order,
++                                         li->m_weight,
++                                         li->m_link_id);};
++                return tup(a) < tup(b);
++            });
++    }
+ };
+ 
+ } // namespace ruby
+-- 
+1.8.3.1
+

@@ -1,0 +1,211 @@
+From 85b769a68ea8024b895f375e16c6b3b2d273d4ed Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:03:10 -0700
+Subject: [PATCH 263/757] cpu,arm: Add a method to RegClass-es to print
+ register values.
+
+This further abstracts the properties of registers so they can be
+removed from the CPUs.
+
+Change-Id: I2aa1bffe8b095a0301579e60270965c611d6db4e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49694
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.cc  |  2 +-
+ src/cpu/reg_class.cc | 48 +++++++++++++++++++++++++++++++++++----
+ src/cpu/reg_class.hh | 64 +++++++++++++++++++++++++++++++++++-----------------
+ 3 files changed, 87 insertions(+), 27 deletions(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index 3210351..ed4cf24 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -80,7 +80,7 @@ class MiscRegClassOps : public RegClassOps
+     }
+ } miscRegClassOps;
+ 
+-VecElemRegClassOps vecRegElemClassOps(NumVecElemPerVecReg);
++VecElemRegClassOps<ArmISA::VecElem> vecRegElemClassOps(NumVecElemPerVecReg);
+ 
+ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _decoderFlavor(p.decoderFlavor), pmu(p.pmu), impdefAsNop(p.impdef_nop),
+diff --git a/src/cpu/reg_class.cc b/src/cpu/reg_class.cc
+index b667838..51b607a 100644
+--- a/src/cpu/reg_class.cc
++++ b/src/cpu/reg_class.cc
+@@ -39,23 +39,61 @@
+  */
+ 
+ #include "cpu/reg_class.hh"
++
++#include <sstream>
++
+ #include "base/cprintf.hh"
+ 
+ namespace gem5
+ {
+ 
+ std::string
+-DefaultRegClassOps::regName(const RegId &id) const
++RegClassOps::regName(const RegId &id) const
+ {
+     return csprintf("r%d", id.index());
+ }
+ 
+ std::string
+-VecElemRegClassOps::regName(const RegId &id) const
++RegClassOps::valString(const void *val, size_t size) const
+ {
+-    RegIndex reg_idx = id.index() / elemsPerVec;
+-    RegIndex elem_idx = id.index() % elemsPerVec;
+-    return csprintf("v%d[%d]", reg_idx, elem_idx);
++    // If this is just a RegVal, or could be interpreted as one, print it
++    // that way.
++    if (size == sizeof(uint64_t))
++        return csprintf("0x%016x", *(const uint64_t *)val);
++    else if (size == sizeof(uint32_t))
++        return csprintf("0x%08x", *(const uint32_t *)val);
++    else if (size == sizeof(uint16_t))
++        return csprintf("0x%04x", *(const uint16_t *)val);
++    else if (size == sizeof(uint8_t))
++        return csprintf("0x%02x", *(const uint8_t *)val);
++
++    // Otherwise, print it as a sequence of bytes, 4 in a chunk, separated by
++    // spaces, and all surrounded by []s.
++
++    std::stringstream out;
++    ccprintf(out, "[");
++
++    constexpr size_t chunk_size = 4;
++    const uint8_t *bytes = (const uint8_t *)val;
++
++    while (size >= chunk_size) {
++        size -= chunk_size;
++        if (size) {
++            ccprintf(out, "%02x%02x%02x%02x ", bytes[0], bytes[1], bytes[2],
++                    bytes[3]);
++        } else {
++            ccprintf(out, "%02x%02x%02x%02x", bytes[0], bytes[1], bytes[2],
++                    bytes[3]);
++        }
++        bytes += chunk_size;
++    }
++
++    while (size--)
++        ccprintf(out, "%02x", *bytes++);
++
++    ccprintf(out, "]");
++
++    return out.str();
+ }
+ 
+ const char *RegId::regClassStrings[] = {
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index 5664bc3..e9e54da 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -44,6 +44,7 @@
+ #include <cstddef>
+ #include <string>
+ 
++#include "base/cprintf.hh"
+ #include "base/intmath.hh"
+ #include "base/types.hh"
+ 
+@@ -69,26 +70,10 @@ class RegId;
+ class RegClassOps
+ {
+   public:
+-    virtual std::string regName(const RegId &id) const = 0;
+-};
+-
+-class DefaultRegClassOps : public RegClassOps
+-{
+-  public:
+-    std::string regName(const RegId &id) const override;
+-};
+-
+-class VecElemRegClassOps : public RegClassOps
+-{
+-  protected:
+-    size_t elemsPerVec;
+-
+-  public:
+-    explicit VecElemRegClassOps(size_t elems_per_vec) :
+-        elemsPerVec(elems_per_vec)
+-    {}
+-
+-    std::string regName(const RegId &id) const override;
++    /** Print the name of the register specified in id. */
++    virtual std::string regName(const RegId &id) const;
++    /** Print the value of a register pointed to by val of size size. */
++    virtual std::string valString(const void *val, size_t size) const;
+ };
+ 
+ class RegClass
+@@ -102,7 +87,7 @@ class RegClass
+     // be calculated with a multiply.
+     size_t _regShift;
+ 
+-    static inline DefaultRegClassOps defaultOps;
++    static inline RegClassOps defaultOps;
+     RegClassOps *_ops = &defaultOps;
+ 
+   public:
+@@ -124,6 +109,11 @@ class RegClass
+     size_t regShift() const { return _regShift; }
+ 
+     std::string regName(const RegId &id) const { return _ops->regName(id); }
++    std::string
++    valString(const void *val) const
++    {
++        return _ops->valString(val, regBytes());
++    }
+ };
+ 
+ /** Register ID: describe an architectural register with its class and index.
+@@ -197,6 +187,38 @@ class RegId
+     }
+ };
+ 
++template <typename ValueType>
++class TypedRegClassOps : public RegClassOps
++{
++  public:
++    std::string
++    valString(const void *val, size_t size) const override
++    {
++        assert(size == sizeof(ValueType));
++        return csprintf("%s", *(const ValueType *)val);
++    }
++};
++
++template <typename ValueType>
++class VecElemRegClassOps : public TypedRegClassOps<ValueType>
++{
++  protected:
++    size_t elemsPerVec;
++
++  public:
++    explicit VecElemRegClassOps(size_t elems_per_vec) :
++        elemsPerVec(elems_per_vec)
++    {}
++
++    std::string
++    regName(const RegId &id) const override
++    {
++        RegIndex reg_idx = id.index() / elemsPerVec;
++        RegIndex elem_idx = id.index() % elemsPerVec;
++        return csprintf("v%d[%d]", reg_idx, elem_idx);
++    }
++};
++
+ /** Physical register ID.
+  * Like a register ID but physical. The inheritance is private because the
+  * only relationship between this types is functional, and it is done to
+-- 
+1.8.3.1
+

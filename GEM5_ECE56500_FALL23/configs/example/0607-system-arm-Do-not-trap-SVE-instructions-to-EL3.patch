@@ -1,0 +1,44 @@
+From 36c4778c7d3753fc740e704b96f5c893a7dfab5c Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 29 Apr 2022 17:23:26 +0100
+Subject: [PATCH 607/757] system-arm: Do not trap SVE instructions to EL3
+
+While other CPTR_EL3 bitfields disable trapping by setting
+them to zero, SVE trapping works in the opposite way round:
+
+we need to set CPTR_EL3.EZ to 1 if we don't want an EL3 trap
+
+Change-Id: I97d396c402a6d7ebda40d6787ee2f41499f2d1c5
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59389
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ system/arm/bootloader/arm64/boot.S | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/system/arm/bootloader/arm64/boot.S b/system/arm/bootloader/arm64/boot.S
+index 8af177f..09680a6 100644
+--- a/system/arm/bootloader/arm64/boot.S
++++ b/system/arm/bootloader/arm64/boot.S
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012, 2020 ARM Limited
++ * Copyright (c) 2012, 2020, 2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -61,7 +61,8 @@ _start:
+         orr	x0, x0, #(1 << 10)		// 64-bit EL2
+         msr	scr_el3, x0
+ 
+-        msr	cptr_el3, xzr			// Disable copro. traps to EL3
++        mov	x0, #(1 << 8)			// Disable SVE trap to EL3
++        msr	cptr_el3, x0			// Disable copro. traps to EL3
+ 
+         /*
+          * Check for the primary CPU to avoid a race on the distributor
+-- 
+1.8.3.1
+

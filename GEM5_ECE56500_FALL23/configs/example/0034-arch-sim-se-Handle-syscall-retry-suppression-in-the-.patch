@@ -1,0 +1,172 @@
+From 2be95c4470741567954103c732bcf957f1959c4f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 11 Dec 2021 21:13:04 -0800
+Subject: [PATCH 034/757] arch,sim-se: Handle syscall retry/suppression in the
+ syscall desc.
+
+Rather than make each ISA include boilerplate to ignore a
+SyscallReturn's value when it's marked as suppressed or needing a retry,
+put that code into the SyscallDesc::doSyscall method instead.
+
+That has two benefits. First, it removes a decent amount of code
+duplication which is nice from a maintenance perspective. Second, it
+puts the SyscallDesc in charge of figuring out what to do once a system
+call implementation finishes. That will let it schedule a retry of the
+system call for instance, without worrying about what the ISA is doing
+with the SyscallReturn behind its back.
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1123
+
+Change-Id: I3732a98c8e0d0b2b94d61313960aa0782c0b971f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54023
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/freebsd/se_workload.hh | 3 ---
+ src/arch/arm/linux/se_workload.hh   | 3 ---
+ src/arch/mips/se_workload.hh        | 3 ---
+ src/arch/power/se_workload.hh       | 3 ---
+ src/arch/riscv/se_workload.hh       | 3 ---
+ src/arch/sparc/se_workload.hh       | 3 ---
+ src/arch/x86/linux/linux.hh         | 3 ---
+ src/sim/syscall_desc.cc             | 8 +++++---
+ src/sim/syscall_desc.hh             | 2 +-
+ 9 files changed, 6 insertions(+), 25 deletions(-)
+
+diff --git a/src/arch/arm/freebsd/se_workload.hh b/src/arch/arm/freebsd/se_workload.hh
+index 8069bd2..4ec5090 100644
+--- a/src/arch/arm/freebsd/se_workload.hh
++++ b/src/arch/arm/freebsd/se_workload.hh
+@@ -82,9 +82,6 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         RegVal val;
+         if (ret.successful()) {
+             tc->setCCReg(ArmISA::CCREG_C, 0);
+diff --git a/src/arch/arm/linux/se_workload.hh b/src/arch/arm/linux/se_workload.hh
+index b22688f..f0af647 100644
+--- a/src/arch/arm/linux/se_workload.hh
++++ b/src/arch/arm/linux/se_workload.hh
+@@ -74,9 +74,6 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         tc->setIntReg(ArmISA::ReturnValueReg, ret.encodedValue());
+         if (ret.count() > 1)
+             tc->setIntReg(ArmISA::SyscallPseudoReturnReg, ret.value2());
+diff --git a/src/arch/mips/se_workload.hh b/src/arch/mips/se_workload.hh
+index 178093d..c10ceb0 100644
+--- a/src/arch/mips/se_workload.hh
++++ b/src/arch/mips/se_workload.hh
+@@ -77,9 +77,6 @@ struct Result<MipsISA::SEWorkload::SyscallABI, SyscallReturn>
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         if (ret.successful()) {
+             // no error
+             tc->setIntReg(MipsISA::SyscallSuccessReg, 0);
+diff --git a/src/arch/power/se_workload.hh b/src/arch/power/se_workload.hh
+index 2b62795..c351d65 100644
+--- a/src/arch/power/se_workload.hh
++++ b/src/arch/power/se_workload.hh
+@@ -77,9 +77,6 @@ struct Result<PowerISA::SEWorkload::SyscallABI, SyscallReturn>
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         PowerISA::Cr cr = tc->readIntReg(PowerISA::INTREG_CR);
+         if (ret.successful()) {
+             cr.cr0.so = 0;
+diff --git a/src/arch/riscv/se_workload.hh b/src/arch/riscv/se_workload.hh
+index 1f8a067..484803e 100644
+--- a/src/arch/riscv/se_workload.hh
++++ b/src/arch/riscv/se_workload.hh
+@@ -75,9 +75,6 @@ struct Result<RiscvISA::SEWorkload::SyscallABI, SyscallReturn>
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         if (ret.successful()) {
+             // no error
+             tc->setIntReg(RiscvISA::ReturnValueReg, ret.returnValue());
+diff --git a/src/arch/sparc/se_workload.hh b/src/arch/sparc/se_workload.hh
+index 6d034f7..18988fe 100644
+--- a/src/arch/sparc/se_workload.hh
++++ b/src/arch/sparc/se_workload.hh
+@@ -89,9 +89,6 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         // check for error condition.  SPARC syscall convention is to
+         // indicate success/failure in reg the carry bit of the ccr
+         // and put the return value itself in the standard return value reg.
+diff --git a/src/arch/x86/linux/linux.hh b/src/arch/x86/linux/linux.hh
+index cbf7358..928c580 100644
+--- a/src/arch/x86/linux/linux.hh
++++ b/src/arch/x86/linux/linux.hh
+@@ -86,9 +86,6 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        if (ret.suppressed() || ret.needsRetry())
+-            return;
+-
+         tc->setIntReg(X86ISA::INTREG_RAX, ret.encodedValue());
+     }
+ };
+diff --git a/src/sim/syscall_desc.cc b/src/sim/syscall_desc.cc
+index 7499102..7427f41 100644
+--- a/src/sim/syscall_desc.cc
++++ b/src/sim/syscall_desc.cc
+@@ -44,12 +44,14 @@ SyscallDesc::doSyscall(ThreadContext *tc)
+ 
+     SyscallReturn retval = executor(this, tc);
+ 
+-    if (retval.needsRetry())
++    if (retval.needsRetry()) {
+         DPRINTF_SYSCALL(Base, "Needs retry.\n", name());
+-    else if (retval.suppressed())
++    } else if (retval.suppressed()) {
+         DPRINTF_SYSCALL(Base, "No return value.\n", name());
+-    else
++    } else {
++        returnInto(tc, retval);
+         DPRINTF_SYSCALL(Base, "Returned %d.\n", retval.encodedValue());
++    }
+ }
+ 
+ } // namespace gem5
+diff --git a/src/sim/syscall_desc.hh b/src/sim/syscall_desc.hh
+index 0740632..6ded904 100644
+--- a/src/sim/syscall_desc.hh
++++ b/src/sim/syscall_desc.hh
+@@ -141,7 +141,7 @@ class SyscallDescABI : public SyscallDesc
+ 
+             // Use invokeSimcall to gather the other arguments based on the
+             // given ABI and pass them to the syscall implementation.
+-            return invokeSimcall<ABI, SyscallReturn, Args...>(tc,
++            return invokeSimcall<ABI, false, SyscallReturn, Args...>(tc,
+                     std::function<SyscallReturn(ThreadContext *, Args...)>(
+                         partial));
+         };
+-- 
+1.8.3.1
+

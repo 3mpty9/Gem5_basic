@@ -1,0 +1,140 @@
+From 2ed57352cbb6ba37cf3a85c2810f880b3b2aff33 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 8 Mar 2022 13:09:23 -0800
+Subject: [PATCH 387/757] util: Remove util/cloudbuild
+
+The "util/cloudbuild" directory was used to build Docker images on
+the Google Cloud Build infrastructure. The gem5 project no longer uses
+this service to build Docker images and, as such, this directory (and
+its contents) are no longer required.
+
+Change-Id: I724c50ec6045ab95f6b94533f2fd54980230789c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57431
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/cloudbuild/cloudbuild_create_images.yaml | 110 --------------------------
+ 1 file changed, 110 deletions(-)
+ delete mode 100644 util/cloudbuild/cloudbuild_create_images.yaml
+
+diff --git a/util/cloudbuild/cloudbuild_create_images.yaml b/util/cloudbuild/cloudbuild_create_images.yaml
+deleted file mode 100644
+index 7549012..0000000
+--- a/util/cloudbuild/cloudbuild_create_images.yaml
++++ /dev/null
+@@ -1,110 +0,0 @@
+-steps:
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/ubuntu-20.04_all-dependencies:latest',
+-            'util/dockerfiles/ubuntu-20.04_all-dependencies']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/ubuntu-20.04_min-dependencies:latest',
+-            'util/dockerfiles/ubuntu-20.04_min-dependencies']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/ubuntu-18.04_all-dependencies:latest',
+-            'util/dockerfiles/ubuntu-18.04_all-dependencies']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/gcc-version-7:latest',
+-            '--build-arg', 'version=7',
+-            'util/dockerfiles/ubuntu-18.04_gcc-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/gcc-version-8:latest',
+-            '--build-arg', 'version=8',
+-            'util/dockerfiles/ubuntu-18.04_gcc-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/gcc-version-9:latest',
+-            '--build-arg', 'version=9',
+-            'util/dockerfiles/ubuntu-20.04_gcc-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/gcc-version-10:latest',
+-            '--build-arg', 'version=10',
+-            'util/dockerfiles/ubuntu-20.04_gcc-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-6.0:latest',
+-            '--build-arg', 'version=6.0',
+-            'util/dockerfiles/ubuntu-18.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-7:latest',
+-            '--build-arg', 'version=7',
+-            'util/dockerfiles/ubuntu-18.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-8:latest',
+-            '--build-arg', 'version=8',
+-            'util/dockerfiles/ubuntu-18.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-9:latest',
+-            '--build-arg', 'version=9',
+-            'util/dockerfiles/ubuntu-18.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-10:latest',
+-            '--build-arg', 'version=10',
+-            'util/dockerfiles/ubuntu-20.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/clang-version-11:latest',
+-            '--build-arg', 'version=11',
+-            'util/dockerfiles/ubuntu-20.04_clang-version']
+-
+-    - name: 'gcr.io/cloud-builders/docker'
+-      args: ['build',
+-            '-t',
+-            'gcr.io/$PROJECT_ID/gcn-gpu:latest',
+-            'util/dockerfiles/gcn-gpu']
+-
+-images: ['gcr.io/$PROJECT_ID/ubuntu-20.04_all-dependencies:latest',
+-         'gcr.io/$PROJECT_ID/ubuntu-20.04_min-dependencies:latest',
+-         'gcr.io/$PROJECT_ID/ubuntu-18.04_all-dependencies:latest',
+-         'gcr.io/$PROJECT_ID/gcc-version-7:latest',
+-         'gcr.io/$PROJECT_ID/gcc-version-8:latest',
+-         'gcr.io/$PROJECT_ID/gcc-version-9:latest',
+-         'gcr.io/$PROJECT_ID/gcc-version-10:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-6.0:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-7:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-8:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-9:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-10:latest',
+-         'gcr.io/$PROJECT_ID/clang-version-11:latest',
+-         'gcr.io/$PROJECT_ID/gcn-gpu:latest']
+-timeout: 18000s # 5 Hours
+-- 
+1.8.3.1
+

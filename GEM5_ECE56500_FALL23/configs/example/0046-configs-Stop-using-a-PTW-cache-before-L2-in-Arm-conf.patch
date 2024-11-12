@@ -1,0 +1,207 @@
+From d1d90c529c9d7b559b4ba5d3c4c0b5efd56c34c6 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 14 Dec 2021 15:13:51 +0000
+Subject: [PATCH 046/757] configs: Stop using a PTW cache before L2 in Arm
+ configs
+
+This implementation of a walk cache does not allow to skip walks as it
+is a simple cache placed in front of the table walker.
+It was meant to provide a faster retrieval of page table descriptors
+than fetching them from L2 or memory.
+
+This is not needed anymore for Arm as from [1] we implement
+partial translation caching in Arm TLBs.
+
+[1]: JIRA: https://gem5.atlassian.net/browse/GEM5-1108
+
+Change-Id: I00d44a4e3961e15602bf4352f2f42ddccf2b746b
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54243
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/CacheConfig.py       | 4 ++--
+ configs/example/arm/baremetal.py    | 4 +---
+ configs/example/arm/devices.py      | 7 ++-----
+ configs/example/arm/fs_bigLITTLE.py | 8 ++++----
+ configs/example/arm/ruby_fs.py      | 4 +---
+ configs/example/arm/starter_fs.py   | 4 +---
+ configs/example/arm/starter_se.py   | 4 +---
+ 7 files changed, 12 insertions(+), 23 deletions(-)
+
+diff --git a/configs/common/CacheConfig.py b/configs/common/CacheConfig.py
+index 4979f7d..61c6a30 100644
+--- a/configs/common/CacheConfig.py
++++ b/configs/common/CacheConfig.py
+@@ -87,7 +87,7 @@ def config_cache(options, system):
+         dcache_class, icache_class, l2_cache_class, walk_cache_class = \
+             core.O3_ARM_v7a_DCache, core.O3_ARM_v7a_ICache, \
+             core.O3_ARM_v7aL2, \
+-            core.O3_ARM_v7aWalkCache
++            None
+     elif options.cpu_type == "HPI":
+         try:
+             import cores.arm.HPI as core
+@@ -96,7 +96,7 @@ def config_cache(options, system):
+             sys.exit(1)
+ 
+         dcache_class, icache_class, l2_cache_class, walk_cache_class = \
+-            core.HPI_DCache, core.HPI_ICache, core.HPI_L2, core.HPI_WalkCache
++            core.HPI_DCache, core.HPI_ICache, core.HPI_L2, None
+     else:
+         dcache_class, icache_class, l2_cache_class, walk_cache_class = \
+             L1_DCache, L1_ICache, L2Cache, None
+diff --git a/configs/example/arm/baremetal.py b/configs/example/arm/baremetal.py
+index 9655bb1..0944344 100644
+--- a/configs/example/arm/baremetal.py
++++ b/configs/example/arm/baremetal.py
+@@ -61,14 +61,12 @@ import workloads
+ # the cache class may be 'None' if the particular cache is not present.
+ cpu_types = {
+ 
+-    "atomic" : ( AtomicSimpleCPU, None, None, None, None),
++    "atomic" : ( AtomicSimpleCPU, None, None, None),
+     "minor" : (MinorCPU,
+                devices.L1I, devices.L1D,
+-               devices.WalkCache,
+                devices.L2),
+     "hpi" : ( HPI.HPI,
+               HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_WalkCache,
+               HPI.HPI_L2)
+ }
+ 
+diff --git a/configs/example/arm/devices.py b/configs/example/arm/devices.py
+index 73aea59..5217b08 100644
+--- a/configs/example/arm/devices.py
++++ b/configs/example/arm/devices.py
+@@ -106,12 +106,11 @@ class MemBus(SystemXBar):
+ 
+ class CpuCluster(SubSystem):
+     def __init__(self, system,  num_cpus, cpu_clock, cpu_voltage,
+-                 cpu_type, l1i_type, l1d_type, wcache_type, l2_type):
++                 cpu_type, l1i_type, l1d_type, l2_type):
+         super(CpuCluster, self).__init__()
+         self._cpu_type = cpu_type
+         self._l1i_type = l1i_type
+         self._l1d_type = l1d_type
+-        self._wcache_type = wcache_type
+         self._l2_type = l2_type
+ 
+         assert num_cpus > 0
+@@ -140,9 +139,7 @@ class CpuCluster(SubSystem):
+         for cpu in self.cpus:
+             l1i = None if self._l1i_type is None else self._l1i_type()
+             l1d = None if self._l1d_type is None else self._l1d_type()
+-            iwc = None if self._wcache_type is None else self._wcache_type()
+-            dwc = None if self._wcache_type is None else self._wcache_type()
+-            cpu.addPrivateSplitL1Caches(l1i, l1d, iwc, dwc)
++            cpu.addPrivateSplitL1Caches(l1i, l1d)
+ 
+     def addL2(self, clk_domain):
+         if self._l2_type is None:
+diff --git a/configs/example/arm/fs_bigLITTLE.py b/configs/example/arm/fs_bigLITTLE.py
+index c590fe5..3f8b0cf 100644
+--- a/configs/example/arm/fs_bigLITTLE.py
++++ b/configs/example/arm/fs_bigLITTLE.py
+@@ -79,7 +79,7 @@ class BigCluster(devices.CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock,
+                  cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("O3_ARM_v7a_3"),
+-            devices.L1I, devices.L1D, devices.WalkCache, devices.L2 ]
++            devices.L1I, devices.L1D, devices.L2 ]
+         super(BigCluster, self).__init__(system, num_cpus, cpu_clock,
+                                          cpu_voltage, *cpu_config)
+ 
+@@ -87,7 +87,7 @@ class LittleCluster(devices.CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock,
+                  cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("MinorCPU"), devices.L1I,
+-            devices.L1D, devices.WalkCache, devices.L2 ]
++            devices.L1D, devices.L2 ]
+         super(LittleCluster, self).__init__(system, num_cpus, cpu_clock,
+                                          cpu_voltage, *cpu_config)
+ 
+@@ -95,7 +95,7 @@ class Ex5BigCluster(devices.CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock,
+                  cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("ex5_big"), ex5_big.L1I,
+-            ex5_big.L1D, ex5_big.WalkCache, ex5_big.L2 ]
++            ex5_big.L1D, ex5_big.L2 ]
+         super(Ex5BigCluster, self).__init__(system, num_cpus, cpu_clock,
+                                          cpu_voltage, *cpu_config)
+ 
+@@ -103,7 +103,7 @@ class Ex5LittleCluster(devices.CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock,
+                  cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("ex5_LITTLE"),
+-            ex5_LITTLE.L1I, ex5_LITTLE.L1D, ex5_LITTLE.WalkCache,
++            ex5_LITTLE.L1I, ex5_LITTLE.L1D,
+             ex5_LITTLE.L2 ]
+         super(Ex5LittleCluster, self).__init__(system, num_cpus, cpu_clock,
+                                          cpu_voltage, *cpu_config)
+diff --git a/configs/example/arm/ruby_fs.py b/configs/example/arm/ruby_fs.py
+index 3783f33..d820f86 100644
+--- a/configs/example/arm/ruby_fs.py
++++ b/configs/example/arm/ruby_fs.py
+@@ -62,14 +62,12 @@ default_root_device = '/dev/vda1'
+ # the cache class may be 'None' if the particular cache is not present.
+ cpu_types = {
+ 
+-    "noncaching" : ( NonCachingSimpleCPU, None, None, None, None),
++    "noncaching" : ( NonCachingSimpleCPU, None, None, None),
+     "minor" : (MinorCPU,
+                devices.L1I, devices.L1D,
+-               devices.WalkCache,
+                devices.L2),
+     "hpi" : ( HPI.HPI,
+               HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_WalkCache,
+               HPI.HPI_L2)
+ }
+ 
+diff --git a/configs/example/arm/starter_fs.py b/configs/example/arm/starter_fs.py
+index 11190db..40e645b 100644
+--- a/configs/example/arm/starter_fs.py
++++ b/configs/example/arm/starter_fs.py
+@@ -65,14 +65,12 @@ default_root_device = '/dev/vda1'
+ # the cache class may be 'None' if the particular cache is not present.
+ cpu_types = {
+ 
+-    "atomic" : ( AtomicSimpleCPU, None, None, None, None),
++    "atomic" : ( AtomicSimpleCPU, None, None, None),
+     "minor" : (MinorCPU,
+                devices.L1I, devices.L1D,
+-               devices.WalkCache,
+                devices.L2),
+     "hpi" : ( HPI.HPI,
+               HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_WalkCache,
+               HPI.HPI_L2)
+ }
+ 
+diff --git a/configs/example/arm/starter_se.py b/configs/example/arm/starter_se.py
+index 82fc49e..d80f749 100644
+--- a/configs/example/arm/starter_se.py
++++ b/configs/example/arm/starter_se.py
+@@ -59,14 +59,12 @@ import devices
+ # l1_icache_class, l1_dcache_class, walk_cache_class, l2_Cache_class). Any of
+ # the cache class may be 'None' if the particular cache is not present.
+ cpu_types = {
+-    "atomic" : ( AtomicSimpleCPU, None, None, None, None),
++    "atomic" : ( AtomicSimpleCPU, None, None, None),
+     "minor" : (MinorCPU,
+                devices.L1I, devices.L1D,
+-               devices.WalkCache,
+                devices.L2),
+     "hpi" : ( HPI.HPI,
+               HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_WalkCache,
+               HPI.HPI_L2)
+ }
+ 
+-- 
+1.8.3.1
+

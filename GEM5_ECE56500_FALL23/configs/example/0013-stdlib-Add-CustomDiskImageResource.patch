@@ -1,0 +1,146 @@
+From 5622560ce9c7c6fdc7e898670d124f10a37d578f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 8 Dec 2021 19:32:25 -0800
+Subject: [PATCH 013/757] stdlib: Add CustomDiskImageResource
+
+This CustomResource can be used to specify a custom, local disk image.
+It allows the user to specify the disk root partition parameter
+considerably easier than when setting a disk image through a
+CustomResource.
+
+Change-Id: I8189ad065124d028aea9fab1c7f07108aa4ce6d5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53844
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../gem5_library/x86-spec-cpu2006-benchmarks.py    | 15 +++--------
+ .../gem5_library/x86-spec-cpu2017-benchmarks.py    | 14 +++-------
+ src/python/gem5/resources/resource.py              | 30 ++++++++++++++++++++++
+ 3 files changed, 37 insertions(+), 22 deletions(-)
+
+diff --git a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+index 0bd5320..5624eaf 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+@@ -65,7 +65,7 @@ from gem5.components.processors.simple_switchable_processor import(
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+ from gem5.coherence_protocol import CoherenceProtocol
+-from gem5.resources.resource import Resource, CustomResource
++from gem5.resources.resource import Resource, CustomDiskImageResource
+ 
+ from m5.stats.gem5stats import get_simstat
+ from m5.util import warn
+@@ -227,15 +227,6 @@ except FileExistsError:
+ 
+ command = "{} {} {}".format(args.benchmark, args.size, output_dir)
+ 
+-# For enabling CustomResource, we pass an additional parameter to mount the
+-# correct partition.
+-
+-metadata = {
+-    "additional_metadata" : {
+-        "root_partition" : args.partition,
+-    },
+-}
+-
+ board.set_kernel_disk_workload(
+     # The x86 linux kernel will be automatically downloaded to the
+     # `~/.cache/gem5` directory if not already present.
+@@ -245,9 +236,9 @@ board.set_kernel_disk_workload(
+         "x86-linux-kernel-4.19.83",
+     ),
+     # The location of the x86 SPEC CPU 2017 image
+-    disk_image=CustomResource(
++    disk_image=CustomDiskImageResource(
+         args.image,
+-        metadata=metadata
++        disk_root_partition=args.partition,
+     ),
+     readfile_contents=command,
+ )
+diff --git a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+index b4bb9ac..25bbbea 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+@@ -63,7 +63,7 @@ from gem5.components.processors.simple_switchable_processor import(
+ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+ from gem5.coherence_protocol import CoherenceProtocol
+-from gem5.resources.resource import Resource, CustomResource
++from gem5.resources.resource import Resource, CustomDiskImageResource
+ 
+ from m5.stats.gem5stats import get_simstat
+ from m5.util import warn
+@@ -236,12 +236,6 @@ command = "{} {} {}".format(args.benchmark, args.size, output_dir)
+ # For enabling CustomResource, we pass an additional parameter to mount the
+ # correct partition.
+ 
+-metadata = {
+-    "additional_metadata" : {
+-        "root_partition" : args.partition,
+-    },
+-}
+-
+ board.set_kernel_disk_workload(
+     # The x86 linux kernel will be automatically downloaded to the
+     # `~/.cache/gem5` directory if not already present.
+@@ -250,10 +244,10 @@ board.set_kernel_disk_workload(
+         "x86-linux-kernel-4.19.83",
+     ),
+     # The location of the x86 SPEC CPU 2017 image
+-    disk_image=CustomResource(
++    disk_image=CustomDiskImageResource(
+         args.image,
+-        metadata=metadata
+-        ),
++        disk_root_partition=args.partition,
++    ),
+     readfile_contents=command,
+ )
+ 
+diff --git a/src/python/gem5/resources/resource.py b/src/python/gem5/resources/resource.py
+index b316f7d..f03490b 100644
+--- a/src/python/gem5/resources/resource.py
++++ b/src/python/gem5/resources/resource.py
+@@ -80,6 +80,36 @@ class CustomResource(AbstractResource):
+         """
+         super().__init__(local_path=local_path, metadata=metadata)
+ 
++class CustomDiskImageResource(CustomResource):
++    """
++    A custom disk image gem5 resource. It can be used to specify a custom,
++    local disk image.
++    """
++
++    def __init__(
++        self,
++        local_path: str,
++        disk_root_partition: Optional[str] = None,
++        metadata: Dict = {},
++    ):
++        """
++        :param local_path: The path of the disk image on the host system.
++        :param disk_root_partition: The root disk partition to use.
++        :param metadata: Metadata for the resource.
++        """
++
++        # Behind the scenes, we set the the root partition via the metadata.
++        # For a traditional, non-custom, resource it is the metadata that is
++        # used to specify the disk image partition root. Therefore, when the
++        # root disk partition specified during the construction, we apply it as
++        # metadata.
++        if disk_root_partition:
++            disk_root_partition_dict = {
++                "additional_metadata": {"root_partition": disk_root_partition}
++            }
++            metadata.update(disk_root_partition_dict)
++
++        super().__init__(local_path=local_path, metadata=metadata)
+ 
+ class Resource(AbstractResource):
+     """
+-- 
+1.8.3.1
+

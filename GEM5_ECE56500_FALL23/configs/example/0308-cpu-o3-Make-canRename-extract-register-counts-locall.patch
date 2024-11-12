@@ -1,0 +1,102 @@
+From 39d25eebd0c151660ab099dd4c5e27505b8b5f28 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 19:56:24 -0700
+Subject: [PATCH 308/757] cpu-o3: Make canRename extract register counts
+ locally.
+
+This avoids having an argument for each register type, which prevents
+building in an assumption about what register types exist.
+
+Change-Id: I81473db51d930c757f4e0b24e6f3017a4965a721
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49714
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/o3/rename.cc     |  7 +------
+ src/cpu/o3/rename_map.cc | 12 ++++++++++++
+ src/cpu/o3/rename_map.hh | 14 ++------------
+ 3 files changed, 15 insertions(+), 18 deletions(-)
+
+diff --git a/src/cpu/o3/rename.cc b/src/cpu/o3/rename.cc
+index d6c4efe..e2b2d14 100644
+--- a/src/cpu/o3/rename.cc
++++ b/src/cpu/o3/rename.cc
+@@ -656,12 +656,7 @@ Rename::renameInsts(ThreadID tid)
+ 
+         // Check here to make sure there are enough destination registers
+         // to rename to.  Otherwise block.
+-        if (!renameMap[tid]->canRename(inst->numDestRegs(IntRegClass),
+-                                       inst->numDestRegs(FloatRegClass),
+-                                       inst->numDestRegs(VecRegClass),
+-                                       inst->numDestRegs(VecElemClass),
+-                                       inst->numDestRegs(VecPredRegClass),
+-                                       inst->numDestRegs(CCRegClass))) {
++        if (!renameMap[tid]->canRename(inst)) {
+             DPRINTF(Rename,
+                     "Blocking due to "
+                     " lack of free physical registers to rename to.\n");
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index 30e4684..7a18ab5 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -44,6 +44,7 @@
+ #include <vector>
+ 
+ #include "arch/vecregs.hh"
++#include "cpu/o3/dyn_inst.hh"
+ #include "cpu/reg_class.hh"
+ #include "debug/Rename.hh"
+ 
+@@ -122,5 +123,16 @@ UnifiedRenameMap::init(const BaseISA::RegClasses &regClasses,
+     ccMap.init(regClasses.at(CCRegClass), &(freeList->ccList));
+ }
+ 
++bool
++UnifiedRenameMap::canRename(DynInstPtr inst) const
++{
++    return inst->numDestRegs(IntRegClass) <= intMap.numFreeEntries() &&
++        inst->numDestRegs(FloatRegClass) <= floatMap.numFreeEntries() &&
++        inst->numDestRegs(VecRegClass) <= vecMap.numFreeEntries() &&
++        inst->numDestRegs(VecElemClass) <= vecElemMap.numFreeEntries() &&
++        inst->numDestRegs(VecPredRegClass) <= predMap.numFreeEntries() &&
++        inst->numDestRegs(CCRegClass) <= ccMap.numFreeEntries();
++}
++
+ } // namespace o3
+ } // namespace gem5
+diff --git a/src/cpu/o3/rename_map.hh b/src/cpu/o3/rename_map.hh
+index 0e1a6f5..e5886f1 100644
+--- a/src/cpu/o3/rename_map.hh
++++ b/src/cpu/o3/rename_map.hh
+@@ -47,6 +47,7 @@
+ #include <vector>
+ 
+ #include "arch/generic/isa.hh"
++#include "cpu/o3/dyn_inst_ptr.hh"
+ #include "cpu/o3/free_list.hh"
+ #include "cpu/o3/regfile.hh"
+ #include "cpu/reg_class.hh"
+@@ -365,18 +366,7 @@ class UnifiedRenameMap
+     /**
+      * Return whether there are enough registers to serve the request.
+      */
+-    bool
+-    canRename(uint32_t intRegs, uint32_t floatRegs, uint32_t vectorRegs,
+-              uint32_t vecElemRegs, uint32_t vecPredRegs,
+-              uint32_t ccRegs) const
+-    {
+-        return intRegs <= intMap.numFreeEntries() &&
+-            floatRegs <= floatMap.numFreeEntries() &&
+-            vectorRegs <= vecMap.numFreeEntries() &&
+-            vecElemRegs <= vecElemMap.numFreeEntries() &&
+-            vecPredRegs <= predMap.numFreeEntries() &&
+-            ccRegs <= ccMap.numFreeEntries();
+-    }
++    bool canRename(DynInstPtr inst) const;
+ };
+ 
+ } // namespace o3
+-- 
+1.8.3.1
+

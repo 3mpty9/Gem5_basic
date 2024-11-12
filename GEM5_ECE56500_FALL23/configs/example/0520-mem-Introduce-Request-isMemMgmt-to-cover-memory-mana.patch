@@ -1,0 +1,43 @@
+From 05f1975832ab396bffa7e3244e428a2396f06c8a Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 1 Apr 2022 12:31:36 +0100
+Subject: [PATCH 520/757] mem: Introduce Request::isMemMgmt to cover memory
+ management cmds
+
+It will check if the request is a TLB invalidation
+or a transactional memory request
+
+Change-Id: I84351a13a6806d8119e4efa8ef98ab150976c8ab
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58509
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 8b6527c..9f02c53 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013,2017-2021 Arm Limited
++ * Copyright (c) 2012-2013,2017-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1018,6 +1018,7 @@ class Request
+         return (isTlbi() || isTlbiSync() ||
+                 isTlbiExtSync() || isTlbiExtSyncComp());
+     }
++    bool isMemMgmt() const { return isTlbiCmd() || isHTMCmd(); }
+ 
+     bool
+     isAtomic() const
+-- 
+1.8.3.1
+

@@ -1,0 +1,34 @@
+From 557ee3f74c3e118911f16592e9632144bf423953 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 9 Feb 2022 14:42:24 -0800
+Subject: [PATCH 239/757] python: Update gem5 url output by the simulator
+
+This patch:
+- Replaces 'http' with 'https'.
+- Adds 'www'.
+
+Change-Id: I6500a39171eb79c98754f517ff1fdd0cf60d83d0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56649
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/m5/main.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/python/m5/main.py b/src/python/m5/main.py
+index 701d9f6..b216840 100644
+--- a/src/python/m5/main.py
++++ b/src/python/m5/main.py
+@@ -310,7 +310,7 @@ def main():
+ 
+     verbose = options.verbose - options.quiet
+     if verbose >= 0:
+-        print("gem5 Simulator System.  http://gem5.org")
++        print("gem5 Simulator System.  https://www.gem5.org")
+         print(brief_copyright)
+         print()
+ 
+-- 
+1.8.3.1
+

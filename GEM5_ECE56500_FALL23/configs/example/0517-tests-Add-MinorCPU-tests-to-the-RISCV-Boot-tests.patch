@@ -1,0 +1,89 @@
+From 4f4c8b5eda92b0324fce5f124c15acfde79a879b Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 15 Mar 2022 13:33:56 -0700
+Subject: [PATCH 517/757] tests: Add MinorCPU tests to the RISCV Boot tests
+
+Change-Id: I9bd6665af00ea8a348152b5f5f83ff1017da4c7a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57691
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/configs/riscv_boot_exit_run.py      |  4 ++-
+ tests/gem5/riscv-boot-tests/test_linux_boot.py | 38 ++++++++++++++++++++++++++
+ 2 files changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/tests/gem5/configs/riscv_boot_exit_run.py b/tests/gem5/configs/riscv_boot_exit_run.py
+index a06a45b..fd57e45 100644
+--- a/tests/gem5/configs/riscv_boot_exit_run.py
++++ b/tests/gem5/configs/riscv_boot_exit_run.py
+@@ -60,7 +60,7 @@ parser.add_argument(
+     "-c",
+     "--cpu",
+     type=str,
+-    choices=("kvm", "atomic", "timing", "o3"),
++    choices=("kvm", "atomic", "timing", "o3", "minor"),
+     required=True,
+     help="The CPU type.",
+ )
+@@ -139,6 +139,8 @@ elif args.cpu == "timing":
+     cpu_type = CPUTypes.TIMING
+ elif args.cpu == "o3":
+     cpu_type = CPUTypes.O3
++elif args.cpu == "minor":
++    cpu_type = CPUTypes.MINOR
+ else:
+     raise NotImplementedError(
+         "CPU type '{}' is not supported in the boot tests.".format(args.cpu)
+diff --git a/tests/gem5/riscv-boot-tests/test_linux_boot.py b/tests/gem5/riscv-boot-tests/test_linux_boot.py
+index 6d4e9f1..e39c409 100644
+--- a/tests/gem5/riscv-boot-tests/test_linux_boot.py
++++ b/tests/gem5/riscv-boot-tests/test_linux_boot.py
+@@ -112,6 +112,44 @@ test_boot(
+ )
+ 
+ test_boot(
++    cpu="minor",
++    num_cpus=1,
++    cache_type="classic",
++    memory_class="SingleChannelDDR3_2133",
++    length=constants.quick_tag,
++    to_tick=10000000000,
++)
++
++test_boot(
++    cpu="minor",
++    num_cpus=4,
++    cache_type="classic",
++    memory_class="SingleChannelDDR3_2133",
++    length=constants.quick_tag,
++    to_tick=10000000000,
++)
++
++test_boot(
++    cpu="minor",
++    num_cpus=1,
++    cache_type="mi_example",
++    memory_class="SingleChannelDDR3_2133",
++    length=constants.quick_tag,
++    to_tick=10000000000,
++)
++
++test_boot(
++    cpu="minor",
++    num_cpus=8,
++    cache_type="mi_example",
++    memory_class="SingleChannelDDR3_2133",
++    length=constants.quick_tag,
++    to_tick=10000000000,
++)
++
++
++
++test_boot(
+     cpu="timing",
+     num_cpus=1,
+     cache_type="mi_example",
+-- 
+1.8.3.1
+

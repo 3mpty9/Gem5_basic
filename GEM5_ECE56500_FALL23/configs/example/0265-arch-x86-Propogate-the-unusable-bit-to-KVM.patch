@@ -1,0 +1,39 @@
+From 70ee16a38731429719eb69120dc3a230a221e7c1 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 22 Feb 2022 23:44:23 -0800
+Subject: [PATCH 265/757] arch-x86: Propogate the unusable bit to KVM.
+
+The unusable bit is now used by gem5. Pass that bit through to KVM
+instead of a dummy value 0.
+
+Change-Id: I59912b478a3de95684fb0cc65ff5703d201df8cb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57050
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/x86/kvm/x86_cpu.cc | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index af041a5..49274da 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -741,12 +741,7 @@ setKvmSegmentReg(ThreadContext *tc, struct kvm_segment &kvm_seg,
+     kvm_seg.l = attr.longMode;
+     kvm_seg.g = attr.granularity;
+     kvm_seg.avl = attr.avl;
+-
+-    // A segment is normally unusable when the selector is zero. There
+-    // is a attr.unusable flag in gem5, but it seems unused. qemu
+-    // seems to set this to 0 all the time, so we just do the same and
+-    // hope for the best.
+-    kvm_seg.unusable = 0;
++    kvm_seg.unusable = attr.unusable;
+ }
+ 
+ static inline void
+-- 
+1.8.3.1
+

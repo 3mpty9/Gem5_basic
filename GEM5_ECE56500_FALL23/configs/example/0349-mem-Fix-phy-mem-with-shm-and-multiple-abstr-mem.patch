@@ -1,0 +1,98 @@
+From 23e6607507342d22d9eed8f158b615da49c043d7 Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Mon, 7 Mar 2022 17:49:39 +0800
+Subject: [PATCH 349/757] mem: Fix phy mem with shm and multiple abstr mem
+
+Previously, all abstract memory backed by the same physical memory will
+use the exact same chunk of shared memory if sharedBackstore is set. It
+means that all abstract memories, despite setting to a different range,
+will still be map to the same chunk of memory.
+
+As a result, setting the sharedBackstore not only allows our host system
+to share gem5 memory, it also enforces multiple gem5 memories to share
+the same content. Which will significantly affect the simulation result.
+
+Furthermore, the actual size of the shared memory will be determined by
+the last backingStore created. If the last one is unfortunately smaller
+than any previous backingStore, this may invalid previous mapped region
+and cause a SIGBUS upon access (on linux).
+
+In this CL, we put all backingStores of those abstract memories side by
+side instead of stacking them all together. So the behavior of abstract
+memories will be kept consistent whether the sharedBackstore is set or
+not, yet presist the ability to access those memories from host.
+
+Change-Id: Ic4ec25c99fe72744afaa2dfbb48cd0d65230e9a8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57369
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/physical.cc | 15 ++++++++++-----
+ src/mem/physical.hh |  1 +
+ 2 files changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/physical.cc b/src/mem/physical.cc
+index ae20fb6..a7e261f 100644
+--- a/src/mem/physical.cc
++++ b/src/mem/physical.cc
+@@ -79,7 +79,7 @@ PhysicalMemory::PhysicalMemory(const std::string& _name,
+                                bool mmap_using_noreserve,
+                                const std::string& shared_backstore) :
+     _name(_name), size(0), mmapUsingNoReserve(mmap_using_noreserve),
+-    sharedBackstore(shared_backstore)
++    sharedBackstore(shared_backstore), sharedBackstoreSize(0)
+ {
+     if (mmap_using_noreserve)
+         warn("Not reserving swap space. May cause SIGSEGV on actual usage\n");
+@@ -201,17 +201,22 @@ PhysicalMemory::createBackingStore(
+ 
+     int shm_fd;
+     int map_flags;
++    off_t map_offset;
+ 
+     if (sharedBackstore.empty()) {
+         shm_fd = -1;
+         map_flags =  MAP_ANON | MAP_PRIVATE;
++        map_offset = 0;
+     } else {
+-        DPRINTF(AddrRanges, "Sharing backing store as %s\n",
+-                sharedBackstore.c_str());
++        // Newly create backstore will be located after previous one.
++        map_offset = sharedBackstoreSize;
++        sharedBackstoreSize += range.size();
++        DPRINTF(AddrRanges, "Sharing backing store as %s at offset %llu\n",
++                sharedBackstore.c_str(), (uint64_t)map_offset);
+         shm_fd = shm_open(sharedBackstore.c_str(), O_CREAT | O_RDWR, 0666);
+         if (shm_fd == -1)
+                panic("Shared memory failed");
+-        if (ftruncate(shm_fd, range.size()))
++        if (ftruncate(shm_fd, sharedBackstoreSize))
+                panic("Setting size of shared memory failed");
+         map_flags = MAP_SHARED;
+     }
+@@ -224,7 +229,7 @@ PhysicalMemory::createBackingStore(
+ 
+     uint8_t* pmem = (uint8_t*) mmap(NULL, range.size(),
+                                     PROT_READ | PROT_WRITE,
+-                                    map_flags, shm_fd, 0);
++                                    map_flags, shm_fd, map_offset);
+ 
+     if (pmem == (uint8_t*) MAP_FAILED) {
+         perror("mmap");
+diff --git a/src/mem/physical.hh b/src/mem/physical.hh
+index b7ec8eb..bb90664 100644
+--- a/src/mem/physical.hh
++++ b/src/mem/physical.hh
+@@ -140,6 +140,7 @@ class PhysicalMemory : public Serializable
+     const bool mmapUsingNoReserve;
+ 
+     const std::string sharedBackstore;
++    uint64_t sharedBackstoreSize;
+ 
+     // The physical memory used to provide the memory in the simulated
+     // system
+-- 
+1.8.3.1
+

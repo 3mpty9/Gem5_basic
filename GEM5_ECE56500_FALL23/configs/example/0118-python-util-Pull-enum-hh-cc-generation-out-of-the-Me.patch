@@ -1,0 +1,375 @@
+From b0f9375377529d3cd61108b074a710d8d5a40e07 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 19 Aug 2021 23:11:40 -0700
+Subject: [PATCH 118/757] python,util: Pull enum hh|cc generation out of the
+ MetaEnum class.
+
+Change-Id: Ibfcc2d6916318ffef806f74e57e3f8360489efb6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49452
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/enum_cc.py  | 106 ++++++++++++++++++++++++++++++++++--
+ build_tools/enum_hh.py  |  68 ++++++++++++++++++++++-
+ src/python/m5/params.py | 140 ------------------------------------------------
+ 3 files changed, 170 insertions(+), 144 deletions(-)
+
+diff --git a/build_tools/enum_cc.py b/build_tools/enum_cc.py
+index 4a6cda0..e05f19f 100644
+--- a/build_tools/enum_cc.py
++++ b/build_tools/enum_cc.py
+@@ -1,5 +1,18 @@
++# Copyright 2004-2006 The Regents of The University of Michigan
++# Copyright 2010-20013 Advanced Micro Devices, Inc.
++# Copyright 2013 Mark D. Hill and David A. Wood
++# Copyright 2017-2020 ARM Limited
+ # Copyright 2021 Google, Inc.
+ #
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are
+ # met: redistributions of source code must retain the above copyright
+@@ -48,7 +61,94 @@ module = importlib.import_module(args.modpath)
+ enum = getattr(module, enum_name)
+ 
+ code = code_formatter()
+-enum.cxx_def(code)
+-if args.use_python:
+-    enum.pybind_def(code)
++
++wrapper_name = enum.wrapper_name
++file_name = enum.__name__
++name = enum.__name__ if enum.enum_name is None else enum.enum_name
++
++code('''#include "base/compiler.hh"
++#include "enums/$file_name.hh"
++
++namespace gem5
++{
++
++''')
++
++if enum.wrapper_is_struct:
++    code('const char *${wrapper_name}::${name}Strings'
++        '[Num_${name}] =')
++else:
++    if enum.is_class:
++        code('''\
++const char *${name}Strings[static_cast<int>(${name}::Num_${name})] =
++''')
++    else:
++        code('''GEM5_DEPRECATED_NAMESPACE(Enums, enums);
++namespace enums
++{''')
++        code.indent(1)
++        code('const char *${name}Strings[Num_${name}] =')
++
++code('{')
++code.indent(1)
++for val in enum.vals:
++    code('"$val",')
++code.dedent(1)
++code('};')
++
++if not enum.wrapper_is_struct and not enum.is_class:
++    code.dedent(1)
++    code('} // namespace enums')
++
++code('} // namespace gem5')
++
++
++if not args.use_python:
++    code.write(args.enum_cc)
++    exit(0)
++
++
++name = enum.__name__
++enum_name = enum.__name__ if enum.enum_name is None else enum.enum_name
++wrapper_name = enum_name if enum.is_class else enum.wrapper_name
++
++code('''#include "pybind11/pybind11.h"
++#include "pybind11/stl.h"
++
++#include <sim/init.hh>
++
++namespace py = pybind11;
++
++namespace gem5
++{
++
++static void
++module_init(py::module_ &m_internal)
++{
++    py::module_ m = m_internal.def_submodule("enum_${name}");
++
++''')
++if enum.is_class:
++    code('py::enum_<${enum_name}>(m, "enum_${name}")')
++else:
++    code('py::enum_<${wrapper_name}::${enum_name}>(m, "enum_${name}")')
++
++code.indent()
++code.indent()
++for val in enum.vals:
++    code('.value("${val}", ${wrapper_name}::${val})')
++code('.value("Num_${name}", ${wrapper_name}::Num_${enum_name})')
++if not enum.is_class:
++    code('.export_values()')
++code(';')
++code.dedent()
++
++code('}')
++code.dedent()
++code('''
++static EmbeddedPyBind embed_enum("enum_${name}", module_init);
++
++} // namespace gem5
++''')
++
+ code.write(args.enum_cc)
+diff --git a/build_tools/enum_hh.py b/build_tools/enum_hh.py
+index 53eaf85..2c4a7bb 100644
+--- a/build_tools/enum_hh.py
++++ b/build_tools/enum_hh.py
+@@ -1,5 +1,18 @@
++# Copyright 2004-2006 The Regents of The University of Michigan
++# Copyright 2010-20013 Advanced Micro Devices, Inc.
++# Copyright 2013 Mark D. Hill and David A. Wood
++# Copyright 2017-2020 ARM Limited
+ # Copyright 2021 Google, Inc.
+ #
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are
+ # met: redistributions of source code must retain the above copyright
+@@ -46,5 +59,58 @@ module = importlib.import_module(args.modpath)
+ enum = getattr(module, enum_name)
+ 
+ code = code_formatter()
+-enum.cxx_decl(code)
++
++# Generate C++ class declaration for this enum type.
++# Note that we wrap the enum in a class/struct to act as a namespace,
++# so that the enum strings can be brief w/o worrying about collisions.
++wrapper_name = enum.wrapper_name
++wrapper = 'struct' if enum.wrapper_is_struct else 'namespace'
++name = enum.__name__ if enum.enum_name is None else enum.enum_name
++idem_macro = '__ENUM__%s__%s__' % (wrapper_name, name)
++
++code('''\
++#ifndef $idem_macro
++#define $idem_macro
++
++namespace gem5
++{
++''')
++if enum.is_class:
++    code('''\
++enum class $name
++{
++''')
++else:
++    code('''\
++$wrapper $wrapper_name {
++enum $name
++{
++''')
++    code.indent(1)
++code.indent(1)
++for val in enum.vals:
++    code('$val = ${{enum.map[val]}},')
++code('Num_$name = ${{len(enum.vals)}}')
++code.dedent(1)
++code('};')
++
++if enum.is_class:
++    code('''\
++extern const char *${name}Strings[static_cast<int>(${name}::Num_${name})];
++''')
++elif enum.wrapper_is_struct:
++    code('static const char *${name}Strings[Num_${name}];')
++else:
++    code('extern const char *${name}Strings[Num_${name}];')
++
++if not enum.is_class:
++    code.dedent(1)
++    code('}; // $wrapper_name')
++
++code()
++code('} // namespace gem5')
++
++code()
++code('#endif // $idem_macro')
++
+ code.write(args.enum_hh)
+diff --git a/src/python/m5/params.py b/src/python/m5/params.py
+index 39137c5..57a3d3e 100644
+--- a/src/python/m5/params.py
++++ b/src/python/m5/params.py
+@@ -1318,146 +1318,6 @@ class MetaEnum(MetaParamValue):
+ 
+         super().__init__(name, bases, init_dict)
+ 
+-    # Generate C++ class declaration for this enum type.
+-    # Note that we wrap the enum in a class/struct to act as a namespace,
+-    # so that the enum strings can be brief w/o worrying about collisions.
+-    def cxx_decl(cls, code):
+-        wrapper_name = cls.wrapper_name
+-        wrapper = 'struct' if cls.wrapper_is_struct else 'namespace'
+-        name = cls.__name__ if cls.enum_name is None else cls.enum_name
+-        idem_macro = '__ENUM__%s__%s__' % (wrapper_name, name)
+-
+-        code('''\
+-#ifndef $idem_macro
+-#define $idem_macro
+-
+-namespace gem5
+-{
+-''')
+-        if cls.is_class:
+-            code('''\
+-enum class $name
+-{
+-''')
+-        else:
+-            code('''\
+-$wrapper $wrapper_name {
+-    enum $name
+-    {
+-''')
+-            code.indent(1)
+-        code.indent(1)
+-        for val in cls.vals:
+-            code('$val = ${{cls.map[val]}},')
+-        code('Num_$name = ${{len(cls.vals)}}')
+-        code.dedent(1)
+-        code('};')
+-
+-        if cls.is_class:
+-            code('''\
+-extern const char *${name}Strings[static_cast<int>(${name}::Num_${name})];
+-''')
+-        elif cls.wrapper_is_struct:
+-            code('static const char *${name}Strings[Num_${name}];')
+-        else:
+-            code('extern const char *${name}Strings[Num_${name}];')
+-
+-        if not cls.is_class:
+-            code.dedent(1)
+-            code('}; // $wrapper_name')
+-
+-        code()
+-        code('} // namespace gem5')
+-
+-        code()
+-        code('#endif // $idem_macro')
+-
+-    def cxx_def(cls, code):
+-        wrapper_name = cls.wrapper_name
+-        file_name = cls.__name__
+-        name = cls.__name__ if cls.enum_name is None else cls.enum_name
+-
+-        code('#include "base/compiler.hh"')
+-        code('#include "enums/$file_name.hh"')
+-
+-        code()
+-        code('namespace gem5')
+-        code('{')
+-        code()
+-
+-        if cls.wrapper_is_struct:
+-            code('const char *${wrapper_name}::${name}Strings'
+-                '[Num_${name}] =')
+-        else:
+-            if cls.is_class:
+-                code('''\
+-const char *${name}Strings[static_cast<int>(${name}::Num_${name})] =
+-''')
+-            else:
+-                code('''GEM5_DEPRECATED_NAMESPACE(Enums, enums);
+-namespace enums
+-{''')
+-                code.indent(1)
+-                code('const char *${name}Strings[Num_${name}] =')
+-
+-        code('{')
+-        code.indent(1)
+-        for val in cls.vals:
+-            code('"$val",')
+-        code.dedent(1)
+-        code('};')
+-
+-        if not cls.wrapper_is_struct and not cls.is_class:
+-            code.dedent(1)
+-            code('} // namespace enums')
+-
+-        code('} // namespace gem5')
+-
+-
+-    def pybind_def(cls, code):
+-        name = cls.__name__
+-        enum_name = cls.__name__ if cls.enum_name is None else cls.enum_name
+-        wrapper_name = enum_name if cls.is_class else cls.wrapper_name
+-
+-        code('''#include "pybind11/pybind11.h"
+-#include "pybind11/stl.h"
+-
+-#include <sim/init.hh>
+-
+-namespace py = pybind11;
+-
+-namespace gem5
+-{
+-
+-static void
+-module_init(py::module_ &m_internal)
+-{
+-    py::module_ m = m_internal.def_submodule("enum_${name}");
+-
+-''')
+-        if cls.is_class:
+-            code('py::enum_<${enum_name}>(m, "enum_${name}")')
+-        else:
+-            code('py::enum_<${wrapper_name}::${enum_name}>(m, "enum_${name}")')
+-
+-        code.indent()
+-        code.indent()
+-        for val in cls.vals:
+-            code('.value("${val}", ${wrapper_name}::${val})')
+-        code('.value("Num_${name}", ${wrapper_name}::Num_${enum_name})')
+-        if not cls.is_class:
+-            code('.export_values()')
+-        code(';')
+-        code.dedent()
+-
+-        code('}')
+-        code.dedent()
+-        code()
+-        code('static EmbeddedPyBind embed_enum("enum_${name}", module_init);')
+-        code()
+-        code('} // namespace gem5')
+-
+-
+ # Base class for enum types.
+ class Enum(ParamValue, metaclass=MetaEnum):
+     vals = []
+-- 
+1.8.3.1
+

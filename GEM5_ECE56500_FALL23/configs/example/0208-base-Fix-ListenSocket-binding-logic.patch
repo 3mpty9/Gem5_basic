@@ -1,0 +1,48 @@
+From 9d63b391d2932d53c7efae8d4ba801cf5efa045a Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Tue, 25 Jan 2022 09:14:21 +0800
+Subject: [PATCH 208/757] base: Fix ListenSocket binding logic
+
+The original implementation does not cleanup the socket after it failed
+to listen. However, the API doesn't give our user a way to bypass the
+bind part and the next try will always break at the bind call.
+Furthermore, the next failure will be EINVAL instead of EADDRINUSE so
+gem5 will just abort without giving any meaningful message.
+
+In this CL we cleanup the socket if we failed to invoke listen, so the
+user can retry with a clean state and even retry on another port.
+
+Test: Try to launch two gem5 that both bind to gdb port (7000) and
+    repeat it for 100 times.
+Change-Id: I7272ea3c3b6ab56e4b904f3a3a45ed389d00dd05
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55943
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Nathanael Premillieu <nathanael.premillieu@huawei.com>
+---
+ src/base/socket.cc | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/base/socket.cc b/src/base/socket.cc
+index 860249a..5cf67fd 100644
+--- a/src/base/socket.cc
++++ b/src/base/socket.cc
+@@ -155,7 +155,12 @@ ListenSocket::listen(int port, bool reuse)
+     if (::listen(fd, 1) == -1) {
+         if (errno != EADDRINUSE)
+             panic("ListenSocket(listen): listen() failed!");
+-
++        // User may decide to retry with a different port later; however, the
++        // socket is already bound to a port and the next bind will surely
++        // fail. We'll close the socket and reset fd to -1 so our user can
++        // retry with a cleaner state.
++        close(fd);
++        fd = -1;
+         return false;
+     }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,589 @@
+From 23087f124ad1e94c969910be4ab1a1d5b09d38b4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 28 Aug 2021 23:05:07 -0700
+Subject: [PATCH 720/757] arch-power: Revamp int registers.
+
+Change-Id: I2e11601a6bf37d6ca161d0ce99d7bfff1ee2f0eb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49770
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/power/insts/branch.cc      |   8 +--
+ src/arch/power/isa.cc               |   8 ++-
+ src/arch/power/isa/formats/mem.isa  |   8 +--
+ src/arch/power/isa/operands.isa     |  20 +++---
+ src/arch/power/linux/linux.hh       |   4 +-
+ src/arch/power/linux/se_workload.cc |   2 +-
+ src/arch/power/process.cc           |  10 +--
+ src/arch/power/regs/int.hh          | 139 ++++++++++++++++++++++++++++--------
+ src/arch/power/remote_gdb.cc        |  70 +++++++++---------
+ src/arch/power/remote_gdb.hh        |   4 +-
+ src/arch/power/se_workload.hh       |   6 +-
+ 11 files changed, 182 insertions(+), 97 deletions(-)
+
+diff --git a/src/arch/power/insts/branch.cc b/src/arch/power/insts/branch.cc
+index 8540cef..b68f89b 100644
+--- a/src/arch/power/insts/branch.cc
++++ b/src/arch/power/insts/branch.cc
+@@ -59,7 +59,7 @@ PCDependentDisassembly::disassemble(
+ std::unique_ptr<PCStateBase>
+ BranchOp::branchTarget(ThreadContext *tc) const
+ {
+-    Msr msr = tc->readIntReg(INTREG_MSR);
++    Msr msr = tc->getReg(int_reg::Msr);
+     Addr addr;
+ 
+     if (aa)
+@@ -108,7 +108,7 @@ BranchOp::generateDisassembly(
+ std::unique_ptr<PCStateBase>
+ BranchDispCondOp::branchTarget(ThreadContext *tc) const
+ {
+-    Msr msr = tc->readIntReg(INTREG_MSR);
++    Msr msr = tc->getReg(int_reg::Msr);
+     Addr addr;
+ 
+     if (aa)
+@@ -160,8 +160,8 @@ BranchDispCondOp::generateDisassembly(
+ std::unique_ptr<PCStateBase>
+ BranchRegCondOp::branchTarget(ThreadContext *tc) const
+ {
+-    Msr msr = tc->readIntReg(INTREG_MSR);
+-    Addr addr = tc->readIntReg(srcRegIdx(_numSrcRegs - 1).index()) & -4ULL;
++    Msr msr = tc->getReg(int_reg::Msr);
++    Addr addr = tc->getReg(srcRegIdx(_numSrcRegs - 1)) & -4ULL;
+     return std::make_unique<PowerISA::PCState>(
+             msr.sf ? addr : addr & UINT32_MAX);
+ }
+diff --git a/src/arch/power/isa.cc b/src/arch/power/isa.cc
+index d28894d..99aef2f 100644
+--- a/src/arch/power/isa.cc
++++ b/src/arch/power/isa.cc
+@@ -54,7 +54,7 @@ namespace PowerISA
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
++    _regClasses.emplace_back(int_reg::NumRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs);
+     _regClasses.emplace_back(2, debug::IntRegs);
+@@ -68,8 +68,10 @@ void
+ ISA::copyRegsFrom(ThreadContext *src)
+ {
+     // First loop through the integer registers.
+-    for (int i = 0; i < NumIntRegs; ++i)
+-        tc->setIntReg(i, src->readIntReg(i));
++    for (int i = 0; i < int_reg::NumRegs; ++i) {
++        RegId reg(IntRegClass, i);
++        tc->setReg(reg, src->getReg(reg));
++    }
+ 
+     // Then loop through the floating point registers.
+     for (int i = 0; i < NumFloatRegs; ++i)
+diff --git a/src/arch/power/isa/formats/mem.isa b/src/arch/power/isa/formats/mem.isa
+index c4c9968..97b4f81 100644
+--- a/src/arch/power/isa/formats/mem.isa
++++ b/src/arch/power/isa/formats/mem.isa
+@@ -69,7 +69,7 @@ def template LoadExecute {{
+     {
+         Addr EA;
+         Fault fault = NoFault;
+-        Msr msr = xc->tcBase()->readIntReg(INTREG_MSR);
++        Msr msr = xc->tcBase()->getReg(int_reg::Msr);
+ 
+         %(op_decl)s;
+         %(op_rd)s;
+@@ -119,7 +119,7 @@ def template LoadCompleteAcc {{
+     {
+         [[maybe_unused]] Addr EA;
+         Fault fault = NoFault;
+-        Msr msr = xc->tcBase()->readIntReg(INTREG_MSR);
++        Msr msr = xc->tcBase()->getReg(int_reg::Msr);
+ 
+         %(op_decl)s;
+         EA = pkt->req->getVaddr();
+@@ -150,7 +150,7 @@ def template StoreExecute {{
+     {
+         Addr EA;
+         Fault fault = NoFault;
+-        Msr msr = xc->tcBase()->readIntReg(INTREG_MSR);
++        Msr msr = xc->tcBase()->getReg(int_reg::Msr);
+ 
+         %(op_decl)s;
+         %(op_rd)s;
+@@ -184,7 +184,7 @@ def template StoreInitiateAcc {{
+     {
+         Addr EA;
+         Fault fault = NoFault;
+-        Msr msr = xc->tcBase()->readIntReg(INTREG_MSR);
++        Msr msr = xc->tcBase()->getReg(int_reg::Msr);
+ 
+         %(op_decl)s;
+         %(op_rd)s;
+diff --git a/src/arch/power/isa/operands.isa b/src/arch/power/isa/operands.isa
+index 979506e..a9bc185 100644
+--- a/src/arch/power/isa/operands.isa
++++ b/src/arch/power/isa/operands.isa
+@@ -63,18 +63,18 @@ def operands {{
+     'NIA': PCStateOp('ud', 'npc', (None, None, 'IsControl'), 9),
+ 
+     # Control registers
+-    'CR': IntRegOp('uw', 'INTREG_CR', 'IsInteger', 9),
+-    'LR': IntRegOp('ud', 'INTREG_LR', 'IsInteger', 9),
+-    'CTR': IntRegOp('ud', 'INTREG_CTR', 'IsInteger', 9),
+-    'TAR': IntRegOp('ud', 'INTREG_TAR', 'IsInteger', 9),
+-    'XER': IntRegOp('uw', 'INTREG_XER', 'IsInteger', 9),
+-    'MSR': IntRegOp('ud', 'INTREG_MSR', 'IsInteger', 9),
++    'CR': IntRegOp('uw', 'int_reg::Cr', 'IsInteger', 9),
++    'LR': IntRegOp('ud', 'int_reg::Lr', 'IsInteger', 9),
++    'CTR': IntRegOp('ud', 'int_reg::Ctr', 'IsInteger', 9),
++    'TAR': IntRegOp('ud', 'int_reg::Tar', 'IsInteger', 9),
++    'XER': IntRegOp('uw', 'int_reg::Xer', 'IsInteger', 9),
++    'MSR': IntRegOp('ud', 'int_reg::Msr', 'IsInteger', 9),
+ 
+     # Setting as IntReg so things are stored as an integer, not double
+-    'FPSCR': IntRegOp('uw', 'INTREG_FPSCR', 'IsFloating', 9),
++    'FPSCR': IntRegOp('uw', 'int_reg::Fpscr', 'IsFloating', 9),
+ 
+     # Registers for linked loads and stores
+-    'Rsv': IntRegOp('uw', 'INTREG_RSV', 'IsInteger', 9),
+-    'RsvLen': IntRegOp('uw', 'INTREG_RSV_LEN', 'IsInteger', 9),
+-    'RsvAddr': IntRegOp('ud', 'INTREG_RSV_ADDR', 'IsInteger', 9),
++    'Rsv': IntRegOp('uw', 'int_reg::Rsv', 'IsInteger', 9),
++    'RsvLen': IntRegOp('uw', 'int_reg::RsvLen', 'IsInteger', 9),
++    'RsvAddr': IntRegOp('ud', 'int_reg::RsvAddr', 'IsInteger', 9),
+ }};
+diff --git a/src/arch/power/linux/linux.hh b/src/arch/power/linux/linux.hh
+index 02a45ef..dfe618e 100644
+--- a/src/arch/power/linux/linux.hh
++++ b/src/arch/power/linux/linux.hh
+@@ -224,10 +224,10 @@ class PowerLinux : public Linux, public OpenFlagTable<PowerLinux>
+         ctc->getIsaPtr()->copyRegsFrom(ptc);
+ 
+         if (flags & TGT_CLONE_SETTLS)
+-            ctc->setIntReg(PowerISA::ThreadPointerReg, tls);
++            ctc->setReg(PowerISA::ThreadPointerReg, tls);
+ 
+         if (stack)
+-            ctc->setIntReg(PowerISA::StackPointerReg, stack);
++            ctc->setReg(PowerISA::StackPointerReg, stack);
+     }
+ };
+ 
+diff --git a/src/arch/power/linux/se_workload.cc b/src/arch/power/linux/se_workload.cc
+index 9b54fd8..c376b5f 100644
+--- a/src/arch/power/linux/se_workload.cc
++++ b/src/arch/power/linux/se_workload.cc
+@@ -88,7 +88,7 @@ EmuLinux::syscall(ThreadContext *tc)
+     // This will move into the base SEWorkload function at some point.
+     process->Process::syscall(tc);
+ 
+-    syscallDescs.get(tc->readIntReg(0))->doSyscall(tc);
++    syscallDescs.get(tc->getReg(int_reg::R0))->doSyscall(tc);
+ }
+ 
+ /// Target uname() handler.
+diff --git a/src/arch/power/process.cc b/src/arch/power/process.cc
+index 8ed4b75..6b147ef 100644
+--- a/src/arch/power/process.cc
++++ b/src/arch/power/process.cc
+@@ -111,7 +111,7 @@ PowerProcess::initState()
+     // The second doubleword of the descriptor contains the TOC base
+     // address for the function
+     initVirtMem->readBlob(getStartPC() + 8, &tocBase, sizeof(Addr));
+-    tc->setIntReg(TOCPointerReg, gtoh(tocBase, byteOrder));
++    tc->setReg(TOCPointerReg, gtoh(tocBase, byteOrder));
+ 
+     // Fix symbol table entries as they would otherwise point to the
+     // function descriptor rather than the actual entry point address
+@@ -337,11 +337,11 @@ PowerProcess::argsInit(int pageSize)
+     ThreadContext *tc = system->threads[contextIds[0]];
+ 
+     //Set the stack pointer register
+-    tc->setIntReg(StackPointerReg, stack_min);
++    tc->setReg(StackPointerReg, stack_min);
+ 
+     //Reset the special-purpose registers
+-    for (int i = 0; i < NumIntSpecialRegs; i++)
+-        tc->setIntReg(NumIntArchRegs + i, 0);
++    for (int i = int_reg::NumArchRegs; i < int_reg::NumRegs; i++)
++        tc->setReg(RegId(IntRegClass, i), (RegVal)0);
+ 
+     //Set the machine status for a typical userspace
+     Msr msr = 0;
+@@ -354,7 +354,7 @@ PowerProcess::argsInit(int pageSize)
+     msr.dr = 1;
+     msr.ri = 1;
+     msr.le = isLittleEndian;
+-    tc->setIntReg(INTREG_MSR, msr);
++    tc->setReg(int_reg::Msr, msr);
+ 
+     auto pc = tc->pcState().as<PowerISA::PCState>();
+     pc.set(getStartPC());
+diff --git a/src/arch/power/regs/int.hh b/src/arch/power/regs/int.hh
+index 95fbb8a..324062d 100644
+--- a/src/arch/power/regs/int.hh
++++ b/src/arch/power/regs/int.hh
+@@ -30,47 +30,128 @@
+ #ifndef __ARCH_POWER_REGS_INT_HH__
+ #define __ARCH_POWER_REGS_INT_HH__
+ 
++#include "cpu/reg_class.hh"
++
+ namespace gem5
+ {
+ 
+ namespace PowerISA
+ {
+ 
+-// Constants Related to the number of registers
+-const int NumIntArchRegs = 32;
++namespace int_reg
++{
+ 
+-// CR, XER, LR, CTR, TAR, FPSCR, MSR, RSV, RSV-LEN, RSV-ADDR
+-// and zero register, which doesn't actually exist but needs a number
+-const int NumIntSpecialRegs = 11;
++enum : RegIndex
++{
++    _R0Idx,
++    _R1Idx,
++    _R2Idx,
++    _R3Idx,
++    _R4Idx,
++    _R5Idx,
++    _R6Idx,
++    _R7Idx,
++    _R8Idx,
++    _R9Idx,
++    _R10Idx,
++    _R11Idx,
++    _R12Idx,
++    _R13Idx,
++    _R14Idx,
++    _R15Idx,
++    _R16Idx,
++    _R17Idx,
++    _R18Idx,
++    _R19Idx,
++    _R20Idx,
++    _R21Idx,
++    _R22Idx,
++    _R23Idx,
++    _R24Idx,
++    _R25Idx,
++    _R26Idx,
++    _R27Idx,
++    _R28Idx,
++    _R29Idx,
++    _R30Idx,
++    _R31Idx,
+ 
+-const int NumIntRegs = NumIntArchRegs + NumIntSpecialRegs;
++    NumArchRegs,
+ 
+-// Semantically meaningful register indices
+-const int ReturnValueReg = 3;
+-const int ArgumentReg0 = 3;
+-const int ArgumentReg1 = 4;
+-const int ArgumentReg2 = 5;
+-const int ArgumentReg3 = 6;
+-const int ArgumentReg4 = 7;
+-const int ArgumentReg5 = 8;
+-const int StackPointerReg = 1;
+-const int TOCPointerReg = 2;
+-const int ThreadPointerReg = 13;
++    _CrIdx = NumArchRegs,
++    _XerIdx,
++    _LrIdx,
++    _CtrIdx,
++    _TarIdx,
++    _FpscrIdx,
++    _MsrIdx,
++    _RsvIdx,
++    _RsvLenIdx,
++    _RsvAddrIdx,
+ 
+-enum MiscIntRegNums
+-{
+-    INTREG_CR = NumIntArchRegs,
+-    INTREG_XER,
+-    INTREG_LR,
+-    INTREG_CTR,
+-    INTREG_TAR,
+-    INTREG_FPSCR,
+-    INTREG_MSR,
+-    INTREG_RSV,
+-    INTREG_RSV_LEN,
+-    INTREG_RSV_ADDR
++    NumRegs
+ };
+ 
++inline constexpr RegId
++    R0(IntRegClass, _R0Idx),
++    R1(IntRegClass, _R1Idx),
++    R2(IntRegClass, _R2Idx),
++    R3(IntRegClass, _R3Idx),
++    R4(IntRegClass, _R4Idx),
++    R5(IntRegClass, _R5Idx),
++    R6(IntRegClass, _R6Idx),
++    R7(IntRegClass, _R7Idx),
++    R8(IntRegClass, _R8Idx),
++    R9(IntRegClass, _R9Idx),
++    R10(IntRegClass, _R10Idx),
++    R11(IntRegClass, _R11Idx),
++    R12(IntRegClass, _R12Idx),
++    R13(IntRegClass, _R13Idx),
++    R14(IntRegClass, _R14Idx),
++    R15(IntRegClass, _R15Idx),
++    R16(IntRegClass, _R16Idx),
++    R17(IntRegClass, _R17Idx),
++    R18(IntRegClass, _R18Idx),
++    R19(IntRegClass, _R19Idx),
++    R20(IntRegClass, _R20Idx),
++    R21(IntRegClass, _R21Idx),
++    R22(IntRegClass, _R22Idx),
++    R23(IntRegClass, _R23Idx),
++    R24(IntRegClass, _R24Idx),
++    R25(IntRegClass, _R25Idx),
++    R26(IntRegClass, _R26Idx),
++    R27(IntRegClass, _R27Idx),
++    R28(IntRegClass, _R28Idx),
++    R29(IntRegClass, _R29Idx),
++    R30(IntRegClass, _R30Idx),
++    R31(IntRegClass, _R31Idx),
++
++    Cr(IntRegClass, _CrIdx),
++    Xer(IntRegClass, _XerIdx),
++    Lr(IntRegClass, _LrIdx),
++    Ctr(IntRegClass, _CtrIdx),
++    Tar(IntRegClass, _TarIdx),
++    Fpscr(IntRegClass, _FpscrIdx),
++    Msr(IntRegClass, _MsrIdx),
++    Rsv(IntRegClass, _RsvIdx),
++    RsvLen(IntRegClass, _RsvLenIdx),
++    RsvAddr(IntRegClass, _RsvAddrIdx);
++
++} // namespace int_reg
++
++// Semantically meaningful register indices
++inline constexpr auto
++    &ReturnValueReg = int_reg::R3,
++    &ArgumentReg0 = int_reg::R3,
++    &ArgumentReg1 = int_reg::R4,
++    &ArgumentReg2 = int_reg::R5,
++    &ArgumentReg3 = int_reg::R6,
++    &ArgumentReg4 = int_reg::R7,
++    &ArgumentReg5 = int_reg::R8,
++    &StackPointerReg = int_reg::R1,
++    &TOCPointerReg = int_reg::R2,
++    &ThreadPointerReg = int_reg::R13;
++
+ } // namespace PowerISA
+ } // namespace gem5
+ 
+diff --git a/src/arch/power/remote_gdb.cc b/src/arch/power/remote_gdb.cc
+index 5955253..5d2f4dd 100644
+--- a/src/arch/power/remote_gdb.cc
++++ b/src/arch/power/remote_gdb.cc
+@@ -180,26 +180,28 @@ RemoteGDB::PowerGdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+ 
+-    Msr msr = context->readIntReg(INTREG_MSR);
++    Msr msr = context->getReg(int_reg::Msr);
+     ByteOrder order = (msr.le ? ByteOrder::little : ByteOrder::big);
+ 
+     // Default order on 32-bit PowerPC:
+     // R0-R31 (32-bit each), F0-F31 (64-bit IEEE754 double),
+     // PC, MSR, CR, LR, CTR, XER, FPSCR (32-bit each)
+ 
+-    for (int i = 0; i < NumIntArchRegs; i++)
+-        r.gpr[i] = htog((uint32_t)context->readIntReg(i), order);
++    for (int i = 0; i < int_reg::NumArchRegs; i++) {
++        RegId reg(IntRegClass, i);
++        r.gpr[i] = htog((uint32_t)context->getReg(reg), order);
++    }
+ 
+     for (int i = 0; i < NumFloatArchRegs; i++)
+         r.fpr[i] = context->readFloatReg(i);
+ 
+     r.pc = htog((uint32_t)context->pcState().instAddr(), order);
+     r.msr = 0; // MSR is privileged, hence not exposed here
+-    r.cr = htog((uint32_t)context->readIntReg(INTREG_CR), order);
+-    r.lr = htog((uint32_t)context->readIntReg(INTREG_LR), order);
+-    r.ctr = htog((uint32_t)context->readIntReg(INTREG_CTR), order);
+-    r.xer = htog((uint32_t)context->readIntReg(INTREG_XER), order);
+-    r.fpscr = htog((uint32_t)context->readIntReg(INTREG_FPSCR), order);
++    r.cr = htog((uint32_t)context->getReg(int_reg::Cr), order);
++    r.lr = htog((uint32_t)context->getReg(int_reg::Lr), order);
++    r.ctr = htog((uint32_t)context->getReg(int_reg::Ctr), order);
++    r.xer = htog((uint32_t)context->getReg(int_reg::Xer), order);
++    r.fpscr = htog((uint32_t)context->getReg(int_reg::Fpscr), order);
+ }
+ 
+ void
+@@ -207,11 +209,11 @@ RemoteGDB::PowerGdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+ 
+-    Msr msr = context->readIntReg(INTREG_MSR);
++    Msr msr = context->getReg(int_reg::Msr);
+     ByteOrder order = (msr.le ? ByteOrder::little : ByteOrder::big);
+ 
+-    for (int i = 0; i < NumIntArchRegs; i++)
+-        context->setIntReg(i, gtoh(r.gpr[i], order));
++    for (int i = 0; i < int_reg::NumArchRegs; i++)
++        context->setReg(RegId(IntRegClass, i), gtoh(r.gpr[i], order));
+ 
+     for (int i = 0; i < NumFloatArchRegs; i++)
+         context->setFloatReg(i, r.fpr[i]);
+@@ -221,11 +223,11 @@ RemoteGDB::PowerGdbRegCache::setRegs(ThreadContext *context) const
+     pc.set(gtoh(r.pc, order));
+     context->pcState(pc);
+     // MSR is privileged, hence not modified here
+-    context->setIntReg(INTREG_CR, gtoh(r.cr, order));
+-    context->setIntReg(INTREG_LR, gtoh(r.lr, order));
+-    context->setIntReg(INTREG_CTR, gtoh(r.ctr, order));
+-    context->setIntReg(INTREG_XER, gtoh(r.xer, order));
+-    context->setIntReg(INTREG_FPSCR, gtoh(r.fpscr, order));
++    context->setReg(int_reg::Cr, gtoh(r.cr, order));
++    context->setReg(int_reg::Lr, gtoh(r.lr, order));
++    context->setReg(int_reg::Ctr, gtoh(r.ctr, order));
++    context->setReg(int_reg::Xer, gtoh(r.xer, order));
++    context->setReg(int_reg::Fpscr, gtoh(r.fpscr, order));
+ }
+ 
+ void
+@@ -233,7 +235,7 @@ RemoteGDB::Power64GdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+ 
+-    Msr msr = context->readIntReg(INTREG_MSR);
++    Msr msr = context->getReg(int_reg::Msr);
+     ByteOrder order = (msr.le ? ByteOrder::little : ByteOrder::big);
+ 
+     // Default order on 64-bit PowerPC:
+@@ -241,19 +243,19 @@ RemoteGDB::Power64GdbRegCache::getRegs(ThreadContext *context)
+     // CIA, MSR, CR, LR, CTR, XER, FPSCR (only CR, XER, FPSCR are 32-bit
+     // each and the rest are 64-bit)
+ 
+-    for (int i = 0; i < NumIntArchRegs; i++)
+-        r.gpr[i] = htog(context->readIntReg(i), order);
++    for (int i = 0; i < int_reg::NumArchRegs; i++)
++        r.gpr[i] = htog(context->getReg(RegId(IntRegClass, i)), order);
+ 
+     for (int i = 0; i < NumFloatArchRegs; i++)
+         r.fpr[i] = context->readFloatReg(i);
+ 
+     r.pc = htog(context->pcState().instAddr(), order);
+     r.msr = 0; // MSR is privileged, hence not exposed here
+-    r.cr = htog((uint32_t)context->readIntReg(INTREG_CR), order);
+-    r.lr = htog(context->readIntReg(INTREG_LR), order);
+-    r.ctr = htog(context->readIntReg(INTREG_CTR), order);
+-    r.xer = htog((uint32_t)context->readIntReg(INTREG_XER), order);
+-    r.fpscr = htog((uint32_t)context->readIntReg(INTREG_FPSCR), order);
++    r.cr = htog((uint32_t)context->getReg(int_reg::Cr), order);
++    r.lr = htog(context->getReg(int_reg::Lr), order);
++    r.ctr = htog(context->getReg(int_reg::Ctr), order);
++    r.xer = htog((uint32_t)context->getReg(int_reg::Xer), order);
++    r.fpscr = htog((uint32_t)context->getReg(int_reg::Fpscr), order);
+ }
+ 
+ void
+@@ -261,11 +263,11 @@ RemoteGDB::Power64GdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+ 
+-    Msr msr = context->readIntReg(INTREG_MSR);
++    Msr msr = context->getReg(int_reg::Msr);
+     ByteOrder order = (msr.le ? ByteOrder::little : ByteOrder::big);
+ 
+-    for (int i = 0; i < NumIntArchRegs; i++)
+-        context->setIntReg(i, gtoh(r.gpr[i], order));
++    for (int i = 0; i < int_reg::NumArchRegs; i++)
++        context->setReg(RegId(IntRegClass, i), gtoh(r.gpr[i], order));
+ 
+     for (int i = 0; i < NumFloatArchRegs; i++)
+         context->setFloatReg(i, r.fpr[i]);
+@@ -275,17 +277,17 @@ RemoteGDB::Power64GdbRegCache::setRegs(ThreadContext *context) const
+     pc.set(gtoh(r.pc, order));
+     context->pcState(pc);
+     // MSR is privileged, hence not modified here
+-    context->setIntReg(INTREG_CR, gtoh(r.cr, order));
+-    context->setIntReg(INTREG_LR, gtoh(r.lr, order));
+-    context->setIntReg(INTREG_CTR, gtoh(r.ctr, order));
+-    context->setIntReg(INTREG_XER, gtoh(r.xer, order));
+-    context->setIntReg(INTREG_FPSCR, gtoh(r.fpscr, order));
++    context->setReg(int_reg::Cr, gtoh(r.cr, order));
++    context->setReg(int_reg::Lr, gtoh(r.lr, order));
++    context->setReg(int_reg::Ctr, gtoh(r.ctr, order));
++    context->setReg(int_reg::Xer, gtoh(r.xer, order));
++    context->setReg(int_reg::Fpscr, gtoh(r.fpscr, order));
+ }
+ 
+ BaseGdbRegCache*
+ RemoteGDB::gdbRegs()
+ {
+-    Msr msr = context()->readIntReg(INTREG_MSR);
++    Msr msr = context()->getReg(int_reg::Msr);
+     if (msr.sf)
+         return &regCache64;
+     else
+@@ -310,7 +312,7 @@ RemoteGDB::getXferFeaturesRead(const std::string &annex, std::string &output)
+     };
+ #undef GDB_XML
+ 
+-    Msr msr = context()->readIntReg(INTREG_MSR);
++    Msr msr = context()->getReg(int_reg::Msr);
+     auto& annexMap = msr.sf ? annexMap64 : annexMap32;
+     auto it = annexMap.find(annex);
+     if (it == annexMap.end())
+diff --git a/src/arch/power/remote_gdb.hh b/src/arch/power/remote_gdb.hh
+index 75838bd..c2a2853 100644
+--- a/src/arch/power/remote_gdb.hh
++++ b/src/arch/power/remote_gdb.hh
+@@ -56,7 +56,7 @@ class RemoteGDB : public BaseRemoteGDB
+       private:
+         struct GEM5_PACKED
+         {
+-            uint32_t gpr[NumIntArchRegs];
++            uint32_t gpr[int_reg::NumArchRegs];
+             uint64_t fpr[NumFloatArchRegs];
+             uint32_t pc;
+             uint32_t msr;
+@@ -85,7 +85,7 @@ class RemoteGDB : public BaseRemoteGDB
+       private:
+         struct GEM5_PACKED
+         {
+-            uint64_t gpr[NumIntArchRegs];
++            uint64_t gpr[int_reg::NumArchRegs];
+             uint64_t fpr[NumFloatArchRegs];
+             uint64_t pc;
+             uint64_t msr;
+diff --git a/src/arch/power/se_workload.hh b/src/arch/power/se_workload.hh
+index c351d65..fdbc08e 100644
+--- a/src/arch/power/se_workload.hh
++++ b/src/arch/power/se_workload.hh
+@@ -77,14 +77,14 @@ struct Result<PowerISA::SEWorkload::SyscallABI, SyscallReturn>
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        PowerISA::Cr cr = tc->readIntReg(PowerISA::INTREG_CR);
++        PowerISA::Cr cr = tc->getReg(PowerISA::int_reg::Cr);
+         if (ret.successful()) {
+             cr.cr0.so = 0;
+         } else {
+             cr.cr0.so = 1;
+         }
+-        tc->setIntReg(PowerISA::INTREG_CR, cr);
+-        tc->setIntReg(PowerISA::ReturnValueReg, ret.encodedValue());
++        tc->setReg(PowerISA::int_reg::Cr, cr);
++        tc->setReg(PowerISA::ReturnValueReg, ret.encodedValue());
+     }
+ };
+ 
+-- 
+1.8.3.1
+

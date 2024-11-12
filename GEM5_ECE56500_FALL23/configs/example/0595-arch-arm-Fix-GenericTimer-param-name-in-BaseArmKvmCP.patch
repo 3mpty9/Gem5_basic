@@ -1,0 +1,36 @@
+From 2938119f973b75fd102fe840898d6ca480ffaa56 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Sun, 1 May 2022 21:14:49 +0000
+Subject: [PATCH 595/757] arch-arm: Fix GenericTimer param name in
+ BaseArmKvmCPU
+
+Per change [1], the new name for `int_virt` is `int_el1_virt`.
+
+[1] https://gem5-review.googlesource.com/c/public/gem5/+/58109
+
+Change-Id: Idde4ac831c7a323b80272642e6a48b1c5e488135
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59309
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/kvm/base_cpu.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/kvm/base_cpu.cc b/src/arch/arm/kvm/base_cpu.cc
+index f18d697..1c4dd16 100644
+--- a/src/arch/arm/kvm/base_cpu.cc
++++ b/src/arch/arm/kvm/base_cpu.cc
+@@ -110,7 +110,7 @@ BaseArmKvmCPU::startup()
+ 
+     if (!vm->hasKernelIRQChip())
+         virtTimerPin = static_cast<ArmSystem *>(system)\
+-            ->getGenericTimer()->params().int_virt->get(tc);
++            ->getGenericTimer()->params().int_el1_virt->get(tc);
+ }
+ 
+ Tick
+-- 
+1.8.3.1
+

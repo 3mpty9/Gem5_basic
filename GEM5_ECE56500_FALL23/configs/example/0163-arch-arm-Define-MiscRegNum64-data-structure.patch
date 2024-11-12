@@ -1,0 +1,95 @@
+From b982437b6ea00b1fa86181f53640c7d57895b33a Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 16 Dec 2021 17:54:04 +0100
+Subject: [PATCH 163/757] arch-arm: Define MiscRegNum64 data structure
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Ia635bc068751edd9305a6e493e38e1a49aa64c4d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55603
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.hh | 55 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/regs/misc.hh b/src/arch/arm/regs/misc.hh
+index 1a2f137..5b8d75b 100644
+--- a/src/arch/arm/regs/misc.hh
++++ b/src/arch/arm/regs/misc.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010-2020 ARM Limited
++ * Copyright (c) 2010-2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1153,6 +1153,46 @@ namespace ArmISA
+ 
+     extern std::bitset<NUM_MISCREG_INFOS> miscRegInfo[NUM_MISCREGS];
+ 
++    struct MiscRegNum64
++    {
++        MiscRegNum64(unsigned _op0, unsigned _op1,
++                     unsigned _crn, unsigned _crm,
++                     unsigned _op2)
++          : op0(_op0), op1(_op1), crn(_crn),
++            crm(_crm), op2(_op2)
++        {
++            assert(op0 < 4 && op1 < 8 && crn < 16 && crm < 16 && op2 < 8);
++        }
++
++        MiscRegNum64(const MiscRegNum64& rhs) = default;
++
++        bool
++        operator==(const MiscRegNum64 &other) const
++        {
++            return op0 == other.op0 &&
++                op1 == other.op1 &&
++                crn == other.crn &&
++                crm == other.crm &&
++                op2 == other.op2;
++        }
++
++        uint32_t
++        packed() const
++        {
++            return op0 << 14 |
++                   op1 << 11 |
++                   crn << 7  |
++                   crm << 3  |
++                   op2;
++        }
++
++        unsigned op0;
++        unsigned op1;
++        unsigned crn;
++        unsigned crm;
++        unsigned op2;
++    };
++
+     // Decodes 32-bit CP14 registers accessible through MCR/MRC instructions
+     MiscRegIndex decodeCP14Reg(unsigned crn, unsigned opc1,
+                                unsigned crm, unsigned opc2);
+@@ -2286,4 +2326,17 @@ namespace ArmISA
+ } // namespace ArmISA
+ } // namespace gem5
+ 
++namespace std
++{
++template<>
++struct hash<gem5::ArmISA::MiscRegNum64>
++{
++    size_t
++    operator()(const gem5::ArmISA::MiscRegNum64& reg) const
++    {
++        return reg.packed();
++    }
++};
++} // namespace std
++
+ #endif // __ARCH_ARM_REGS_MISC_HH__
+-- 
+1.8.3.1
+

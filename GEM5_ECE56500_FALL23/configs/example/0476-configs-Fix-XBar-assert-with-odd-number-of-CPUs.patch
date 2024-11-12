@@ -1,0 +1,44 @@
+From dd20be6ca9ebde99c7118624bfae374bdcc03448 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Fri, 23 Apr 2021 12:53:24 -0500
+Subject: [PATCH 476/757] configs: Fix XBar assert with odd number of CPUs
+
+The CorePairs in MOESI_AMD_Base round up the number of CPUs when
+creating CPU sequencers. If the CPU count is an odd number, this was
+causing the Disjoint_VIPER config to connect a sequencer that does not
+exist. As a result the crossbar was waiting for a range change from the
+sequencer but it never arrived, causing an assert.
+
+This patch fixes this by conditionally connecting CPU sequencers to the
+PIO port only if the ID is less than the number of CPUs.
+
+Change-Id: I2280c0048492d43528429a947a726871f1c23ca7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57531
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/Disjoint_VIPER.py | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/configs/example/gpufs/Disjoint_VIPER.py b/configs/example/gpufs/Disjoint_VIPER.py
+index 17729b0..8ddaeac 100644
+--- a/configs/example/gpufs/Disjoint_VIPER.py
++++ b/configs/example/gpufs/Disjoint_VIPER.py
+@@ -182,8 +182,11 @@ class Disjoint_VIPER(RubySystem):
+             cp_sequencers[i].pio_request_port = piobus.cpu_side_ports
+             cp_sequencers[i].mem_request_port = piobus.cpu_side_ports
+ 
+-            # Note: only used in X86
+-            cp_sequencers[i].pio_response_port = piobus.mem_side_ports
++            # The CorePairs in MOESI_AMD_Base round up when constructing
++            # sequencers, but if the CPU does not exit there would be no
++            # sequencer to send a range change, leading to assert.
++            if i < options.num_cpus:
++                cp_sequencers[i].pio_response_port = piobus.mem_side_ports
+ 
+ 
+         # Setup ruby port. Both CPU and GPU are actually connected here.
+-- 
+1.8.3.1
+

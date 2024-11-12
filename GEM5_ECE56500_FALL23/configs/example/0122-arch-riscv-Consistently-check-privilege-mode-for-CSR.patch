@@ -1,0 +1,60 @@
+From f9f86cc36626727f3a09b35e6ad570629787840e Mon Sep 17 00:00:00 2001
+From: Alex Richardson <alexrichardson@google.com>
+Date: Tue, 11 Jan 2022 12:42:47 +0000
+Subject: [PATCH 122/757] arch-riscv: Consistently check privilege mode for CSR
+ accesses
+
+According to the RISC-V privileged spec (section 2.1), bits 8 and 9 of
+the CSR number encode the lowest  privilege mode that is permitted to
+access the CSR. Commit 55e7d3e5b6f062659bad5f6fdc8469ce80f102dd added
+this check for for CSR_MSTATUS but none of the other CSRs.
+
+Change-Id: Iecf2e387fa9ee810e8b8471341bfa371693b97c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55404
+Reviewed-by: Nils Asmussen <nils.asmussen@barkhauseninstitut.org>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa/formats/standard.isa | 22 +++++++++-------------
+ 1 file changed, 9 insertions(+), 13 deletions(-)
+
+diff --git a/src/arch/riscv/isa/formats/standard.isa b/src/arch/riscv/isa/formats/standard.isa
+index 9345c1f..e4bd4d8 100644
+--- a/src/arch/riscv/isa/formats/standard.isa
++++ b/src/arch/riscv/isa/formats/standard.isa
+@@ -290,23 +290,19 @@ def template CSRExecute {{
+         %(op_rd)s;
+ 
+         RegVal data, olddata;
+-
++        auto lowestAllowedMode = (PrivilegeMode)bits(csr, 9, 8);
++        auto pm = (PrivilegeMode)xc->readMiscReg(MISCREG_PRV);
++        if (pm < lowestAllowedMode) {
++            return std::make_shared<IllegalInstFault>(
++                    csprintf("%s is not accessible in %s\n", csrName, pm),
++                    machInst);
++        }
+         switch (csr) {
+           case CSR_SATP: {
+-            auto pm = (PrivilegeMode)xc->readMiscReg(MISCREG_PRV);
+             STATUS status = xc->readMiscReg(MISCREG_STATUS);
+-            if (pm == PRV_U || (pm == PRV_S && status.tvm == 1)) {
+-                return std::make_shared<IllegalInstFault>(
+-                        "SATP access in user mode or with TVM enabled\n",
+-                        machInst);
+-            }
+-            break;
+-          }
+-          case CSR_MSTATUS: {
+-            auto pm = (PrivilegeMode)xc->readMiscReg(MISCREG_PRV);
+-            if (pm != PrivilegeMode::PRV_M) {
++            if (pm == PRV_S && status.tvm == 1) {
+                 return std::make_shared<IllegalInstFault>(
+-                        "MSTATUS is only accessibly in machine mode\n",
++                        "SATP access with TVM enabled\n",
+                         machInst);
+             }
+             break;
+-- 
+1.8.3.1
+

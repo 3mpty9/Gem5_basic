@@ -1,0 +1,45 @@
+From 0e3c97569f06276ffe644b763a43b16b37244b50 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Adri=C3=A1n=20Herrera=20Arcila?= <adrian.herrera@arm.com>
+Date: Tue, 25 Jan 2022 14:12:21 +0000
+Subject: [PATCH 175/757] scons: protobuf builder, support source paths
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before this patch, the protobuf builder would search for dependencies
+only at the build directory. This works if the importing .proto file
+imports paths relative to the build directory, but it results in a build
+failure if imports are done relative to the source directory of the
+importing file.
+
+This patch adds the source directory of the importing file to the set of
+paths searched for dependencies, which solves this issue.
+
+Change-Id: I7debd467485a5087276ac005ac08ab01b32cb02e
+Signed-off-by: Adrián Herrera Arcila <adrian.herrera@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55963
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/SConscript | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index e5b032c..6c8ccaf 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -240,7 +240,8 @@ def protoc_emitter(target, source, env):
+     return [root + '.pb.cc', root + '.pb.h'], source
+ 
+ protoc_action = MakeAction('${PROTOC} --cpp_out ${BUILDDIR} '
+-        '--proto_path ${BUILDDIR} ${SOURCE.get_abspath()}',
++        '--proto_path ${BUILDDIR} --proto_path ${SOURCE.dir} '
++        '${SOURCE.get_abspath()}',
+         Transform("PROTOC"))
+ protobuf_builder = Builder(action=protoc_action, emitter=protoc_emitter,
+         src_suffix='.proto')
+-- 
+1.8.3.1
+

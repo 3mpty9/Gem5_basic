@@ -1,0 +1,46 @@
+From 9b87844658134f3461eb4efdb35f2ccddd8a62c6 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 25 Oct 2021 17:38:40 -0500
+Subject: [PATCH 468/757] dev-amdgpu: Setup VRAM memories in device
+
+Change-Id: Ic519429f13c4ad1d42997f361cbfe0c6e9aba29a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53074
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_device.cc | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 7ba4f91..4d7aea5 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -40,6 +40,7 @@
+ #include "dev/amdgpu/sdma_engine.hh"
+ #include "dev/hsa/hw_scheduler.hh"
+ #include "gpu-compute/gpu_command_processor.hh"
++#include "mem/abstract_mem.hh"
+ #include "mem/packet.hh"
+ #include "mem/packet_access.hh"
+ #include "params/AMDGPUDevice.hh"
+@@ -61,6 +62,16 @@ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+     romBin.read((char *)rom.data(), ROM_SIZE);
+     romBin.close();
+ 
++    // System pointer needs to be explicitly set for device memory since
++    // DRAMCtrl uses it to get (1) cache line size and (2) the mem mode.
++    // Note this means the cache line size is system wide.
++    for (auto& m : p.memories) {
++        m->system(p.system);
++
++        // Add to system's device memory map.
++        p.system->addDeviceMemory(gpuMemMgr->getRequestorID(), m);
++    }
++
+     if (config.expansionROM) {
+         romRange = RangeSize(config.expansionROM, ROM_SIZE);
+     } else {
+-- 
+1.8.3.1
+

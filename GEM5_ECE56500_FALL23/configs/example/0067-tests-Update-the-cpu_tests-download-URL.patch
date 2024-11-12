@@ -1,0 +1,34 @@
+From 33a0d30a1ac3dd236908aeab631d1f2c0f92c3aa Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Dec 2021 17:33:39 -0800
+Subject: [PATCH 067/757] tests: Update the cpu_tests download URL
+
+This new URL puts the binaries in the same directory structure as the
+other test programs. This is part of a minor re-arrange of the Google
+Cloud bucket.
+
+Change-Id: Ibbd1385adf96bc63b54b717b5385c77a6b0c4dbb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54465
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/cpu_tests/test.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/gem5/cpu_tests/test.py b/tests/gem5/cpu_tests/test.py
+index ee56400..a962337 100644
+--- a/tests/gem5/cpu_tests/test.py
++++ b/tests/gem5/cpu_tests/test.py
+@@ -57,7 +57,7 @@ valid_isas = {
+ 
+ base_path = joinpath(config.bin_path, 'cpu_tests')
+ 
+-base_url = config.resource_url + '/gem5/cpu_tests/benchmarks/bin/'
++base_url = config.resource_url + '/test-progs/cpu-tests/bin/'
+ 
+ isa_url = {
+     constants.gcn3_x86_tag : base_url + "x86",
+-- 
+1.8.3.1
+

@@ -1,0 +1,36 @@
+From 154884dea37204e78bad1a3a9d9dbc8cdf234794 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 1 Mar 2022 10:27:22 +0000
+Subject: [PATCH 319/757] sim: Avoid -Werror=unused-variable in bufval
+ unittests
+
+Some compilers (e.g. gcc-7.5) throw a warning/error when a structured
+binding variable is not used.
+
+Change-Id: Ib5090508d135e4a72c39f18b316c76674c3bd8f3
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57229
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/sim/bufval.test.cc | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/sim/bufval.test.cc b/src/sim/bufval.test.cc
+index 91c074a..e5a0635 100644
+--- a/src/sim/bufval.test.cc
++++ b/src/sim/bufval.test.cc
+@@ -40,8 +40,7 @@ template <class First>
+ bool
+ pairFail(const std::pair<First, bool> &p)
+ {
+-    auto &[first, success] = p;
+-    return !success;
++    return !p.second;
+ }
+ 
+ bool
+-- 
+1.8.3.1
+

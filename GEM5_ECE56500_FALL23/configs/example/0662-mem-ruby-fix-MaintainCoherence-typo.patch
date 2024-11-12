@@ -1,0 +1,55 @@
+From 23888df8a934eb3f5513501a8c3ad1b1dab4d5e7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 2 Mar 2022 16:18:26 -0600
+Subject: [PATCH 662/757] mem-ruby: fix MaintainCoherence typo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change-Id: Iee3319e1d470898c727747894287029e1b0ab102
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57394
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm     | 2 +-
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 6fa13cb..968cdf2 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -918,7 +918,7 @@ action(Initiate_Evict, desc="") {
+   tbe.actions.pushNB(Event:TagArrayWrite);
+ }
+ 
+-action(Initiate_MaitainCoherence, desc="") {
++action(Initiate_MaintainCoherence, desc="") {
+   // issue a copy back if necessary to maintain coherence for data we are
+   // droping. This is should be executed at the end of a transaction
+   assert(tbe.actions.empty());
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index d591af3..4c93988 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2021 ARM Limited
++ * Copyright (c) 2021-2022 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1033,7 +1033,7 @@ transition(BUSY_BLKD, SendCompDBIDRespStale) {
+ 
+ transition(BUSY_BLKD, MaintainCoherence) {
+   Pop_TriggerQueue;
+-  Initiate_MaitainCoherence;
++  Initiate_MaintainCoherence;
+   ProcessNextState_ClearPending;
+ }
+ 
+-- 
+1.8.3.1
+

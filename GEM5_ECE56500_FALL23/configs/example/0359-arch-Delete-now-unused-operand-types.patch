@@ -1,0 +1,55 @@
+From 2a525325df25a1e3b7338f19c9de7634df252d74 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 06:38:03 -0700
+Subject: [PATCH 359/757] arch: Delete now unused operand types.
+
+These have been subsumed into the RegOperand type, and are fronted by
+the *RegOperandDesc OperandDesc classes.
+
+Change-Id: If57b683b06f3002004863c2d74f2a645882fbd41
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49734
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 12 ------------
+ 1 file changed, 12 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 729b60a..fbf8773 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -283,30 +283,18 @@ class RegOperandDesc(OperandDesc):
+         super().__init__(*args, **kwargs)
+         self.attrs['reg_class'] = reg_class
+ 
+-class IntRegOperand(RegValOperand):
+-    reg_class = 'IntRegClass'
+-
+ class IntRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+         super().__init__('IntRegClass', RegValOperand, *args, **kwargs)
+ 
+-class FloatRegOperand(RegValOperand):
+-    reg_class = 'FloatRegClass'
+-
+ class FloatRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+         super().__init__('FloatRegClass', RegValOperand, *args, **kwargs)
+ 
+-class CCRegOperand(RegValOperand):
+-    reg_class = 'CCRegClass'
+-
+ class CCRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+         super().__init__('CCRegClass', RegValOperand, *args, **kwargs)
+ 
+-class VecElemOperand(RegValOperand):
+-    reg_class = 'VecElemClass'
+-
+ class VecElemOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+         super().__init__('VecElemClass', RegValOperand, *args, **kwargs)
+-- 
+1.8.3.1
+

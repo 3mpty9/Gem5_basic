@@ -1,0 +1,70 @@
+From dd9041721191c5b1464fc3084e182b6de1e7b703 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 4 Nov 2021 09:58:47 -0500
+Subject: [PATCH 474/757] arch-vega: Bypass Ruby for functional page walks
+
+Currently if a Ruby functional access fails to find an address in the
+caches, it gives up. For functional page table walks we need to be able
+to go all the way to memory. This adds a pointer to the system object
+which allows the walker to get a pointer to device memory which can be
+used to do a functional access directly to memory bypassing Ruby.
+
+Change-Id: I0ead6e5e130a0d53021c44ae9221b167c6316ab2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57529
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/pagetable_walker.cc | 5 ++++-
+ src/arch/amdgpu/vega/pagetable_walker.hh | 5 ++++-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/pagetable_walker.cc b/src/arch/amdgpu/vega/pagetable_walker.cc
+index 3725b32..bbbaa56 100644
+--- a/src/arch/amdgpu/vega/pagetable_walker.cc
++++ b/src/arch/amdgpu/vega/pagetable_walker.cc
+@@ -34,6 +34,7 @@
+ #include <memory>
+ 
+ #include "arch/amdgpu/vega/faults.hh"
++#include "mem/abstract_mem.hh"
+ #include "mem/packet_access.hh"
+ 
+ namespace gem5
+@@ -84,7 +85,9 @@ Walker::WalkerState::startFunctional(Addr base, Addr vaddr,
+         DPRINTF(GPUPTWalker, "Sending functional read to %#lx\n",
+                 read->getAddr());
+ 
+-        walker->port.sendFunctional(read);
++        auto devmem = walker->system->getDeviceMemory(read);
++        assert(devmem);
++        devmem->access(read);
+ 
+         fault = stepWalk();
+         assert(fault == NoFault || read == NULL);
+diff --git a/src/arch/amdgpu/vega/pagetable_walker.hh b/src/arch/amdgpu/vega/pagetable_walker.hh
+index 48e1e60..b00c0a0 100644
+--- a/src/arch/amdgpu/vega/pagetable_walker.hh
++++ b/src/arch/amdgpu/vega/pagetable_walker.hh
+@@ -179,6 +179,9 @@ class Walker : public ClockedObject
+     void walkerResponse(WalkerState *state, VegaTlbEntry& entry,
+                         PacketPtr pkt);
+ 
++    // System pointer for functional accesses
++    System *system;
++
+   public:
+     void setTLB(GpuTLB * _tlb)
+     {
+@@ -191,7 +194,7 @@ class Walker : public ClockedObject
+         port(name() + ".port", this),
+         funcState(this, nullptr, true), tlb(nullptr),
+         requestorId(p.system->getRequestorId(this)),
+-        deviceRequestorId(999)
++        deviceRequestorId(999), system(p.system)
+     {
+         DPRINTF(GPUPTWalker, "Walker::Walker %p\n", this);
+     }
+-- 
+1.8.3.1
+

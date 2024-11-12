@@ -1,0 +1,36 @@
+From 5eed355fb07eda90226f07364f44ad17316f8c53 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 28 Mar 2022 09:22:10 -0700
+Subject: [PATCH 495/757] tests: Remove accidentally included "exit 0" test
+ code
+
+This "exit 0" line was included accidentally in this commit:
+https://gem5-review.googlesource.com/c/public/gem5/+/58169
+
+It should not have been included, it was for testing purposes only.
+
+Change-Id: Ia4be334d773bbb998906b0f0ae980f9ed14c87b4
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58269
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/nightly.sh | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index b02f05b..7b784b2 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -88,7 +88,6 @@ docker pull gcr.io/gem5-test/ubuntu-20.04_all-dependencies:latest
+ 
+ # Try to build the ISA targets.
+ build_target NULL
+-exit 0
+ build_target RISCV
+ build_target X86
+ build_target ARM
+-- 
+1.8.3.1
+

@@ -1,0 +1,419 @@
+From a0e36759a1628642c45f077eea8972176fa59ac6 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 1 Feb 2022 14:01:26 -0800
+Subject: [PATCH 198/757] cpu: rename RegClass::size to RegClass::numRegs.
+
+This will make the coming addition of a regBytes method less ambiguous.
+
+Change-Id: If4b9369dbe484154eec7bf651642cb1d820283e4
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56303
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/minor/scoreboard.hh | 11 ++++++-----
+ src/cpu/o3/cpu.cc           | 34 ++++++++++++++++++----------------
+ src/cpu/o3/inst_queue.cc    |  4 ++--
+ src/cpu/o3/regfile.cc       | 10 +++++-----
+ src/cpu/o3/rename_map.cc    |  2 +-
+ src/cpu/reg_class.hh        | 12 ++++++------
+ src/cpu/simple_thread.cc    | 12 ++++++------
+ src/cpu/thread_context.cc   | 32 ++++++++++++++++----------------
+ 8 files changed, 60 insertions(+), 57 deletions(-)
+
+diff --git a/src/cpu/minor/scoreboard.hh b/src/cpu/minor/scoreboard.hh
+index 3ae0b65..d091b44 100644
+--- a/src/cpu/minor/scoreboard.hh
++++ b/src/cpu/minor/scoreboard.hh
+@@ -114,11 +114,12 @@ class Scoreboard : public Named
+         Named(name),
+         regClasses(reg_classes),
+         intRegOffset(0),
+-        floatRegOffset(intRegOffset + reg_classes.at(IntRegClass).size()),
+-        ccRegOffset(floatRegOffset + reg_classes.at(FloatRegClass).size()),
+-        vecRegOffset(ccRegOffset + reg_classes.at(CCRegClass).size()),
+-        vecPredRegOffset(vecRegOffset + reg_classes.at(VecElemClass).size()),
+-        numRegs(vecPredRegOffset + reg_classes.at(VecPredRegClass).size()),
++        floatRegOffset(intRegOffset + reg_classes.at(IntRegClass).numRegs()),
++        ccRegOffset(floatRegOffset + reg_classes.at(FloatRegClass).numRegs()),
++        vecRegOffset(ccRegOffset + reg_classes.at(CCRegClass).numRegs()),
++        vecPredRegOffset(vecRegOffset +
++                reg_classes.at(VecElemClass).numRegs()),
++        numRegs(vecPredRegOffset + reg_classes.at(VecPredRegClass).numRegs()),
+         zeroReg(reg_classes.at(IntRegClass).zeroReg()),
+         numResults(numRegs, 0),
+         numUnpredictableResults(numRegs, 0),
+diff --git a/src/cpu/o3/cpu.cc b/src/cpu/o3/cpu.cc
+index 3b4e15f..e05ea92 100644
+--- a/src/cpu/o3/cpu.cc
++++ b/src/cpu/o3/cpu.cc
+@@ -195,19 +195,20 @@ CPU::CPU(const BaseO3CPUParams &params)
+     const auto &regClasses = params.isa[0]->regClasses();
+ 
+     assert(params.numPhysIntRegs >=
+-            numThreads * regClasses.at(IntRegClass).size());
++            numThreads * regClasses.at(IntRegClass).numRegs());
+     assert(params.numPhysFloatRegs >=
+-            numThreads * regClasses.at(FloatRegClass).size());
++            numThreads * regClasses.at(FloatRegClass).numRegs());
+     assert(params.numPhysVecRegs >=
+-            numThreads * regClasses.at(VecRegClass).size());
++            numThreads * regClasses.at(VecRegClass).numRegs());
+     assert(params.numPhysVecPredRegs >=
+-            numThreads * regClasses.at(VecPredRegClass).size());
++            numThreads * regClasses.at(VecPredRegClass).numRegs());
+     assert(params.numPhysCCRegs >=
+-            numThreads * regClasses.at(CCRegClass).size());
++            numThreads * regClasses.at(CCRegClass).numRegs());
+ 
+     // Just make this a warning and go ahead anyway, to keep from having to
+     // add checks everywhere.
+-    warn_if(regClasses.at(CCRegClass).size() == 0 && params.numPhysCCRegs != 0,
++    warn_if(regClasses.at(CCRegClass).numRegs() == 0 &&
++            params.numPhysCCRegs != 0,
+             "Non-zero number of physical CC regs specified, even though\n"
+             "    ISA does not use them.");
+ 
+@@ -224,7 +225,7 @@ CPU::CPU(const BaseO3CPUParams &params)
+     // Initialize rename map to assign physical registers to the
+     // architectural registers for active threads only.
+     for (ThreadID tid = 0; tid < active_threads; tid++) {
+-        for (RegIndex ridx = 0; ridx < regClasses.at(IntRegClass).size();
++        for (RegIndex ridx = 0; ridx < regClasses.at(IntRegClass).numRegs();
+                 ++ridx) {
+             // Note that we can't use the rename() method because we don't
+             // want special treatment for the zero register at this point
+@@ -233,7 +234,7 @@ CPU::CPU(const BaseO3CPUParams &params)
+             commitRenameMap[tid].setEntry(RegId(IntRegClass, ridx), phys_reg);
+         }
+ 
+-        for (RegIndex ridx = 0; ridx < regClasses.at(FloatRegClass).size();
++        for (RegIndex ridx = 0; ridx < regClasses.at(FloatRegClass).numRegs();
+                 ++ridx) {
+             PhysRegIdPtr phys_reg = freeList.getFloatReg();
+             renameMap[tid].setEntry(RegId(FloatRegClass, ridx), phys_reg);
+@@ -241,7 +242,7 @@ CPU::CPU(const BaseO3CPUParams &params)
+                     RegId(FloatRegClass, ridx), phys_reg);
+         }
+ 
+-        const size_t numVecs = regClasses.at(VecRegClass).size();
++        const size_t numVecs = regClasses.at(VecRegClass).numRegs();
+         /* Initialize the full-vector interface */
+         for (RegIndex ridx = 0; ridx < numVecs; ++ridx) {
+             RegId rid = RegId(VecRegClass, ridx);
+@@ -250,7 +251,7 @@ CPU::CPU(const BaseO3CPUParams &params)
+             commitRenameMap[tid].setEntry(rid, phys_reg);
+         }
+         /* Initialize the vector-element interface */
+-        const size_t numElems = regClasses.at(VecElemClass).size();
++        const size_t numElems = regClasses.at(VecElemClass).numRegs();
+         for (RegIndex ridx = 0; ridx < numElems; ++ridx) {
+             RegId lrid = RegId(VecElemClass, ridx);
+             PhysRegIdPtr phys_elem = freeList.getVecElem();
+@@ -258,15 +259,15 @@ CPU::CPU(const BaseO3CPUParams &params)
+             commitRenameMap[tid].setEntry(lrid, phys_elem);
+         }
+ 
+-        for (RegIndex ridx = 0; ridx < regClasses.at(VecPredRegClass).size();
+-                ++ridx) {
++        for (RegIndex ridx = 0;
++                ridx < regClasses.at(VecPredRegClass).numRegs(); ++ridx) {
+             PhysRegIdPtr phys_reg = freeList.getVecPredReg();
+             renameMap[tid].setEntry(RegId(VecPredRegClass, ridx), phys_reg);
+             commitRenameMap[tid].setEntry(
+                     RegId(VecPredRegClass, ridx), phys_reg);
+         }
+ 
+-        for (RegIndex ridx = 0; ridx < regClasses.at(CCRegClass).size();
++        for (RegIndex ridx = 0; ridx < regClasses.at(CCRegClass).numRegs();
+                 ++ridx) {
+             PhysRegIdPtr phys_reg = freeList.getCCReg();
+             renameMap[tid].setEntry(RegId(CCRegClass, ridx), phys_reg);
+@@ -728,21 +729,22 @@ CPU::insertThread(ThreadID tid)
+     //Bind Int Regs to Rename Map
+     const auto &regClasses = isa[tid]->regClasses();
+ 
+-    for (RegIndex idx = 0; idx < regClasses.at(IntRegClass).size(); idx++) {
++    for (RegIndex idx = 0; idx < regClasses.at(IntRegClass).numRegs(); idx++) {
+         PhysRegIdPtr phys_reg = freeList.getIntReg();
+         renameMap[tid].setEntry(RegId(IntRegClass, idx), phys_reg);
+         scoreboard.setReg(phys_reg);
+     }
+ 
+     //Bind Float Regs to Rename Map
+-    for (RegIndex idx = 0; idx < regClasses.at(FloatRegClass).size(); idx++) {
++    for (RegIndex idx = 0; idx < regClasses.at(FloatRegClass).numRegs();
++            idx++) {
+         PhysRegIdPtr phys_reg = freeList.getFloatReg();
+         renameMap[tid].setEntry(RegId(FloatRegClass, idx), phys_reg);
+         scoreboard.setReg(phys_reg);
+     }
+ 
+     //Bind condition-code Regs to Rename Map
+-    for (RegIndex idx = 0; idx < regClasses.at(CCRegClass).size(); idx++) {
++    for (RegIndex idx = 0; idx < regClasses.at(CCRegClass).numRegs(); idx++) {
+         PhysRegIdPtr phys_reg = freeList.getCCReg();
+         renameMap[tid].setEntry(RegId(CCRegClass, idx), phys_reg);
+         scoreboard.setReg(phys_reg);
+diff --git a/src/cpu/o3/inst_queue.cc b/src/cpu/o3/inst_queue.cc
+index 834ae41..9666926 100644
+--- a/src/cpu/o3/inst_queue.cc
++++ b/src/cpu/o3/inst_queue.cc
+@@ -105,8 +105,8 @@ InstructionQueue::InstructionQueue(CPU *cpu_ptr, IEW *iew_ptr,
+     numPhysRegs = params.numPhysIntRegs + params.numPhysFloatRegs +
+                     params.numPhysVecRegs +
+                     params.numPhysVecRegs * (
+-                            reg_classes.at(VecElemClass).size() /
+-                            reg_classes.at(VecRegClass).size()) +
++                            reg_classes.at(VecElemClass).numRegs() /
++                            reg_classes.at(VecRegClass).numRegs()) +
+                     params.numPhysVecPredRegs +
+                     params.numPhysCCRegs;
+ 
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index c0c122d..d3c1c57 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -59,16 +59,16 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+       floatRegFile(_numPhysicalFloatRegs),
+       vectorRegFile(_numPhysicalVecRegs),
+       vectorElemRegFile(_numPhysicalVecRegs * (
+-                  classes.at(VecElemClass).size() /
+-                  classes.at(VecRegClass).size())),
++                  classes.at(VecElemClass).numRegs() /
++                  classes.at(VecRegClass).numRegs())),
+       vecPredRegFile(_numPhysicalVecPredRegs),
+       ccRegFile(_numPhysicalCCRegs),
+       numPhysicalIntRegs(_numPhysicalIntRegs),
+       numPhysicalFloatRegs(_numPhysicalFloatRegs),
+       numPhysicalVecRegs(_numPhysicalVecRegs),
+       numPhysicalVecElemRegs(_numPhysicalVecRegs * (
+-                  classes.at(VecElemClass).size() /
+-                  classes.at(VecRegClass).size())),
++                  classes.at(VecElemClass).numRegs() /
++                  classes.at(VecRegClass).numRegs())),
+       numPhysicalVecPredRegs(_numPhysicalVecPredRegs),
+       numPhysicalCCRegs(_numPhysicalCCRegs),
+       totalNumRegs(_numPhysicalIntRegs
+@@ -120,7 +120,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+     }
+ 
+     // Misc regs have a fixed mapping but still need PhysRegIds.
+-    for (phys_reg = 0; phys_reg < regClasses.at(MiscRegClass).size();
++    for (phys_reg = 0; phys_reg < regClasses.at(MiscRegClass).numRegs();
+             phys_reg++) {
+         miscRegIds.emplace_back(MiscRegClass, phys_reg, 0);
+     }
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index 8b3d92d..30e4684 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -65,7 +65,7 @@ SimpleRenameMap::init(const RegClass &reg_class, SimpleFreeList *_freeList)
+     assert(freeList == NULL);
+     assert(map.empty());
+ 
+-    map.resize(reg_class.size());
++    map.resize(reg_class.numRegs());
+     freeList = _freeList;
+     zeroReg = RegId(IntRegClass, reg_class.zeroReg());
+ }
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index da6be67..ab3e8f9 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -95,23 +95,23 @@ class VecElemRegClassOps : public RegClassOps
+ class RegClass
+ {
+   private:
+-    size_t _size;
++    size_t _numRegs;
+     const RegIndex _zeroReg;
+ 
+     static inline DefaultRegClassOps defaultOps;
+     RegClassOps *_ops = &defaultOps;
+ 
+   public:
+-    RegClass(size_t new_size, RegIndex new_zero=-1) :
+-        _size(new_size), _zeroReg(new_zero)
++    RegClass(size_t num_regs, RegIndex new_zero=-1) :
++        _numRegs(num_regs), _zeroReg(new_zero)
+     {}
+-    RegClass(size_t new_size, RegClassOps &new_ops, RegIndex new_zero=-1) :
+-        RegClass(new_size, new_zero)
++    RegClass(size_t num_regs, RegClassOps &new_ops, RegIndex new_zero=-1) :
++        RegClass(num_regs, new_zero)
+     {
+         _ops = &new_ops;
+     }
+ 
+-    size_t size() const { return _size; }
++    size_t numRegs() const { return _numRegs; }
+     RegIndex zeroReg() const { return _zeroReg; }
+ 
+     std::string regName(const RegId &id) const { return _ops->regName(id); }
+diff --git a/src/cpu/simple_thread.cc b/src/cpu/simple_thread.cc
+index 7b572ef..fd12719 100644
+--- a/src/cpu/simple_thread.cc
++++ b/src/cpu/simple_thread.cc
+@@ -78,12 +78,12 @@ SimpleThread::SimpleThread(BaseCPU *_cpu, int _thread_num, System *_sys,
+ {
+     assert(isa);
+     const auto &regClasses = isa->regClasses();
+-    intRegs.resize(regClasses.at(IntRegClass).size());
+-    floatRegs.resize(regClasses.at(FloatRegClass).size());
+-    vecRegs.resize(regClasses.at(VecRegClass).size());
+-    vecElemRegs.resize(regClasses.at(VecElemClass).size());
+-    vecPredRegs.resize(regClasses.at(VecPredRegClass).size());
+-    ccRegs.resize(regClasses.at(CCRegClass).size());
++    intRegs.resize(regClasses.at(IntRegClass).numRegs());
++    floatRegs.resize(regClasses.at(FloatRegClass).numRegs());
++    vecRegs.resize(regClasses.at(VecRegClass).numRegs());
++    vecElemRegs.resize(regClasses.at(VecElemClass).numRegs());
++    vecPredRegs.resize(regClasses.at(VecPredRegClass).numRegs());
++    ccRegs.resize(regClasses.at(CCRegClass).numRegs());
+     clearArchRegs();
+ }
+ 
+diff --git a/src/cpu/thread_context.cc b/src/cpu/thread_context.cc
+index 40df84a..6203547 100644
+--- a/src/cpu/thread_context.cc
++++ b/src/cpu/thread_context.cc
+@@ -63,7 +63,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     DPRINTF(Context, "Comparing thread contexts\n");
+ 
+     // First loop through the integer registers.
+-    for (int i = 0; i < regClasses.at(IntRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(IntRegClass).numRegs(); ++i) {
+         RegVal t1 = one->readIntReg(i);
+         RegVal t2 = two->readIntReg(i);
+         if (t1 != t2)
+@@ -72,7 +72,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // Then loop through the floating point registers.
+-    for (int i = 0; i < regClasses.at(FloatRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(FloatRegClass).numRegs(); ++i) {
+         RegVal t1 = one->readFloatReg(i);
+         RegVal t2 = two->readFloatReg(i);
+         if (t1 != t2)
+@@ -81,7 +81,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // Then loop through the vector registers.
+-    for (int i = 0; i < regClasses.at(VecRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(VecRegClass).numRegs(); ++i) {
+         RegId rid(VecRegClass, i);
+         const TheISA::VecRegContainer& t1 = one->readVecReg(rid);
+         const TheISA::VecRegContainer& t2 = two->readVecReg(rid);
+@@ -91,7 +91,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // Then loop through the predicate registers.
+-    for (int i = 0; i < regClasses.at(VecPredRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(VecPredRegClass).numRegs(); ++i) {
+         RegId rid(VecPredRegClass, i);
+         const TheISA::VecPredRegContainer& t1 = one->readVecPredReg(rid);
+         const TheISA::VecPredRegContainer& t2 = two->readVecPredReg(rid);
+@@ -100,7 +100,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+                   i, t1, t2);
+     }
+ 
+-    for (int i = 0; i < regClasses.at(MiscRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(MiscRegClass).numRegs(); ++i) {
+         RegVal t1 = one->readMiscRegNoEffect(i);
+         RegVal t2 = two->readMiscRegNoEffect(i);
+         if (t1 != t2)
+@@ -109,7 +109,7 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // loop through the Condition Code registers.
+-    for (int i = 0; i < regClasses.at(CCRegClass).size(); ++i) {
++    for (int i = 0; i < regClasses.at(CCRegClass).numRegs(); ++i) {
+         RegVal t1 = one->readCCReg(i);
+         RegVal t2 = two->readCCReg(i);
+         if (t1 != t2)
+@@ -161,7 +161,7 @@ serialize(const ThreadContext &tc, CheckpointOut &cp)
+     auto &nc_tc = const_cast<ThreadContext &>(tc);
+     const auto &regClasses = nc_tc.getIsaPtr()->regClasses();
+ 
+-    const size_t numFloats = regClasses.at(FloatRegClass).size();
++    const size_t numFloats = regClasses.at(FloatRegClass).numRegs();
+     RegVal floatRegs[numFloats];
+     for (int i = 0; i < numFloats; ++i)
+         floatRegs[i] = tc.readFloatRegFlat(i);
+@@ -169,27 +169,27 @@ serialize(const ThreadContext &tc, CheckpointOut &cp)
+     // compatibility.
+     arrayParamOut(cp, "floatRegs.i", floatRegs, numFloats);
+ 
+-    const size_t numVecs = regClasses.at(VecRegClass).size();
++    const size_t numVecs = regClasses.at(VecRegClass).numRegs();
+     std::vector<TheISA::VecRegContainer> vecRegs(numVecs);
+     for (int i = 0; i < numVecs; ++i) {
+         vecRegs[i] = tc.readVecRegFlat(i);
+     }
+     SERIALIZE_CONTAINER(vecRegs);
+ 
+-    const size_t numPreds = regClasses.at(VecPredRegClass).size();
++    const size_t numPreds = regClasses.at(VecPredRegClass).numRegs();
+     std::vector<TheISA::VecPredRegContainer> vecPredRegs(numPreds);
+     for (int i = 0; i < numPreds; ++i) {
+         vecPredRegs[i] = tc.readVecPredRegFlat(i);
+     }
+     SERIALIZE_CONTAINER(vecPredRegs);
+ 
+-    const size_t numInts = regClasses.at(IntRegClass).size();
++    const size_t numInts = regClasses.at(IntRegClass).numRegs();
+     RegVal intRegs[numInts];
+     for (int i = 0; i < numInts; ++i)
+         intRegs[i] = tc.readIntRegFlat(i);
+     SERIALIZE_ARRAY(intRegs, numInts);
+ 
+-    const size_t numCcs = regClasses.at(CCRegClass).size();
++    const size_t numCcs = regClasses.at(CCRegClass).numRegs();
+     if (numCcs) {
+         RegVal ccRegs[numCcs];
+         for (int i = 0; i < numCcs; ++i)
+@@ -207,7 +207,7 @@ unserialize(ThreadContext &tc, CheckpointIn &cp)
+ {
+     const auto &regClasses = tc.getIsaPtr()->regClasses();
+ 
+-    const size_t numFloats = regClasses.at(FloatRegClass).size();
++    const size_t numFloats = regClasses.at(FloatRegClass).numRegs();
+     RegVal floatRegs[numFloats];
+     // This is a bit ugly, but needed to maintain backwards
+     // compatibility.
+@@ -215,27 +215,27 @@ unserialize(ThreadContext &tc, CheckpointIn &cp)
+     for (int i = 0; i < numFloats; ++i)
+         tc.setFloatRegFlat(i, floatRegs[i]);
+ 
+-    const size_t numVecs = regClasses.at(VecRegClass).size();
++    const size_t numVecs = regClasses.at(VecRegClass).numRegs();
+     std::vector<TheISA::VecRegContainer> vecRegs(numVecs);
+     UNSERIALIZE_CONTAINER(vecRegs);
+     for (int i = 0; i < numVecs; ++i) {
+         tc.setVecRegFlat(i, vecRegs[i]);
+     }
+ 
+-    const size_t numPreds = regClasses.at(VecPredRegClass).size();
++    const size_t numPreds = regClasses.at(VecPredRegClass).numRegs();
+     std::vector<TheISA::VecPredRegContainer> vecPredRegs(numPreds);
+     UNSERIALIZE_CONTAINER(vecPredRegs);
+     for (int i = 0; i < numPreds; ++i) {
+         tc.setVecPredRegFlat(i, vecPredRegs[i]);
+     }
+ 
+-    const size_t numInts = regClasses.at(IntRegClass).size();
++    const size_t numInts = regClasses.at(IntRegClass).numRegs();
+     RegVal intRegs[numInts];
+     UNSERIALIZE_ARRAY(intRegs, numInts);
+     for (int i = 0; i < numInts; ++i)
+         tc.setIntRegFlat(i, intRegs[i]);
+ 
+-    const size_t numCcs = regClasses.at(CCRegClass).size();
++    const size_t numCcs = regClasses.at(CCRegClass).numRegs();
+     if (numCcs) {
+         RegVal ccRegs[numCcs];
+         UNSERIALIZE_ARRAY(ccRegs, numCcs);
+-- 
+1.8.3.1
+

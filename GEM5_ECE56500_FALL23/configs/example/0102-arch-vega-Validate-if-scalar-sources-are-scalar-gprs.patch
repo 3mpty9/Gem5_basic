@@ -1,0 +1,81 @@
+From 5a94e73d00f131775b7634b8f42a769c8e3ad9f0 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 10 Jan 2022 15:13:35 -0600
+Subject: [PATCH 102/757] arch-vega: Validate if scalar sources are scalar gprs
+
+Port the fixes for scalar source checks from arch-gcn3 at
+https://gem5-review.googlesource.com/c/public/gem5/+/48344.
+
+Scalar sources can either be a general-purpose register or a constant
+register that holds a single value.
+
+If we don't check for if the register is a general-purpose register,
+it's possible that we get a constant register, which then causes all of
+the register mapping code to break, as the constant registers aren't
+supposed to be mapped like the general-purpose registers are.
+
+This fix adds an isScalarReg check to the instruction encodings that
+were missing it.
+
+Change-Id: I30dd2d082a5a1dcc3075843bcefd325113ed1df6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55343
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/insts/op_encodings.cc | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.cc b/src/arch/amdgpu/vega/insts/op_encodings.cc
+index 40910e4..6f78b69 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.cc
++++ b/src/arch/amdgpu/vega/insts/op_encodings.cc
+@@ -1274,12 +1274,12 @@ namespace VegaISA
+ 
+             reg = extData.SRSRC;
+             srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                                  true, false, false);
++                                  isScalarReg(reg), false, false);
+             opNum++;
+ 
+             reg = extData.SOFFSET;
+             srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                                  true, false, false);
++                                  isScalarReg(reg), false, false);
+             opNum++;
+         }
+ 
+@@ -1365,12 +1365,12 @@ namespace VegaISA
+ 
+         reg = extData.SRSRC;
+         srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                              true, false, false);
++                              isScalarReg(reg), false, false);
+         opNum++;
+ 
+         reg = extData.SOFFSET;
+         srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                              true, false, false);
++                              isScalarReg(reg), false, false);
+         opNum++;
+ 
+         // extData.VDATA moves in the reg list depending on the instruction
+@@ -1438,13 +1438,13 @@ namespace VegaISA
+ 
+         reg = extData.SRSRC;
+         srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                              true, false, false);
++                              isScalarReg(reg), false, false);
+         opNum++;
+ 
+         if (getNumOperands() == 4) {
+             reg = extData.SSAMP;
+             srcOps.emplace_back(reg, getOperandSize(opNum), true,
+-                                  true, false, false);
++                                  isScalarReg(reg), false, false);
+             opNum++;
+         }
+ 
+-- 
+1.8.3.1
+

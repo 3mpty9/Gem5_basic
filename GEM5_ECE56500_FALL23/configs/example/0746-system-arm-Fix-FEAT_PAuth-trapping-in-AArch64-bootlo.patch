@@ -1,0 +1,43 @@
+From 37989aa8903685e5c74d473ce37e41d501c31eca Mon Sep 17 00:00:00 2001
+From: Sascha Bischoff <sascha.bischoff@arm.com>
+Date: Wed, 6 Jul 2022 10:33:36 +0100
+Subject: [PATCH 746/757] system-arm: Fix FEAT_PAuth trapping in AArch64
+ bootloader
+
+Now that we start running the bootloader at EL3, we need to setup the
+SCR_EL3 register so that it doesn't trap any pointer authentication
+instruction.
+
+This is fixing the booting process of Linux kernels making use of
+FEAT_PAuth
+
+Change-Id: I08aa96908dd2c16438448f3cc3c47a1271b2dfa8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61069
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61736
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ system/arm/bootloader/arm64/boot.S | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/system/arm/bootloader/arm64/boot.S b/system/arm/bootloader/arm64/boot.S
+index 3809f72..5041561 100644
+--- a/system/arm/bootloader/arm64/boot.S
++++ b/system/arm/bootloader/arm64/boot.S
+@@ -59,6 +59,8 @@ _start:
+         orr	x0, x0, #(1 << 0)		// Non-secure EL1
+         orr	x0, x0, #(1 << 8)		// HVC enable
+         orr	x0, x0, #(1 << 10)		// 64-bit EL2
++        orr	x0, x0, #(1 << 16)		// Disable FEAT_PAuth traps (APK)
++        orr	x0, x0, #(1 << 17)		// Disable FEAT_PAuth traps (API)
+         msr	scr_el3, x0
+ 
+         mov	x0, #(1 << 8)			// Disable SVE trap to EL3
+-- 
+1.8.3.1
+

@@ -1,0 +1,1008 @@
+From 528d184ac7b2859d5150c9089a9bce13e02aeac2 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 9 Aug 2021 19:19:17 -0700
+Subject: [PATCH 157/757] misc: Linearlize VecElem indexing.
+
+These registers used to be accessed with a two dimensional index, with
+one dimension specifying the register, and the second index specifying
+the element within that register. This change linearizes that index down
+to one dimension, where the elements of each register are laid out one
+after the other in sequence.
+
+Change-Id: I41110f57b505679a327108369db61c826d24922e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49148
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/aapcs32.hh                       |  14 +--
+ src/arch/arm/fastmodel/iris/thread_context.hh |   4 +-
+ src/arch/arm/isa.cc                           |   7 +-
+ src/arch/arm/isa.hh                           |   3 +-
+ src/arch/arm/isa/operands.isa                 | 121 +++++++++++---------------
+ src/arch/arm/tracers/tarmac_parser.cc         |  28 ++----
+ src/arch/arm/utility.cc                       |  14 +--
+ src/arch/isa_parser/operand_types.py          |   8 +-
+ src/arch/x86/insts/microop_args.hh            |   1 +
+ src/arch/x86/insts/static_inst.hh             |   1 +
+ src/arch/x86/isa.hh                           |   1 +
+ src/base/types.hh                             |   7 --
+ src/cpu/checker/thread_context.hh             |   9 +-
+ src/cpu/minor/dyn_inst.cc                     |   3 +-
+ src/cpu/o3/cpu.cc                             |  23 ++---
+ src/cpu/o3/cpu.hh                             |   6 +-
+ src/cpu/o3/regfile.cc                         |  28 +++---
+ src/cpu/o3/regfile.hh                         |  16 ++--
+ src/cpu/o3/rename_map.cc                      |   4 +-
+ src/cpu/o3/rename_map.hh                      |  10 +--
+ src/cpu/o3/thread_context.cc                  |   9 +-
+ src/cpu/o3/thread_context.hh                  |  10 +--
+ src/cpu/reg_class.hh                          |  71 ++-------------
+ src/cpu/simple_thread.hh                      |  23 ++---
+ src/cpu/thread_context.hh                     |   6 +-
+ src/sim/insttracer.hh                         |   4 +-
+ 26 files changed, 158 insertions(+), 273 deletions(-)
+
+diff --git a/src/arch/arm/aapcs32.hh b/src/arch/arm/aapcs32.hh
+index beaaa7f..5cb1c8e 100644
+--- a/src/arch/arm/aapcs32.hh
++++ b/src/arch/arm/aapcs32.hh
+@@ -478,11 +478,8 @@ struct Result<Aapcs32Vfp, Float, typename std::enable_if_t<
+         auto bytes = floatToBits(f);
+         auto *vec_elems = static_cast<ArmISA::VecElem *>(&bytes);
+         constexpr int chunks = sizeof(Float) / sizeof(ArmISA::VecElem);
+-        for (int chunk = 0; chunk < chunks; chunk++) {
+-            int reg = chunk / ArmISA::NumVecElemPerVecReg;
+-            int elem = chunk % ArmISA::NumVecElemPerVecReg;
+-            tc->setVecElem(RegId(VecElemClass, reg, elem), vec_elems[chunk]);
+-        }
++        for (int chunk = 0; chunk < chunks; chunk++)
++            tc->setVecElem(RegId(VecElemClass, chunk), vec_elems[chunk]);
+     };
+ };
+ 
+@@ -505,11 +502,8 @@ struct Argument<Aapcs32Vfp, Float, typename std::enable_if_t<
+         auto *vec_elems = static_cast<ArmISA::VecElem *>(&result);
+ 
+         constexpr int chunks = sizeof(Float) / sizeof(ArmISA::VecElem);
+-        for (int chunk = 0; chunk < chunks; chunk++) {
+-            int reg = chunk / ArmISA::NumVecElemPerVecReg;
+-            int elem = chunk % ArmISA::NumVecElemPerVecReg;
+-            vec_elems[chunk] = tc->readVecElem(RegId(VecElemClass, reg, elem));
+-        }
++        for (int chunk = 0; chunk < chunks; chunk++)
++            vec_elems[chunk] = tc->readVecElem(RegId(VecElemClass, chunk));
+ 
+         return bitsToFloat(result);
+     }
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.hh b/src/arch/arm/fastmodel/iris/thread_context.hh
+index 9a1eaba..dcf9a4a 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.hh
++++ b/src/arch/arm/fastmodel/iris/thread_context.hh
+@@ -425,12 +425,12 @@ class ThreadContext : public gem5::ThreadContext
+     }
+ 
+     RegVal
+-    readVecElemFlat(RegIndex idx, const ElemIndex& elemIdx) const override
++    readVecElemFlat(RegIndex idx) const override
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+     void
+-    setVecElemFlat(RegIndex idx, const ElemIndex &elemIdx, RegVal val) override
++    setVecElemFlat(RegIndex idx, RegVal val) override
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index 02af0bc..ed3bea2 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -564,11 +564,8 @@ ISA::copyRegsFrom(ThreadContext *src)
+     for (int i = 0; i < NumVecRegs; i++)
+         tc->setVecRegFlat(i, src->readVecRegFlat(i));
+ 
+-    for (int i = 0; i < NumVecRegs; i++) {
+-        for (int e = 0; e < NumVecElemPerVecReg; e++) {
+-            tc->setVecElemFlat(i, e, src->readVecElemFlat(i, e));
+-        }
+-    }
++    for (int i = 0; i < NumVecRegs * NumVecElemPerVecReg; i++)
++        tc->setVecElemFlat(i, src->readVecElemFlat(i));
+ 
+     // setMiscReg "with effect" will set the misc register mapping correctly.
+     // e.g. updateRegMap(val)
+diff --git a/src/arch/arm/isa.hh b/src/arch/arm/isa.hh
+index 2afcc51..341346a 100644
+--- a/src/arch/arm/isa.hh
++++ b/src/arch/arm/isa.hh
+@@ -658,8 +658,7 @@ namespace ArmISA
+               case VecRegClass:
+                 return RegId(VecRegClass, flattenVecIndex(regId.index()));
+               case VecElemClass:
+-                return RegId(VecElemClass, flattenVecElemIndex(regId.index()),
+-                             regId.elemIndex());
++                return RegId(VecElemClass, flattenVecElemIndex(regId.index()));
+               case VecPredRegClass:
+                 return RegId(VecPredRegClass,
+                              flattenVecPredIndex(regId.index()));
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index 7655291..96c1ec1 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -126,8 +126,9 @@ let {{
+     srtMode = 1
+     srtEPC = 0
+ 
+-    def vectorElem(idx, elem):
+-        return ('VecElem', 'sf', (idx, elem), 'IsVectorElem', srtNormal)
++    def vectorElem(idx):
++        flat_idx = f'((({idx}) / 4) * NumVecElemPerVecReg) + ({idx}) % 4'
++        return ('VecElem', 'sf', flat_idx, 'IsVectorElem', srtNormal)
+ 
+     def vectorReg(idx, base, suffix = ''):
+         elems = {
+@@ -285,71 +286,55 @@ def operands {{
+     'FpCondCodes': ccReg('CCREG_FP'),
+ 
+     #Abstracted floating point reg operands
+-    'FpDest': vectorElem('dest / 4', 'dest % 4'),
+-    'FpDestP0': vectorElem('(dest + 0) / 4', '(dest + 0) % 4'),
+-    'FpDestP1': vectorElem('(dest + 1) / 4', '(dest + 1) % 4'),
+-    'FpDestP2': vectorElem('(dest + 2) / 4', '(dest + 2) % 4'),
+-    'FpDestP3': vectorElem('(dest + 3) / 4', '(dest + 3) % 4'),
+-    'FpDestP4': vectorElem('(dest + 4) / 4', '(dest + 4) % 4'),
+-    'FpDestP5': vectorElem('(dest + 5) / 4', '(dest + 5) % 4'),
+-    'FpDestP6': vectorElem('(dest + 6) / 4', '(dest + 6) % 4'),
+-    'FpDestP7': vectorElem('(dest + 7) / 4', '(dest + 7) % 4'),
+-
+-    'FpDestS0P0': vectorElem(
+-        '(dest + step * 0 + 0) / 4', '(dest + step * 0 + 0) % 4'),
+-    'FpDestS0P1': vectorElem(
+-        '(dest + step * 0 + 1) / 4', '(dest + step * 0 + 1) % 4'),
+-    'FpDestS1P0': vectorElem(
+-        '(dest + step * 1 + 0) / 4', '(dest + step * 1 + 0) % 4'),
+-    'FpDestS1P1': vectorElem(
+-        '(dest + step * 1 + 1) / 4', '(dest + step * 1 + 1) % 4'),
+-    'FpDestS2P0': vectorElem(
+-        '(dest + step * 2 + 0) / 4', '(dest + step * 2 + 0) % 4'),
+-    'FpDestS2P1': vectorElem(
+-        '(dest + step * 2 + 1) / 4', '(dest + step * 2 + 1) % 4'),
+-    'FpDestS3P0': vectorElem(
+-        '(dest + step * 3 + 0) / 4', '(dest + step * 3 + 0) % 4'),
+-    'FpDestS3P1': vectorElem(
+-        '(dest + step * 3 + 1) / 4', '(dest + step * 3 + 1) % 4'),
+-
+-    'FpDest2': vectorElem('dest2 / 4', 'dest2 % 4'),
+-    'FpDest2P0': vectorElem('(dest2 + 0) / 4', '(dest2 + 0) % 4'),
+-    'FpDest2P1': vectorElem('(dest2 + 1) / 4', '(dest2 + 1) % 4'),
+-    'FpDest2P2': vectorElem('(dest2 + 2) / 4', '(dest2 + 2) % 4'),
+-    'FpDest2P3': vectorElem('(dest2 + 3) / 4', '(dest2 + 3) % 4'),
+-
+-    'FpOp1': vectorElem('op1 / 4', 'op1 % 4'),
+-    'FpOp1P0': vectorElem('(op1 + 0) / 4', '(op1 + 0) % 4'),
+-    'FpOp1P1': vectorElem('(op1 + 1) / 4', '(op1 + 1) % 4'),
+-    'FpOp1P2': vectorElem('(op1 + 2) / 4', '(op1 + 2) % 4'),
+-    'FpOp1P3': vectorElem('(op1 + 3) / 4', '(op1 + 3) % 4'),
+-    'FpOp1P4': vectorElem('(op1 + 4) / 4', '(op1 + 4) % 4'),
+-    'FpOp1P5': vectorElem('(op1 + 5) / 4', '(op1 + 5) % 4'),
+-    'FpOp1P6': vectorElem('(op1 + 6) / 4', '(op1 + 6) % 4'),
+-    'FpOp1P7': vectorElem('(op1 + 7) / 4', '(op1 + 7) % 4'),
+-
+-    'FpOp1S0P0': vectorElem(
+-        '(op1 + step * 0 + 0) / 4', '(op1 + step * 0 + 0) % 4'),
+-    'FpOp1S0P1': vectorElem(
+-        '(op1 + step * 0 + 1) / 4', '(op1 + step * 0 + 1) % 4'),
+-    'FpOp1S1P0': vectorElem(
+-        '(op1 + step * 1 + 0) / 4', '(op1 + step * 1 + 0) % 4'),
+-    'FpOp1S1P1': vectorElem(
+-        '(op1 + step * 1 + 1) / 4', '(op1 + step * 1 + 1) % 4'),
+-    'FpOp1S2P0': vectorElem(
+-        '(op1 + step * 2 + 0) / 4', '(op1 + step * 2 + 0) % 4'),
+-    'FpOp1S2P1': vectorElem(
+-        '(op1 + step * 2 + 1) / 4', '(op1 + step * 2 + 1) % 4'),
+-    'FpOp1S3P0': vectorElem(
+-        '(op1 + step * 3 + 0) / 4', '(op1 + step * 3 + 0) % 4'),
+-    'FpOp1S3P1': vectorElem(
+-        '(op1 + step * 3 + 1) / 4', '(op1 + step * 3 + 1) % 4'),
+-
+-    'FpOp2': vectorElem('op2 / 4', 'op2 % 4'),
+-    'FpOp2P0': vectorElem('(op2 + 0) / 4', '(op2 + 0) % 4'),
+-    'FpOp2P1': vectorElem('(op2 + 1) / 4', '(op2 + 1) % 4'),
+-    'FpOp2P2': vectorElem('(op2 + 2) / 4', '(op2 + 2) % 4'),
+-    'FpOp2P3': vectorElem('(op2 + 3) / 4', '(op2 + 3) % 4'),
++    'FpDest': vectorElem('dest'),
++    'FpDestP0': vectorElem('dest + 0'),
++    'FpDestP1': vectorElem('dest + 1'),
++    'FpDestP2': vectorElem('dest + 2'),
++    'FpDestP3': vectorElem('dest + 3'),
++    'FpDestP4': vectorElem('dest + 4'),
++    'FpDestP5': vectorElem('dest + 5'),
++    'FpDestP6': vectorElem('dest + 6'),
++    'FpDestP7': vectorElem('dest + 7'),
++
++    'FpDestS0P0': vectorElem('dest + step * 0 + 0'),
++    'FpDestS0P1': vectorElem('dest + step * 0 + 1'),
++    'FpDestS1P0': vectorElem('dest + step * 1 + 0'),
++    'FpDestS1P1': vectorElem('dest + step * 1 + 1'),
++    'FpDestS2P0': vectorElem('dest + step * 2 + 0'),
++    'FpDestS2P1': vectorElem('dest + step * 2 + 1'),
++    'FpDestS3P0': vectorElem('dest + step * 3 + 0'),
++    'FpDestS3P1': vectorElem('dest + step * 3 + 1'),
++
++    'FpDest2': vectorElem('dest2'),
++    'FpDest2P0': vectorElem('dest2 + 0'),
++    'FpDest2P1': vectorElem('dest2 + 1'),
++    'FpDest2P2': vectorElem('dest2 + 2'),
++    'FpDest2P3': vectorElem('dest2 + 3'),
++
++    'FpOp1': vectorElem('op1'),
++    'FpOp1P0': vectorElem('op1 + 0'),
++    'FpOp1P1': vectorElem('op1 + 1'),
++    'FpOp1P2': vectorElem('op1 + 2'),
++    'FpOp1P3': vectorElem('op1 + 3'),
++    'FpOp1P4': vectorElem('op1 + 4'),
++    'FpOp1P5': vectorElem('op1 + 5'),
++    'FpOp1P6': vectorElem('op1 + 6'),
++    'FpOp1P7': vectorElem('op1 + 7'),
++
++    'FpOp1S0P0': vectorElem('op1 + step * 0 + 0'),
++    'FpOp1S0P1': vectorElem('op1 + step * 0 + 1'),
++    'FpOp1S1P0': vectorElem('op1 + step * 1 + 0'),
++    'FpOp1S1P1': vectorElem('op1 + step * 1 + 1'),
++    'FpOp1S2P0': vectorElem('op1 + step * 2 + 0'),
++    'FpOp1S2P1': vectorElem('op1 + step * 2 + 1'),
++    'FpOp1S3P0': vectorElem('op1 + step * 3 + 0'),
++    'FpOp1S3P1': vectorElem('op1 + step * 3 + 1'),
++
++    'FpOp2': vectorElem('op2'),
++    'FpOp2P0': vectorElem('op2 + 0'),
++    'FpOp2P1': vectorElem('op2 + 1'),
++    'FpOp2P2': vectorElem('op2 + 2'),
++    'FpOp2P3': vectorElem('op2 + 3'),
+ 
+     # Create AArch64 unpacked view of the FP registers
+     # Name   ::= 'AA64Vec' OpSpec [LaneSpec]
+@@ -440,7 +425,7 @@ def operands {{
+     'XURa' : intRegX64('ura'),
+     'WURa' : intRegW64('ura'),
+     'IWRa' : intRegIWPC('ura'),
+-    'Fa' : vectorElem('ura / 4', 'ura % 4'),
++    'Fa' : vectorElem('ura'),
+     'URb' : intReg('urb'),
+     'XURb' : intRegX64('urb'),
+     'URc' : intReg('urc'),
+diff --git a/src/arch/arm/tracers/tarmac_parser.cc b/src/arch/arm/tracers/tarmac_parser.cc
+index 45a6332..e8909a0 100644
+--- a/src/arch/arm/tracers/tarmac_parser.cc
++++ b/src/arch/arm/tracers/tarmac_parser.cc
+@@ -765,9 +765,7 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+                 values.push_back(vv[0]);
+             } else {
+                 const VecElem elem = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        it->index / NumVecElemPerNeonVecReg,
+-                        it->index % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index));
+                 values.push_back(elem);
+             }
+             break;
+@@ -779,13 +777,9 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+                 values.push_back(vv[0]);
+             } else {
+                 const VecElem w0 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        it->index / NumVecElemPerNeonVecReg,
+-                        it->index % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index));
+                 const VecElem w1 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        (it->index + 1) / NumVecElemPerNeonVecReg,
+-                        (it->index + 1) % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index + 1));
+ 
+                 values.push_back((uint64_t)(w1) << 32 | w0);
+             }
+@@ -811,21 +805,13 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+                 values.push_back(vv[1]);
+             } else {
+                 const VecElem w0 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        it->index / NumVecElemPerNeonVecReg,
+-                        it->index % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index));
+                 const VecElem w1 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        (it->index + 1) / NumVecElemPerNeonVecReg,
+-                        (it->index + 1) % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index + 1));
+                 const VecElem w2 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        (it->index + 2) / NumVecElemPerNeonVecReg,
+-                        (it->index + 2) % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index + 2));
+                 const VecElem w3 = thread->readVecElem(
+-                    RegId(VecElemClass,
+-                        (it->index + 3) / NumVecElemPerNeonVecReg,
+-                        (it->index + 3) % NumVecElemPerNeonVecReg));
++                    RegId(VecElemClass, it->index + 3));
+ 
+                 values.push_back((uint64_t)(w1) << 32 | w0);
+                 values.push_back((uint64_t)(w3) << 32 | w2);
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index 2a98eea..f81255d 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -1344,12 +1344,13 @@ encodePhysAddrRange64(int pa_size)
+ void
+ syncVecRegsToElems(ThreadContext *tc)
+ {
++    int ei = 0;
+     for (int ri = 0; ri < NumVecRegs; ri++) {
+         RegId reg_id(VecRegClass, ri);
+         const VecRegContainer &reg = tc->readVecReg(reg_id);
+-        for (int ei = 0; ei < NumVecElemPerVecReg; ei++) {
+-            RegId elem_id(VecElemClass, ri, ei);
+-            tc->setVecElem(elem_id, reg.as<VecElem>()[ei]);
++        for (int j = 0; j < NumVecElemPerVecReg; j++, ei++) {
++            RegId elem_id(VecElemClass, ei);
++            tc->setVecElem(elem_id, reg.as<VecElem>()[j]);
+         }
+     }
+ }
+@@ -1357,11 +1358,12 @@ syncVecRegsToElems(ThreadContext *tc)
+ void
+ syncVecElemsToRegs(ThreadContext *tc)
+ {
++    int ei = 0;
+     for (int ri = 0; ri < NumVecRegs; ri++) {
+         VecRegContainer reg;
+-        for (int ei = 0; ei < NumVecElemPerVecReg; ei++) {
+-            RegId elem_id(VecElemClass, ri, ei);
+-            reg.as<VecElem>()[ei] = tc->readVecElem(elem_id);
++        for (int j = 0; j < NumVecElemPerVecReg; j++, ei++) {
++            RegId elem_id(VecElemClass, ei);
++            reg.as<VecElem>()[j] = tc->readVecElem(elem_id);
+         }
+         RegId reg_id(VecRegClass, ri);
+         tc->setVecReg(reg_id, reg);
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index a029795..0a4ac15 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -475,12 +475,12 @@ class VecElemOperand(Operand):
+         numAccessNeeded = 1
+ 
+         if self.is_src:
+-            c_src = ('\n\tsetSrcRegIdx(_numSrcRegs++, RegId(%s, %s, %s));' %
+-                    (self.reg_class, self.reg_spec, self.elem_spec))
++            c_src = ('\n\tsetSrcRegIdx(_numSrcRegs++, RegId(%s, %s));' %
++                    (self.reg_class, self.reg_spec))
+ 
+         if self.is_dest:
+-            c_dest = ('\n\tsetDestRegIdx(_numDestRegs++, RegId(%s, %s, %s));' %
+-                    (self.reg_class, self.reg_spec, self.elem_spec))
++            c_dest = ('\n\tsetDestRegIdx(_numDestRegs++, RegId(%s, %s));' %
++                    (self.reg_class, self.reg_spec))
+             c_dest += '\n\t_numVecElemDestRegs++;'
+         return c_src + c_dest
+ 
+diff --git a/src/arch/x86/insts/microop_args.hh b/src/arch/x86/insts/microop_args.hh
+index c1e4b12..7769764 100644
+--- a/src/arch/x86/insts/microop_args.hh
++++ b/src/arch/x86/insts/microop_args.hh
+@@ -37,6 +37,7 @@
+ 
+ #include "arch/x86/insts/static_inst.hh"
+ #include "arch/x86/regs/int.hh"
++#include "arch/x86/regs/segment.hh"
+ #include "arch/x86/types.hh"
+ #include "base/compiler.hh"
+ #include "base/cprintf.hh"
+diff --git a/src/arch/x86/insts/static_inst.hh b/src/arch/x86/insts/static_inst.hh
+index 176fc3d..03ee1be 100644
+--- a/src/arch/x86/insts/static_inst.hh
++++ b/src/arch/x86/insts/static_inst.hh
+@@ -39,6 +39,7 @@
+ #define __ARCH_X86_INSTS_STATICINST_HH__
+ 
+ #include "arch/x86/pcstate.hh"
++#include "arch/x86/regs/int.hh"
+ #include "arch/x86/types.hh"
+ #include "base/trace.hh"
+ #include "cpu/static_inst.hh"
+diff --git a/src/arch/x86/isa.hh b/src/arch/x86/isa.hh
+index ee5664a..413ae1b 100644
+--- a/src/arch/x86/isa.hh
++++ b/src/arch/x86/isa.hh
+@@ -35,6 +35,7 @@
+ #include "arch/generic/isa.hh"
+ #include "arch/x86/pcstate.hh"
+ #include "arch/x86/regs/float.hh"
++#include "arch/x86/regs/int.hh"
+ #include "arch/x86/regs/misc.hh"
+ #include "base/types.hh"
+ #include "cpu/reg_class.hh"
+diff --git a/src/base/types.hh b/src/base/types.hh
+index 9a59053..913455f 100644
+--- a/src/base/types.hh
++++ b/src/base/types.hh
+@@ -175,13 +175,6 @@ using RegVal = uint64_t;
+ // Logical register index type.
+ using RegIndex = uint16_t;
+ 
+-/** Logical vector register elem index type. */
+-using ElemIndex = uint16_t;
+-
+-/** ElemIndex value that indicates that the register is not a vector. */
+-static const ElemIndex IllegalElemIndex =
+-    std::numeric_limits<ElemIndex>::max();
+-
+ static inline uint32_t
+ floatToBits32(float val)
+ {
+diff --git a/src/cpu/checker/thread_context.hh b/src/cpu/checker/thread_context.hh
+index 8093a9d..d97e7a0 100644
+--- a/src/cpu/checker/thread_context.hh
++++ b/src/cpu/checker/thread_context.hh
+@@ -434,16 +434,15 @@ class CheckerThreadContext : public ThreadContext
+     }
+ 
+     RegVal
+-    readVecElemFlat(RegIndex idx, const ElemIndex& elem_idx) const override
++    readVecElemFlat(RegIndex idx) const override
+     {
+-        return actualTC->readVecElemFlat(idx, elem_idx);
++        return actualTC->readVecElemFlat(idx);
+     }
+ 
+     void
+-    setVecElemFlat(RegIndex idx, const ElemIndex& elem_idx,
+-            RegVal val) override
++    setVecElemFlat(RegIndex idx, RegVal val) override
+     {
+-        actualTC->setVecElemFlat(idx, elem_idx, val);
++        actualTC->setVecElemFlat(idx, val);
+     }
+ 
+     const TheISA::VecPredRegContainer &
+diff --git a/src/cpu/minor/dyn_inst.cc b/src/cpu/minor/dyn_inst.cc
+index dfff813..aa35689 100644
+--- a/src/cpu/minor/dyn_inst.cc
++++ b/src/cpu/minor/dyn_inst.cc
+@@ -152,7 +152,8 @@ printRegName(std::ostream &os, const RegId& reg,
+         os << 'v' << reg.index();
+         break;
+       case VecElemClass:
+-        os << 'v' << reg.index() << '[' << reg.elemIndex() << ']';
++        os << 'v' << (reg.index() / TheISA::NumVecElemPerVecReg) << '[' <<
++            (reg.index() % TheISA::NumVecElemPerVecReg) << ']';
+         break;
+       case IntRegClass:
+         if (reg.index() == reg_class.zeroReg()) {
+diff --git a/src/cpu/o3/cpu.cc b/src/cpu/o3/cpu.cc
+index c9ed6c7..3b4e15f 100644
+--- a/src/cpu/o3/cpu.cc
++++ b/src/cpu/o3/cpu.cc
+@@ -251,14 +251,11 @@ CPU::CPU(const BaseO3CPUParams &params)
+         }
+         /* Initialize the vector-element interface */
+         const size_t numElems = regClasses.at(VecElemClass).size();
+-        const size_t elemsPerVec = numElems / numVecs;
+-        for (RegIndex ridx = 0; ridx < numVecs; ++ridx) {
+-            for (ElemIndex ldx = 0; ldx < elemsPerVec; ++ldx) {
+-                RegId lrid = RegId(VecElemClass, ridx, ldx);
+-                PhysRegIdPtr phys_elem = freeList.getVecElem();
+-                renameMap[tid].setEntry(lrid, phys_elem);
+-                commitRenameMap[tid].setEntry(lrid, phys_elem);
+-            }
++        for (RegIndex ridx = 0; ridx < numElems; ++ridx) {
++            RegId lrid = RegId(VecElemClass, ridx);
++            PhysRegIdPtr phys_elem = freeList.getVecElem();
++            renameMap[tid].setEntry(lrid, phys_elem);
++            commitRenameMap[tid].setEntry(lrid, phys_elem);
+         }
+ 
+         for (RegIndex ridx = 0; ridx < regClasses.at(VecPredRegClass).size();
+@@ -1220,11 +1217,10 @@ CPU::getWritableArchVecReg(int reg_idx, ThreadID tid)
+ }
+ 
+ RegVal
+-CPU::readArchVecElem(
+-        const RegIndex& reg_idx, const ElemIndex& ldx, ThreadID tid) const
++CPU::readArchVecElem(const RegIndex& reg_idx, ThreadID tid) const
+ {
+     PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                                RegId(VecElemClass, reg_idx, ldx));
++                                RegId(VecElemClass, reg_idx));
+     return regFile.readVecElem(phys_reg);
+ }
+ 
+@@ -1281,11 +1277,10 @@ CPU::setArchVecReg(int reg_idx, const TheISA::VecRegContainer& val,
+ }
+ 
+ void
+-CPU::setArchVecElem(const RegIndex& reg_idx, const ElemIndex& ldx,
+-                    RegVal val, ThreadID tid)
++CPU::setArchVecElem(const RegIndex& reg_idx, RegVal val, ThreadID tid)
+ {
+     PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecElemClass, reg_idx, ldx));
++                RegId(VecElemClass, reg_idx));
+     regFile.setVecElem(phys_reg, val);
+ }
+ 
+diff --git a/src/cpu/o3/cpu.hh b/src/cpu/o3/cpu.hh
+index 4de99af..3fab0cb 100644
+--- a/src/cpu/o3/cpu.hh
++++ b/src/cpu/o3/cpu.hh
+@@ -353,8 +353,7 @@ class CPU : public BaseCPU
+     /** Read architectural vector register for modification. */
+     TheISA::VecRegContainer& getWritableArchVecReg(int reg_idx, ThreadID tid);
+ 
+-    RegVal readArchVecElem(const RegIndex& reg_idx,
+-            const ElemIndex& ldx, ThreadID tid) const;
++    RegVal readArchVecElem(const RegIndex& reg_idx, ThreadID tid) const;
+ 
+     const TheISA::VecPredRegContainer& readArchVecPredReg(
+             int reg_idx, ThreadID tid) const;
+@@ -379,8 +378,7 @@ class CPU : public BaseCPU
+     void setArchVecReg(int reg_idx, const TheISA::VecRegContainer& val,
+             ThreadID tid);
+ 
+-    void setArchVecElem(const RegIndex& reg_idx, const ElemIndex& ldx,
+-                        RegVal val, ThreadID tid);
++    void setArchVecElem(const RegIndex& reg_idx, RegVal val, ThreadID tid);
+ 
+     void setArchCCReg(int reg_idx, RegVal val, ThreadID tid);
+ 
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index 17fbe7f..7001c8e 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -98,14 +98,11 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+         vecRegIds.emplace_back(VecRegClass, phys_reg, flat_reg_idx++);
+     }
+     // The next batch of the registers are the vector element physical
+-    // registers; they refer to the same containers as the vector
+-    // registers, just a different (and incompatible) way to access
+-    // them; put them onto the vector free list.
+-    for (phys_reg = 0; phys_reg < numPhysicalVecRegs; phys_reg++) {
+-        for (ElemIndex eIdx = 0; eIdx < TheISA::NumVecElemPerVecReg; eIdx++) {
+-            vecElemIds.emplace_back(VecElemClass, phys_reg,
+-                    eIdx, flat_reg_idx++);
+-        }
++    // registers; put them onto the vector free list.
++    for (phys_reg = 0;
++            phys_reg < numPhysicalVecRegs * TheISA::NumVecElemPerVecReg;
++            phys_reg++) {
++        vecElemIds.emplace_back(VecElemClass, phys_reg, flat_reg_idx++);
+     }
+ 
+     // The next batch of the registers are the predicate physical
+@@ -151,15 +148,13 @@ PhysRegFile::initFreeList(UnifiedFreeList *freeList)
+      * registers; put them onto the vector free list. */
+     for (reg_idx = 0; reg_idx < numPhysicalVecRegs; reg_idx++) {
+         assert(vecRegIds[reg_idx].index() == reg_idx);
+-        for (ElemIndex elemIdx = 0; elemIdx < TheISA::NumVecElemPerVecReg;
+-                elemIdx++) {
+-            assert(vecElemIds[reg_idx * TheISA::NumVecElemPerVecReg +
+-                    elemIdx].index() == reg_idx);
+-            assert(vecElemIds[reg_idx * TheISA::NumVecElemPerVecReg +
+-                    elemIdx].elemIndex() == elemIdx);
+-        }
+     }
+     freeList->addRegs(vecRegIds.begin(), vecRegIds.end());
++    for (reg_idx = 0;
++            reg_idx < numPhysicalVecRegs * TheISA::NumVecElemPerVecReg;
++            reg_idx++) {
++        assert(vecElemIds[reg_idx].index() == reg_idx);
++    }
+     freeList->addRegs(vecElemIds.begin(), vecElemIds.end());
+ 
+     // The next batch of the registers are the predicate physical
+@@ -209,8 +204,7 @@ PhysRegFile::getTrueId(PhysRegIdPtr reg)
+     case VecRegClass:
+         return &vecRegIds[reg->index()];
+     case VecElemClass:
+-        return &vecElemIds[reg->index() * TheISA::NumVecElemPerVecReg +
+-            reg->elemIndex()];
++        return &vecElemIds[reg->index()];
+     default:
+         panic_if(!reg->is(VecElemClass),
+             "Trying to get the register of a %s register", reg->className());
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index cb3aee3..d97f977 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -226,12 +226,11 @@ class PhysRegFile
+     readVecElem(PhysRegIdPtr phys_reg) const
+     {
+         assert(phys_reg->is(VecElemClass));
+-        RegVal val = vectorElemRegFile[
+-                phys_reg->index() * TheISA::NumVecElemPerVecReg +
+-                phys_reg->elemIndex()];
++        RegVal val = vectorElemRegFile[phys_reg->index()];
+         DPRINTF(IEW, "RegFile: Access to element %d of vector register %i,"
+-                " has data %#x\n", phys_reg->elemIndex(),
+-                phys_reg->index(), val);
++                " has data %#x\n",
++                phys_reg->index() / TheISA::NumVecElemPerVecReg,
++                phys_reg->index() % TheISA::NumVecElemPerVecReg, val);
+ 
+         return val;
+     }
+@@ -313,10 +312,11 @@ class PhysRegFile
+         assert(phys_reg->is(VecElemClass));
+ 
+         DPRINTF(IEW, "RegFile: Setting element %d of vector register %i to"
+-                " %#x\n", phys_reg->elemIndex(), int(phys_reg->index()), val);
++                " %#x\n",
++                phys_reg->index() / TheISA::NumVecElemPerVecReg,
++                phys_reg->index() % TheISA::NumVecElemPerVecReg, val);
+ 
+-        vectorElemRegFile[phys_reg->index() * TheISA::NumVecElemPerVecReg +
+-                phys_reg->elemIndex()] = val;
++        vectorElemRegFile[phys_reg->index()] = val;
+     }
+ 
+     /** Sets a predicate register to the given value. */
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index dee113f..8b3d92d 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -76,7 +76,7 @@ SimpleRenameMap::rename(const RegId& arch_reg)
+     PhysRegIdPtr renamed_reg;
+     // Record the current physical register that is renamed to the
+     // requested architected register.
+-    PhysRegIdPtr prev_reg = map[arch_reg.flatIndex()];
++    PhysRegIdPtr prev_reg = map[arch_reg.index()];
+ 
+     if (arch_reg == zeroReg) {
+         assert(prev_reg->index() == zeroReg.index());
+@@ -91,7 +91,7 @@ SimpleRenameMap::rename(const RegId& arch_reg)
+         renamed_reg->decrNumPinnedWrites();
+     } else {
+         renamed_reg = freeList->getReg();
+-        map[arch_reg.flatIndex()] = renamed_reg;
++        map[arch_reg.index()] = renamed_reg;
+         renamed_reg->setNumPinnedWrites(arch_reg.getNumPinnedWrites());
+         renamed_reg->setNumPinnedWritesToComplete(
+             arch_reg.getNumPinnedWrites() + 1);
+diff --git a/src/cpu/o3/rename_map.hh b/src/cpu/o3/rename_map.hh
+index 3f8936b..0e1a6f5 100644
+--- a/src/cpu/o3/rename_map.hh
++++ b/src/cpu/o3/rename_map.hh
+@@ -126,8 +126,8 @@ class SimpleRenameMap
+     PhysRegIdPtr
+     lookup(const RegId& arch_reg) const
+     {
+-        assert(arch_reg.flatIndex() <= map.size());
+-        return map[arch_reg.flatIndex()];
++        assert(arch_reg.index() <= map.size());
++        return map[arch_reg.index()];
+     }
+ 
+     /**
+@@ -139,8 +139,8 @@ class SimpleRenameMap
+     void
+     setEntry(const RegId& arch_reg, PhysRegIdPtr phys_reg)
+     {
+-        assert(arch_reg.flatIndex() <= map.size());
+-        map[arch_reg.flatIndex()] = phys_reg;
++        assert(arch_reg.index() <= map.size());
++        map[arch_reg.index()] = phys_reg;
+     }
+ 
+     /** Return the number of free entries on the associated free list. */
+@@ -282,7 +282,7 @@ class UnifiedRenameMap
+           case MiscRegClass:
+             // misc regs aren't really renamed, they keep the same
+             // mapping throughout the execution.
+-            return regFile->getMiscRegId(arch_reg.flatIndex());
++            return regFile->getMiscRegId(arch_reg.index());
+ 
+           default:
+             panic("rename lookup(): unknown reg class %s\n",
+diff --git a/src/cpu/o3/thread_context.cc b/src/cpu/o3/thread_context.cc
+index 01b92b7..c22229f 100644
+--- a/src/cpu/o3/thread_context.cc
++++ b/src/cpu/o3/thread_context.cc
+@@ -174,9 +174,9 @@ ThreadContext::getWritableVecRegFlat(RegIndex reg_id)
+ }
+ 
+ RegVal
+-ThreadContext::readVecElemFlat(RegIndex idx, const ElemIndex& elemIndex) const
++ThreadContext::readVecElemFlat(RegIndex idx) const
+ {
+-    return cpu->readArchVecElem(idx, elemIndex, thread->threadId());
++    return cpu->readArchVecElem(idx, thread->threadId());
+ }
+ 
+ const TheISA::VecPredRegContainer&
+@@ -223,10 +223,9 @@ ThreadContext::setVecRegFlat(
+ }
+ 
+ void
+-ThreadContext::setVecElemFlat(RegIndex idx,
+-        const ElemIndex& elemIndex, RegVal val)
++ThreadContext::setVecElemFlat(RegIndex idx, RegVal val)
+ {
+-    cpu->setArchVecElem(idx, elemIndex, val, thread->threadId());
++    cpu->setArchVecElem(idx, val, thread->threadId());
+     conditionalSquash();
+ }
+ 
+diff --git a/src/cpu/o3/thread_context.hh b/src/cpu/o3/thread_context.hh
+index 14bc7f5..924cddb 100644
+--- a/src/cpu/o3/thread_context.hh
++++ b/src/cpu/o3/thread_context.hh
+@@ -215,7 +215,7 @@ class ThreadContext : public gem5::ThreadContext
+     RegVal
+     readVecElem(const RegId& reg) const override
+     {
+-        return readVecElemFlat(flattenRegId(reg).index(), reg.elemIndex());
++        return readVecElemFlat(flattenRegId(reg).index());
+     }
+ 
+     const TheISA::VecPredRegContainer &
+@@ -260,7 +260,7 @@ class ThreadContext : public gem5::ThreadContext
+     void
+     setVecElem(const RegId& reg, RegVal val) override
+     {
+-        setVecElemFlat(flattenRegId(reg).index(), reg.elemIndex(), val);
++        setVecElemFlat(flattenRegId(reg).index(), val);
+     }
+ 
+     void
+@@ -351,10 +351,8 @@ class ThreadContext : public gem5::ThreadContext
+     void setVecRegFlat(RegIndex idx,
+             const TheISA::VecRegContainer& val) override;
+ 
+-    RegVal readVecElemFlat(RegIndex idx,
+-            const ElemIndex& elemIndex) const override;
+-    void setVecElemFlat(RegIndex idx, const ElemIndex& elemIdx,
+-                        RegVal val) override;
++    RegVal readVecElemFlat(RegIndex idx) const override;
++    void setVecElemFlat(RegIndex idx, RegVal val) override;
+ 
+     const TheISA::VecPredRegContainer&
+         readVecPredRegFlat(RegIndex idx) const override;
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index febaa55..3c3a656 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -45,7 +45,6 @@
+ #include <cstddef>
+ #include <string>
+ 
+-#include "arch/vecregs.hh"
+ #include "base/types.hh"
+ #include "config/the_isa.hh"
+ 
+@@ -116,8 +115,6 @@ class RegId
+     static const char* regClassStrings[];
+     RegClassType regClass;
+     RegIndex regIdx;
+-    ElemIndex elemIdx;
+-    static constexpr size_t Scale = TheISA::NumVecElemPerVecReg;
+     int numPinnedWrites;
+ 
+     friend struct std::hash<RegId>;
+@@ -125,28 +122,14 @@ class RegId
+   public:
+     RegId() : RegId(IntRegClass, 0) {}
+ 
+-    RegId(RegClassType reg_class, RegIndex reg_idx)
+-        : RegId(reg_class, reg_idx, IllegalElemIndex) {}
+-
+-    explicit RegId(RegClassType reg_class, RegIndex reg_idx,
+-            ElemIndex elem_idx)
+-        : regClass(reg_class), regIdx(reg_idx), elemIdx(elem_idx),
+-          numPinnedWrites(0)
+-    {
+-        if (elemIdx == IllegalElemIndex) {
+-            panic_if(regClass == VecElemClass,
+-                    "Creating vector physical index w/o element index");
+-        } else {
+-            panic_if(regClass != VecElemClass,
+-                    "Creating non-vector physical index w/ element index");
+-        }
+-    }
++    explicit RegId(RegClassType reg_class, RegIndex reg_idx)
++        : regClass(reg_class), regIdx(reg_idx), numPinnedWrites(0)
++    {}
+ 
+     bool
+     operator==(const RegId& that) const
+     {
+-        return regClass == that.classValue() && regIdx == that.index() &&
+-            elemIdx == that.elemIndex();
++        return regClass == that.classValue() && regIdx == that.index();
+     }
+ 
+     bool operator!=(const RegId& that) const { return !(*this==that); }
+@@ -158,9 +141,7 @@ class RegId
+     operator<(const RegId& that) const
+     {
+         return regClass < that.classValue() ||
+-            (regClass == that.classValue() && (
+-                   regIdx < that.index() ||
+-                   (regIdx == that.index() && elemIdx < that.elemIndex())));
++            (regClass == that.classValue() && (regIdx < that.index()));
+     }
+ 
+     /**
+@@ -179,29 +160,6 @@ class RegId
+     /** @{ */
+     RegIndex index() const { return regIdx; }
+ 
+-    /** Index flattening.
+-     * Required to be able to use a vector for the register mapping.
+-     */
+-    RegIndex
+-    flatIndex() const
+-    {
+-        switch (regClass) {
+-          case IntRegClass:
+-          case FloatRegClass:
+-          case VecRegClass:
+-          case VecPredRegClass:
+-          case CCRegClass:
+-          case MiscRegClass:
+-            return regIdx;
+-          case VecElemClass:
+-            return Scale * regIdx + elemIdx;
+-        }
+-        panic("Trying to flatten a register without class!");
+-    }
+-    /** @} */
+-
+-    /** Elem accessor */
+-    RegIndex elemIndex() const { return elemIdx; }
+     /** Class accessor */
+     RegClassType classValue() const { return regClass; }
+     /** Return a const char* with the register class name. */
+@@ -240,19 +198,11 @@ class PhysRegId : private RegId
+           numPinnedWritesToComplete(0), pinned(false)
+     {}
+ 
+-    /** Vector PhysRegId constructor (w/ elemIndex). */
+-    explicit PhysRegId(RegClassType _regClass, RegIndex _regIdx,
+-              ElemIndex elem_idx, RegIndex flat_idx)
+-        : RegId(_regClass, _regIdx, elem_idx), flatIdx(flat_idx),
+-          numPinnedWritesToComplete(0), pinned(false)
+-    {}
+-
+     /** Visible RegId methods */
+     /** @{ */
+     using RegId::index;
+     using RegId::classValue;
+     using RegId::className;
+-    using RegId::elemIndex;
+     using RegId::is;
+      /** @} */
+     /**
+@@ -288,13 +238,6 @@ class PhysRegId : private RegId
+     /** Flat index accessor */
+     const RegIndex& flatIndex() const { return flatIdx; }
+ 
+-    static PhysRegId
+-    elemId(PhysRegId* vid, ElemIndex elem)
+-    {
+-        assert(vid->is(VecRegClass));
+-        return PhysRegId(VecElemClass, vid->index(), elem);
+-    }
+-
+     int getNumPinnedWrites() const { return numPinnedWrites; }
+ 
+     void
+@@ -344,7 +287,7 @@ struct hash<gem5::RegId>
+     operator()(const gem5::RegId& reg_id) const
+     {
+         // Extract unique integral values for the effective fields of a RegId.
+-        const size_t flat_index = static_cast<size_t>(reg_id.flatIndex());
++        const size_t index = static_cast<size_t>(reg_id.index());
+         const size_t class_num = static_cast<size_t>(reg_id.regClass);
+ 
+         const size_t shifted_class_num =
+@@ -352,7 +295,7 @@ struct hash<gem5::RegId>
+ 
+         // Concatenate the class_num to the end of the flat_index, in order to
+         // maximize information retained.
+-        const size_t concatenated_hash = flat_index | shifted_class_num;
++        const size_t concatenated_hash = index | shifted_class_num;
+ 
+         // If RegIndex is larger than size_t, then class_num will not be
+         // considered by this hash function, so we may wish to perform a
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 0f25e17..74ddcb4 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -311,10 +311,11 @@ class SimpleThread : public ThreadState, public ThreadContext
+     readVecElem(const RegId &reg) const override
+     {
+         int flatIndex = isa->flattenVecElemIndex(reg.index());
+-        assert(flatIndex < vecRegs.size());
+-        RegVal regVal = readVecElemFlat(flatIndex, reg.elemIndex());
++        assert(flatIndex < vecElemRegs.size());
++        RegVal regVal = readVecElemFlat(flatIndex);
+         DPRINTF(VecRegs, "Reading element %d of vector reg %d (%d) as"
+-                " %#x.\n", reg.elemIndex(), reg.index(), flatIndex, regVal);
++                " %#x.\n", reg.index() % TheISA::NumVecElemPerVecReg,
++                reg.index() / TheISA::NumVecElemPerVecReg, flatIndex, regVal);
+         return regVal;
+     }
+ 
+@@ -392,10 +393,11 @@ class SimpleThread : public ThreadState, public ThreadContext
+     setVecElem(const RegId &reg, RegVal val) override
+     {
+         int flatIndex = isa->flattenVecElemIndex(reg.index());
+-        assert(flatIndex < vecRegs.size());
+-        setVecElemFlat(flatIndex, reg.elemIndex(), val);
++        assert(flatIndex < vecElemRegs.size());
++        setVecElemFlat(flatIndex, val);
+         DPRINTF(VecRegs, "Setting element %d of vector reg %d (%d) to"
+-                " %#x.\n", reg.elemIndex(), reg.index(), flatIndex, val);
++                " %#x.\n", reg.index() % TheISA::NumVecElemPerVecReg,
++                reg.index() / TheISA::NumVecElemPerVecReg, flatIndex, val);
+     }
+ 
+     void
+@@ -518,16 +520,15 @@ class SimpleThread : public ThreadState, public ThreadContext
+     }
+ 
+     RegVal
+-    readVecElemFlat(RegIndex reg, const ElemIndex &elemIndex) const override
++    readVecElemFlat(RegIndex reg) const override
+     {
+-        return vecElemRegs[reg * TheISA::NumVecElemPerVecReg + elemIndex];
++        return vecElemRegs[reg];
+     }
+ 
+     void
+-    setVecElemFlat(RegIndex reg, const ElemIndex &elemIndex,
+-                   RegVal val) override
++    setVecElemFlat(RegIndex reg, RegVal val) override
+     {
+-        vecElemRegs[reg * TheISA::NumVecElemPerVecReg + elemIndex] = val;
++        vecElemRegs[reg] = val;
+     }
+ 
+     const TheISA::VecPredRegContainer &
+diff --git a/src/cpu/thread_context.hh b/src/cpu/thread_context.hh
+index e978f37..c1bae18 100644
+--- a/src/cpu/thread_context.hh
++++ b/src/cpu/thread_context.hh
+@@ -284,10 +284,8 @@ class ThreadContext : public PCEventScope
+     virtual void setVecRegFlat(RegIndex idx,
+             const TheISA::VecRegContainer& val) = 0;
+ 
+-    virtual RegVal readVecElemFlat(RegIndex idx,
+-            const ElemIndex& elem_idx) const = 0;
+-    virtual void setVecElemFlat(RegIndex idx, const ElemIndex& elem_idx,
+-            RegVal val) = 0;
++    virtual RegVal readVecElemFlat(RegIndex idx) const = 0;
++    virtual void setVecElemFlat(RegIndex idx, RegVal val) = 0;
+ 
+     virtual const TheISA::VecPredRegContainer &
+         readVecPredRegFlat(RegIndex idx) const = 0;
+diff --git a/src/sim/insttracer.hh b/src/sim/insttracer.hh
+index b99af06..eeb2361 100644
+--- a/src/sim/insttracer.hh
++++ b/src/sim/insttracer.hh
+@@ -44,9 +44,9 @@
+ #include <memory>
+ 
+ #include "arch/generic/pcstate.hh"
+-#include "arch/generic/vec_pred_reg.hh"
+-#include "arch/generic/vec_reg.hh"
++#include "arch/vecregs.hh"
+ #include "base/types.hh"
++#include "config/the_isa.hh"
+ #include "cpu/inst_seq.hh"
+ #include "cpu/static_inst.hh"
+ #include "sim/sim_object.hh"
+-- 
+1.8.3.1
+

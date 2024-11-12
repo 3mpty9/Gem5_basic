@@ -1,0 +1,98 @@
+From af07c6457750ff48c33432e85643141a6545b23b Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 17 Dec 2021 15:53:13 -0800
+Subject: [PATCH 071/757] tests: Update the weekly and nightly tests to use
+ v21.2
+
+Note: There is an annoying work-around here for tests where we obtain
+the gem5 resources repo directly to compile and run tests.
+
+Change-Id: If8e7d3e7fd8dea9d0e1653e73360c295ad43e1ac
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54469
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/nightly.sh |  4 ++--
+ tests/weekly.sh  | 27 ++++++++++++++++++++++++---
+ 2 files changed, 26 insertions(+), 5 deletions(-)
+
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index e85ae67..c3c5712 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -108,7 +108,7 @@ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+         || (rm -rf build && scons build/${gpu_isa}/gem5.opt -j${compile_threads})"
+ 
+ # get square
+-wget -qN http://dist.gem5.org/dist/develop/test-progs/square/square
++wget -qN http://dist.gem5.org/dist/v21-2/test-progs/square/square
+ 
+ mkdir -p tests/testing-results
+ 
+@@ -120,7 +120,7 @@ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c square
+ 
+ # get HeteroSync
+-wget -qN http://dist.gem5.org/dist/develop/test-progs/heterosync/gcn3/allSyncPrims-1kernel
++wget -qN http://dist.gem5.org/dist/v21-2/test-progs/heterosync/gcn3/allSyncPrims-1kernel
+ 
+ # run HeteroSync sleepMutex -- 16 WGs (4 per CU in default config), each doing
+ # 10 Ld/St per thread and 4 iterations of the critical section is a reasonable
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index 1e25c4f..417eedb 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -75,9 +75,30 @@ rm -f coAuthorsDBLP.graph 1k_128k.gr result.out
+ # Moreover, DNNMark builds a library and thus doesn't have a binary, so we
+ # need to build it before we run it.
+ # Need to pull this first because HACC's docker requires this path to exist
+-git clone -b develop https://gem5.googlesource.com/public/gem5-resources \
++git clone https://gem5.googlesource.com/public/gem5-resources \
+     "${gem5_root}/gem5-resources"
+ 
++
++# The following script is to ensure these tests are runnable as the resources
++# directory changes over time. The gem5 resources repository stable branch is
++# tagged upon the new release for that of the previous release. For example,
++# when v22.0 is released, the stable branch will be tagged with "v21.2.X.X"
++# prior to the merging of the develop/staging branch into the stable branch.
++# This is so a user may revert the gem5-resources sources back to a state
++# compatable with a particular major release.
++#
++# To ensure the v21.2 version of these tests continues to run as future
++# versions are released, we run this check. If there's been another release,
++# we checkout the correct version of gem5 resources.
++cd "${gem5_root}/gem5-resources"
++version_tag=$(git tag | grep "v21.2")
++
++if [[ ${version_tag} != "" ]]; then
++       git checkout "${version_tag}"
++fi
++
++cd "${gem5_root}"
++
+ # For the GPU tests we compile and run the GPU ISA inside a gcn-gpu container.
+ # HACC requires setting numerous environment variables to run correctly.  To
+ # avoid needing to set all of these, we instead build a docker for it, which
+@@ -203,7 +224,7 @@ docker run --rm -v ${PWD}:${PWD} \
+        "export GEM5_PATH=${gem5_root} ; make gem5-fusion"
+ 
+ # # get input dataset for BC test
+-wget http://dist.gem5.org/dist/develop/datasets/pannotia/bc/1k_128k.gr
++wget http://dist.gem5.org/dist/v21-2/datasets/pannotia/bc/1k_128k.gr
+ # run BC
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+        hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+@@ -275,7 +296,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+        "export GEM5_PATH=${gem5_root} ; make gem5-fusion"
+ 
+ # get PageRank input dataset
+-wget http://dist.gem5.org/dist/develop/datasets/pannotia/pagerank/coAuthorsDBLP.graph
++wget http://dist.gem5.org/dist/v21-2/datasets/pannotia/pagerank/coAuthorsDBLP.graph
+ # run PageRank (Default)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+        hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+-- 
+1.8.3.1
+

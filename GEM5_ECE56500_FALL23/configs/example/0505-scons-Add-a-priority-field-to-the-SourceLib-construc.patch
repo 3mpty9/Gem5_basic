@@ -1,0 +1,56 @@
+From c1b235b3d0e152ed0def496ee3f164114df0ded3 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Mon, 28 Mar 2022 20:02:22 -0700
+Subject: [PATCH 505/757] scons: Add a priority field to the SourceLib
+ construct.
+
+This helps specify ordering for libraries that need it. Libraries with
+a higher priority will be sorted earlier in the list, which can be
+necessary when working with static libraries/archives.
+
+The default value for "priority" is zero. It's only really necessary
+to ensure relative ordering of particular pairings of libraries, so
+it should be ok to use an absolute integer value for this. If you
+need to order relative to a library, there is a good chance you're
+adding it, or the place it's added is well known and you can easily
+find its priority value. It's also unlikely that there would be a
+complex series of interactions between libraries that would make a
+more complicated system warranted.
+
+Change-Id: Ie94a35e6563c07f8d462a4a52d0173ea3cf4f8de
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58350
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jui-min Lee <fcrh@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+---
+ src/SConscript | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index 746d3f1..a7b6cec 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -76,7 +76,9 @@ class Source(SourceFile):
+     pass
+ 
+ class SourceLib(SourceItem):
+-    pass
++    def __init__(self, *args, **kwargs):
++        self.priority = kwargs.pop('priority', 0)
++        super().__init__(*args, **kwargs)
+ 
+ build_tools = Dir('#build_tools')
+ 
+@@ -388,6 +390,8 @@ class Executable(TopLevelBase):
+                 env['BUILDDIR'], self.path(env).dir.abspath)
+ 
+         libs = self.libs(env)
++        # Higher priority libraries should be earlier in the list.
++        libs.sort(key=lambda l: l.priority, reverse=True)
+         if libs:
+             env.Append(LIBS=list(lib.source for lib in libs))
+ 
+-- 
+1.8.3.1
+

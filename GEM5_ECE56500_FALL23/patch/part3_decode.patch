@@ -1,0 +1,45 @@
+diff --git a/src/cpu/minor/decode.cc b/src/cpu/minor/decode.cc
+index 53c02f3..ffd3c2a 100644
+--- a/src/cpu/minor/decode.cc
++++ b/src/cpu/minor/decode.cc
+@@ -49,6 +49,7 @@ GEM5_DEPRECATED_NAMESPACE(Minor, minor);
+ namespace minor
+ {
+ 
++/***
+ Decode::Decode(const std::string &name,
+     MinorCPU &cpu_,
+     const BaseMinorCPUParams &params,
+@@ -72,6 +73,32 @@ Decode::Decode(const std::string &name,
+         fatal("%s: decodeInputBufferSize must be >= 1 (%d)\n", name,
+         params.decodeInputBufferSize);
+     }
++*/
++
++Decode::Decode(const std::string &name,
++    MinorCPU &cpu_,
++    const BaseMinorCPUParams &params,
++    Latch<ForwardInstData>::Output inp_,
++    Latch<ForwardInstData>::Input out_,
++    std::vector<InputBuffer<ForwardInstData>> &next_stage_input_buffer) :
++    Named(name),
++    cpu(cpu_),
++    inp(inp_),
++    out(out_),
++    nextStageReserve(next_stage_input_buffer),
++    outputWidth(params.dummyexecuteInputWidth),
++    processMoreThanOneInput(params.decodeCycleInput),
++    decodeInfo(params.numThreads),
++    threadPriority(0)
++{
++    if (outputWidth < 1)
++        fatal("%s: dummyexecuteInputWidth must be >= 1 (%d)\n", name, outputWidth);
++
++    if (params.decodeInputBufferSize < 1) {
++        fatal("%s: decodeInputBufferSize must be >= 1 (%d)\n", name,
++        params.decodeInputBufferSize);
++    }
++
+ 
+     /* Per-thread input buffers */
+     for (ThreadID tid = 0; tid < params.numThreads; tid++) {

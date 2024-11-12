@@ -1,0 +1,309 @@
+From db76b935eb1c9e71a194b1d9d5a7e91afcf1b9bf Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 20 Jan 2022 23:53:25 -0800
+Subject: [PATCH 367/757] arch-x86,dev: Use INTA to get the vector for the IO
+ APIC.
+
+When receiving an ExtInt at the IO APIC, use an INTA and not a direct
+pointer to find the vector to use.
+
+Change-Id: I173f99645c3bbd20de9cbeb17e00b4f91ac66089
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55695
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/intmessage.hh |  11 ++++
+ src/dev/x86/I82094AA.py    |   1 -
+ src/dev/x86/SouthBridge.py |   1 -
+ src/dev/x86/i82094aa.cc    | 129 +++++++++++++++++++++++++--------------------
+ src/dev/x86/i82094aa.hh    |   8 +--
+ src/dev/x86/pc.cc          |   4 +-
+ 6 files changed, 89 insertions(+), 65 deletions(-)
+
+diff --git a/src/arch/x86/intmessage.hh b/src/arch/x86/intmessage.hh
+index e775e2a..f7692e2 100644
+--- a/src/arch/x86/intmessage.hh
++++ b/src/arch/x86/intmessage.hh
+@@ -88,6 +88,17 @@ namespace X86ISA
+         return buildIntPacket(addr, message);
+     }
+ 
++    static inline PacketPtr
++    buildIntAcknowledgePacket()
++    {
++        RequestPtr req = std::make_shared<Request>(
++                PhysAddrIntA, 1, Request::UNCACHEABLE,
++                Request::intRequestorId);
++        PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
++        pkt->allocate();
++        return pkt;
++    }
++
+ } // namespace X86ISA
+ } // namespace gem5
+ 
+diff --git a/src/dev/x86/I82094AA.py b/src/dev/x86/I82094AA.py
+index 212bca3..591c8d1 100644
+--- a/src/dev/x86/I82094AA.py
++++ b/src/dev/x86/I82094AA.py
+@@ -38,6 +38,5 @@ class I82094AA(BasicPioDevice):
+     int_requestor = RequestPort("Port for sending interrupt messages")
+     int_latency = Param.Latency('1ns', \
+             "Latency for an interrupt to propagate through this device.")
+-    external_int_pic = Param.I8259(NULL, "External PIC, if any")
+ 
+     inputs = VectorIntSinkPin('The pins that drive this IO APIC')
+diff --git a/src/dev/x86/SouthBridge.py b/src/dev/x86/SouthBridge.py
+index 6570cac..35866a7 100644
+--- a/src/dev/x86/SouthBridge.py
++++ b/src/dev/x86/SouthBridge.py
+@@ -81,7 +81,6 @@ class SouthBridge(SimObject):
+         # Tell the devices about each other
+         self.pic1.slave = self.pic2
+         self.speaker.i8254 = self.pit
+-        self.io_apic.external_int_pic = self.pic1
+         # Connect to the bus
+         self.cmos.pio = bus.mem_side_ports
+         self.dma1.pio = bus.mem_side_ports
+diff --git a/src/dev/x86/i82094aa.cc b/src/dev/x86/i82094aa.cc
+index f5e51b0..437b462 100644
+--- a/src/dev/x86/i82094aa.cc
++++ b/src/dev/x86/i82094aa.cc
+@@ -43,8 +43,7 @@ namespace gem5
+ {
+ 
+ X86ISA::I82094AA::I82094AA(const Params &p)
+-    : BasicPioDevice(p, 20), extIntPic(p.external_int_pic),
+-      lowestPriorityOffset(0),
++    : BasicPioDevice(p, 20), lowestPriorityOffset(0),
+       intRequestPort(name() + ".int_request", this, this, p.int_latency)
+ {
+     // This assumes there's only one I/O APIC in the system and since the apic
+@@ -179,7 +178,7 @@ X86ISA::I82094AA::readReg(uint8_t offset)
+ }
+ 
+ void
+-X86ISA::I82094AA::signalInterrupt(int line)
++X86ISA::I82094AA::requestInterrupt(int line)
+ {
+     DPRINTF(I82094AA, "Received interrupt %d.\n", line);
+     assert(line < TableSize);
+@@ -187,67 +186,83 @@ X86ISA::I82094AA::signalInterrupt(int line)
+     if (entry.mask) {
+         DPRINTF(I82094AA, "Entry was masked.\n");
+         return;
++    }
++
++    TriggerIntMessage message = 0;
++
++    message.destination = entry.dest;
++    message.deliveryMode = entry.deliveryMode;
++    message.destMode = entry.destMode;
++    message.level = entry.polarity;
++    message.trigger = entry.trigger;
++
++    if (entry.deliveryMode == delivery_mode::ExtInt) {
++        // We need to ask the I8259 for the vector.
++        PacketPtr pkt = buildIntAcknowledgePacket();
++        auto on_completion = [this, message](PacketPtr pkt) {
++            auto msg_copy = message;
++            msg_copy.vector = pkt->getLE<uint8_t>();
++            signalInterrupt(msg_copy);
++            delete pkt;
++        };
++        intRequestPort.sendMessage(pkt, sys->isTimingMode(),
++                on_completion);
+     } else {
+-        TriggerIntMessage message = 0;
+-        message.destination = entry.dest;
+-        if (entry.deliveryMode == delivery_mode::ExtInt) {
+-            assert(extIntPic);
+-            message.vector = extIntPic->getVector();
+-        } else {
+-            message.vector = entry.vector;
++        message.vector = entry.vector;
++        signalInterrupt(message);
++    }
++}
++
++void
++X86ISA::I82094AA::signalInterrupt(TriggerIntMessage message)
++{
++    std::list<int> apics;
++    int numContexts = sys->threads.size();
++    if (message.destMode == 0) {
++        if (message.deliveryMode == delivery_mode::LowestPriority) {
++            panic("Lowest priority delivery mode from the "
++                    "IO APIC aren't supported in physical "
++                    "destination mode.\n");
+         }
+-        message.deliveryMode = entry.deliveryMode;
+-        message.destMode = entry.destMode;
+-        message.level = entry.polarity;
+-        message.trigger = entry.trigger;
+-        std::list<int> apics;
+-        int numContexts = sys->threads.size();
+-        if (message.destMode == 0) {
+-            if (message.deliveryMode == delivery_mode::LowestPriority) {
+-                panic("Lowest priority delivery mode from the "
+-                        "IO APIC aren't supported in physical "
+-                        "destination mode.\n");
+-            }
+-            if (message.destination == 0xFF) {
+-                for (int i = 0; i < numContexts; i++) {
+-                    apics.push_back(i);
+-                }
+-            } else {
+-                apics.push_back(message.destination);
+-            }
+-        } else {
++        if (message.destination == 0xFF) {
+             for (int i = 0; i < numContexts; i++) {
+-                BaseInterrupts *base_int = sys->threads[i]->
+-                    getCpuPtr()->getInterruptController(0);
+-                auto *localApic = dynamic_cast<Interrupts *>(base_int);
+-                if ((localApic->readReg(APIC_LOGICAL_DESTINATION) >> 24) &
+-                        message.destination) {
+-                    apics.push_back(localApic->getInitialApicId());
+-                }
++                apics.push_back(i);
+             }
+-            if (message.deliveryMode == delivery_mode::LowestPriority &&
+-                    apics.size()) {
+-                // The manual seems to suggest that the chipset just does
+-                // something reasonable for these instead of actually using
+-                // state from the local APIC. We'll just rotate an offset
+-                // through the set of APICs selected above.
+-                uint64_t modOffset = lowestPriorityOffset % apics.size();
+-                lowestPriorityOffset++;
+-                auto apicIt = apics.begin();
+-                while (modOffset--) {
+-                    apicIt++;
+-                    assert(apicIt != apics.end());
+-                }
+-                int selected = *apicIt;
+-                apics.clear();
+-                apics.push_back(selected);
++        } else {
++            apics.push_back(message.destination);
++        }
++    } else {
++        for (int i = 0; i < numContexts; i++) {
++            BaseInterrupts *base_int = sys->threads[i]->
++                getCpuPtr()->getInterruptController(0);
++            auto *localApic = dynamic_cast<Interrupts *>(base_int);
++            if ((localApic->readReg(APIC_LOGICAL_DESTINATION) >> 24) &
++                    message.destination) {
++                apics.push_back(localApic->getInitialApicId());
+             }
+         }
+-        for (auto id: apics) {
+-            PacketPtr pkt = buildIntTriggerPacket(id, message);
+-            intRequestPort.sendMessage(pkt, sys->isTimingMode());
++        if (message.deliveryMode == delivery_mode::LowestPriority &&
++                apics.size()) {
++            // The manual seems to suggest that the chipset just does
++            // something reasonable for these instead of actually using
++            // state from the local APIC. We'll just rotate an offset
++            // through the set of APICs selected above.
++            uint64_t modOffset = lowestPriorityOffset % apics.size();
++            lowestPriorityOffset++;
++            auto apicIt = apics.begin();
++            while (modOffset--) {
++                apicIt++;
++                assert(apicIt != apics.end());
++            }
++            int selected = *apicIt;
++            apics.clear();
++            apics.push_back(selected);
+         }
+     }
++    for (auto id: apics) {
++        PacketPtr pkt = buildIntTriggerPacket(id, message);
++        intRequestPort.sendMessage(pkt, sys->isTimingMode());
++    }
+ }
+ 
+ void
+@@ -255,7 +270,7 @@ X86ISA::I82094AA::raiseInterruptPin(int number)
+ {
+     assert(number < TableSize);
+     if (!pinStates[number])
+-        signalInterrupt(number);
++        requestInterrupt(number);
+     pinStates[number] = true;
+ }
+ 
+diff --git a/src/dev/x86/i82094aa.hh b/src/dev/x86/i82094aa.hh
+index 6427dbf..b50d122 100644
+--- a/src/dev/x86/i82094aa.hh
++++ b/src/dev/x86/i82094aa.hh
+@@ -31,6 +31,7 @@
+ 
+ #include <map>
+ 
++#include "arch/x86/intmessage.hh"
+ #include "base/bitunion.hh"
+ #include "dev/x86/intdev.hh"
+ #include "dev/intpin.hh"
+@@ -43,7 +44,6 @@ namespace gem5
+ namespace X86ISA
+ {
+ 
+-class I8259;
+ class Interrupts;
+ 
+ class I82094AA : public BasicPioDevice
+@@ -66,8 +66,6 @@ class I82094AA : public BasicPioDevice
+     EndBitUnion(RedirTableEntry)
+ 
+   protected:
+-    I8259 * extIntPic;
+-
+     uint8_t regSel;
+     uint8_t initialApicId;
+     uint8_t id;
+@@ -87,6 +85,8 @@ class I82094AA : public BasicPioDevice
+ 
+     IntRequestPort<I82094AA> intRequestPort;
+ 
++    void signalInterrupt(TriggerIntMessage message);
++
+   public:
+     using Params = I82094AAParams;
+ 
+@@ -105,7 +105,7 @@ class I82094AA : public BasicPioDevice
+ 
+     bool recvResponse(PacketPtr pkt);
+ 
+-    void signalInterrupt(int line);
++    void requestInterrupt(int line);
+     void raiseInterruptPin(int number);
+     void lowerInterruptPin(int number);
+ 
+diff --git a/src/dev/x86/pc.cc b/src/dev/x86/pc.cc
+index 71881aa..e7f4636 100644
+--- a/src/dev/x86/pc.cc
++++ b/src/dev/x86/pc.cc
+@@ -107,7 +107,7 @@ Pc::init()
+ void
+ Pc::postConsoleInt()
+ {
+-    southBridge->ioApic->signalInterrupt(4);
++    southBridge->ioApic->requestInterrupt(4);
+     southBridge->pic1->signalInterrupt(4);
+ }
+ 
+@@ -121,7 +121,7 @@ Pc::clearConsoleInt()
+ void
+ Pc::postPciInt(int line)
+ {
+-    southBridge->ioApic->signalInterrupt(line);
++    southBridge->ioApic->requestInterrupt(line);
+ }
+ 
+ void
+-- 
+1.8.3.1
+

@@ -1,0 +1,1073 @@
+From 9b2328d63754613460f5d3de78f0aa945cdd8ff5 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 18:36:37 -0700
+Subject: [PATCH 703/757] arch-x86: Use a namespace for integer registers.
+
+Also reformat the integer register index constants to fit with the style
+guide, ie remove the INTREG_ prefix (replaced by the namespace) and
+captialize only the first letter.
+
+Change-Id: I682a337944f64a1b96b971a1beb895289b9d299e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49752
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/emulenv.cc            |  28 ++--
+ src/arch/x86/emulenv.hh            |   4 +-
+ src/arch/x86/faults.cc             |  10 +-
+ src/arch/x86/insts/microop_args.hh |   6 +-
+ src/arch/x86/insts/static_inst.cc  |  39 ++---
+ src/arch/x86/isa.cc                |   4 +-
+ src/arch/x86/isa/macroop.isa       |   2 +-
+ src/arch/x86/isa/microasm.isa      |   8 +-
+ src/arch/x86/isa/operands.isa      |  34 ++---
+ src/arch/x86/isa/specialize.isa    |  10 +-
+ src/arch/x86/kvm/x86_cpu.cc        |  36 ++---
+ src/arch/x86/linux/fs_workload.cc  |   2 +-
+ src/arch/x86/linux/linux.hh        |   4 +-
+ src/arch/x86/linux/se_workload.cc  |  12 +-
+ src/arch/x86/linux/se_workload.hh  |   4 +-
+ src/arch/x86/nativetrace.cc        |  32 ++---
+ src/arch/x86/process.cc            |   2 +-
+ src/arch/x86/pseudo_inst_abi.hh    |   8 +-
+ src/arch/x86/regs/int.hh           | 282 +++++++++++++++++++------------------
+ src/arch/x86/remote_gdb.cc         |  96 ++++++-------
+ 20 files changed, 317 insertions(+), 306 deletions(-)
+
+diff --git a/src/arch/x86/emulenv.cc b/src/arch/x86/emulenv.cc
+index b628293..317be12 100644
+--- a/src/arch/x86/emulenv.cc
++++ b/src/arch/x86/emulenv.cc
+@@ -56,37 +56,39 @@ void EmulEnv::doModRM(const ExtMachInst & machInst)
+         base = machInst.sib.base | (machInst.rex.b << 3);
+         //In this special case, we don't use a base. The displacement also
+         //changes, but that's managed by the decoder.
+-        if (machInst.sib.base == INTREG_RBP && machInst.modRM.mod == 0)
+-            base = INTREG_T0;
++        if (machInst.sib.base == (RegIndex)int_reg::Rbp &&
++                machInst.modRM.mod == 0)
++            base = int_reg::T0;
+         //In -this- special case, we don't use an index.
+-        if (index == INTREG_RSP)
+-            index = INTREG_T0;
++        if (index == int_reg::Rsp)
++            index = int_reg::T0;
+     } else {
+         if (machInst.addrSize == 2) {
+             unsigned rm = machInst.modRM.rm;
+             if (rm <= 3) {
+                 scale = 1;
+                 if (rm < 2) {
+-                    base = INTREG_RBX;
++                    base = int_reg::Rbx;
+                 } else {
+-                    base = INTREG_RBP;
++                    base = int_reg::Rbp;
+                 }
+-                index = (rm % 2) ? INTREG_RDI : INTREG_RSI;
++                index = (rm % 2) ? int_reg::Rdi : int_reg::Rsi;
+             } else {
+                 scale = 0;
+                 switch (rm) {
+                   case 4:
+-                    base = INTREG_RSI;
++                    base = int_reg::Rsi;
+                     break;
+                   case 5:
+-                    base = INTREG_RDI;
++                    base = int_reg::Rdi;
+                     break;
+                   case 6:
+                     // There is a special case when mod is 0 and rm is 6.
+-                    base = machInst.modRM.mod == 0 ? INTREG_T0 : INTREG_RBP;
++                    base = machInst.modRM.mod == 0 ? int_reg::T0 :
++                        int_reg::Rbp;
+                     break;
+                   case 7:
+-                    base = INTREG_RBX;
++                    base = int_reg::Rbx;
+                     break;
+                 }
+             }
+@@ -96,12 +98,12 @@ void EmulEnv::doModRM(const ExtMachInst & machInst)
+             if (machInst.modRM.mod == 0 && machInst.modRM.rm == 5) {
+                 //Since we need to use a different encoding of this
+                 //instruction anyway, just ignore the base in those cases
+-                base = INTREG_T0;
++                base = int_reg::T0;
+             }
+         }
+     }
+     //Figure out what segment to use.
+-    if (base != INTREG_RBP && base != INTREG_RSP) {
++    if (base != int_reg::Rbp && base != int_reg::Rsp) {
+         seg = SEGMENT_REG_DS;
+     } else {
+         seg = SEGMENT_REG_SS;
+diff --git a/src/arch/x86/emulenv.hh b/src/arch/x86/emulenv.hh
+index ad14747..b097f95 100644
+--- a/src/arch/x86/emulenv.hh
++++ b/src/arch/x86/emulenv.hh
+@@ -62,8 +62,8 @@ namespace X86ISA
+         EmulEnv(RegIndex _reg, RegIndex _regm,
+                 int _dataSize, int _addressSize, int _stackSize) :
+             reg(_reg), regm(_regm), seg(SEGMENT_REG_DS),
+-            scale(0), index(INTREG_T0),
+-            base(INTREG_T0),
++            scale(0), index(int_reg::T0),
++            base(int_reg::T0),
+             dataSize(_dataSize), addressSize(_addressSize),
+             stackSize(_stackSize)
+         {;}
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 265ce07..d864fb4 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -78,9 +78,9 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+         else
+             entry = extern_label_legacyModeInterrupt;
+     }
+-    tc->setIntReg(INTREG_MICRO(1), vector);
++    tc->setIntReg(intRegMicro(1), vector);
+     Addr cs_base = tc->readMiscRegNoEffect(MISCREG_CS_EFF_BASE);
+-    tc->setIntReg(INTREG_MICRO(7), pc.pc() - cs_base);
++    tc->setIntReg(intRegMicro(7), pc.pc() - cs_base);
+     if (errorCode != (uint64_t)(-1)) {
+         if (m5reg.mode == LongMode) {
+             entry = extern_label_longModeInterruptWithError;
+@@ -88,7 +88,7 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+             panic("Legacy mode interrupts with error codes "
+                     "aren't implemented.");
+         }
+-        tc->setIntReg(INTREG_MICRO(15), errorCode);
++        tc->setIntReg(intRegMicro(15), errorCode);
+     }
+     pc.upc(romMicroPC(entry));
+     pc.nupc(romMicroPC(entry) + 1);
+@@ -183,7 +183,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ {
+     DPRINTF(Faults, "Init interrupt.\n");
+     // The otherwise unmodified integer registers should be set to 0.
+-    for (int index = 0; index < NUM_ARCH_INTREGS; index++) {
++    for (int index = 0; index < int_reg::NumArchRegs; index++) {
+         tc->setIntReg(index, 0);
+     }
+ 
+@@ -275,7 +275,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     // This value should be the family/model/stepping of the processor.
+     // (page 418). It should be consistent with the value from CPUID, but
+     // the actual value probably doesn't matter much.
+-    tc->setIntReg(INTREG_RDX, 0);
++    tc->setIntReg(int_reg::Rdx, 0);
+ 
+     tc->setMiscReg(MISCREG_DR0, 0);
+     tc->setMiscReg(MISCREG_DR1, 0);
+diff --git a/src/arch/x86/insts/microop_args.hh b/src/arch/x86/insts/microop_args.hh
+index 7769764..e0c3f2b 100644
+--- a/src/arch/x86/insts/microop_args.hh
++++ b/src/arch/x86/insts/microop_args.hh
+@@ -156,7 +156,7 @@ struct FoldedOp : public Base
+ 
+     template <class InstType>
+     FoldedOp(InstType *inst, ArgType idx) :
+-        Base(INTREG_FOLDED(idx.index, inst->foldOBit), inst->dataSize)
++        Base(intRegFolded(idx.index, inst->foldOBit), inst->dataSize)
+     {}
+ 
+     void
+@@ -361,8 +361,8 @@ struct AddrOp
+ 
+     template <class InstType>
+     AddrOp(InstType *inst, const ArgType &args) : scale(args.scale),
+-        index(INTREG_FOLDED(args.index.index, inst->foldABit)),
+-        base(INTREG_FOLDED(args.base.index, inst->foldABit)),
++        index(intRegFolded(args.index.index, inst->foldABit)),
++        base(intRegFolded(args.base.index, inst->foldABit)),
+         disp(args.disp), segment(args.segment.index),
+         size(inst->addressSize)
+     {
+diff --git a/src/arch/x86/insts/static_inst.cc b/src/arch/x86/insts/static_inst.cc
+index 01e62f1..0b1a000 100644
+--- a/src/arch/x86/insts/static_inst.cc
++++ b/src/arch/x86/insts/static_inst.cc
+@@ -166,56 +166,57 @@ X86StaticInst::printReg(std::ostream &os, RegId reg, int size)
+                 suffix = "l";
+ 
+             switch (reg_idx) {
+-              case INTREG_RAX:
++              case int_reg::Rax:
+                 ccprintf(os, abcdFormats[size], "a");
+                 break;
+-              case INTREG_RBX:
++              case int_reg::Rbx:
+                 ccprintf(os, abcdFormats[size], "b");
+                 break;
+-              case INTREG_RCX:
++              case int_reg::Rcx:
+                 ccprintf(os, abcdFormats[size], "c");
+                 break;
+-              case INTREG_RDX:
++              case int_reg::Rdx:
+                 ccprintf(os, abcdFormats[size], "d");
+                 break;
+-              case INTREG_RSP:
++              case int_reg::Rsp:
+                 ccprintf(os, piFormats[size], "sp");
+                 break;
+-              case INTREG_RBP:
++              case int_reg::Rbp:
+                 ccprintf(os, piFormats[size], "bp");
+                 break;
+-              case INTREG_RSI:
++              case int_reg::Rsi:
+                 ccprintf(os, piFormats[size], "si");
+                 break;
+-              case INTREG_RDI:
++              case int_reg::Rdi:
+                 ccprintf(os, piFormats[size], "di");
+                 break;
+-              case INTREG_R8W:
++              case int_reg::R8:
+                 ccprintf(os, longFormats[size], "8");
+                 break;
+-              case INTREG_R9W:
++              case int_reg::R9:
+                 ccprintf(os, longFormats[size], "9");
+                 break;
+-              case INTREG_R10W:
++              case int_reg::R10:
+                 ccprintf(os, longFormats[size], "10");
+                 break;
+-              case INTREG_R11W:
++              case int_reg::R11:
+                 ccprintf(os, longFormats[size], "11");
+                 break;
+-              case INTREG_R12W:
++              case int_reg::R12:
+                 ccprintf(os, longFormats[size], "12");
+                 break;
+-              case INTREG_R13W:
++              case int_reg::R13:
+                 ccprintf(os, longFormats[size], "13");
+                 break;
+-              case INTREG_R14W:
++              case int_reg::R14:
+                 ccprintf(os, longFormats[size], "14");
+                 break;
+-              case INTREG_R15W:
++              case int_reg::R15:
+                 ccprintf(os, longFormats[size], "15");
+                 break;
+               default:
+-                ccprintf(os, microFormats[size], reg_idx - INTREG_MICRO_BEGIN);
++                ccprintf(os, microFormats[size],
++                        reg_idx - int_reg::MicroBegin);
+             }
+             ccprintf(os, suffix);
+         }
+@@ -265,13 +266,13 @@ X86StaticInst::printMem(std::ostream &os, uint8_t segment,
+         os << "rip";
+         someAddr = true;
+     } else {
+-        if (scale != 0 && index != NUM_INTREGS) {
++        if (scale != 0 && index != int_reg::NumRegs) {
+             if (scale != 1)
+                 ccprintf(os, "%d*", scale);
+             printReg(os, RegId(IntRegClass, index), addressSize);
+             someAddr = true;
+         }
+-        if (base != NUM_INTREGS) {
++        if (base != int_reg::NumRegs) {
+             if (someAddr)
+                 os << " + ";
+             printReg(os, RegId(IntRegClass, base), addressSize);
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index ac9f49a..3766aac 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -146,7 +146,7 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+     fatal_if(vendorString.size() != 12,
+              "CPUID vendor string must be 12 characters\n");
+ 
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
++    _regClasses.emplace_back(int_reg::NumRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
+@@ -181,7 +181,7 @@ void
+ ISA::copyRegsFrom(ThreadContext *src)
+ {
+     //copy int regs
+-    for (int i = 0; i < NumIntRegs; ++i)
++    for (int i = 0; i < int_reg::NumRegs; ++i)
+          tc->setIntRegFlat(i, src->readIntRegFlat(i));
+     //copy float regs
+     for (int i = 0; i < NumFloatRegs; ++i)
+diff --git a/src/arch/x86/isa/macroop.isa b/src/arch/x86/isa/macroop.isa
+index 8bd3b7e..b054e79 100644
+--- a/src/arch/x86/isa/macroop.isa
++++ b/src/arch/x86/isa/macroop.isa
+@@ -252,7 +252,7 @@ let {{
+                 memoryInst = "true"
+             else:
+                 memoryInst = "false"
+-            regSize = '''(%s || (env.base == INTREG_RSP && %s) ?
++            regSize = '''(%s || (env.base == int_reg::Rsp && %s) ?
+                          env.stackSize :
+                          env.dataSize)''' % (useStackSize, memoryInst)
+             iop = InstObjParams(self.getMnemonic(), self.name, "Macroop",
+diff --git a/src/arch/x86/isa/microasm.isa b/src/arch/x86/isa/microasm.isa
+index 7d621b7..a3d7310 100644
+--- a/src/arch/x86/isa/microasm.isa
++++ b/src/arch/x86/isa/microasm.isa
+@@ -78,7 +78,7 @@ let {{
+ 
+     # Add in symbols for the microcode registers
+     for num in range(16):
+-        assembler.symbols["t%d" % num] = gpRegIdx("INTREG_MICRO(%d)" % num)
++        assembler.symbols["t%d" % num] = gpRegIdx("intRegMicro(%d)" % num)
+     for num in range(8):
+         assembler.symbols["ufp%d" % num] = \
+             fpRegIdx("FLOATREG_MICROFP(%d)" % num)
+@@ -152,12 +152,12 @@ let {{
+     for reg in ('ax', 'bx', 'cx', 'dx', 'sp', 'bp', 'si', 'di', \
+                 '8',  '9',  '10', '11', '12', '13', '14', '15'):
+         assembler.symbols["r%s" % reg] = \
+-            gpRegIdx("INTREG_R%s" % reg.upper())
++            gpRegIdx("int_reg::R%s" % reg)
+ 
+     for reg in ('ah', 'bh', 'ch', 'dh'):
+         assembler.symbols[reg] = \
+-            gpRegIdx("X86ISA::INTREG_FOLDED(INTREG_%s, IntFoldBit)" %
+-                    reg.upper())
++            gpRegIdx("X86ISA::intRegFolded(int_reg::%s, IntFoldBit)" %
++                    reg.capitalize())
+ 
+     for reg in range(16):
+         assembler.symbols["cr%d" % reg] = crRegIdx("%d" % reg)
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index d48d4a1..22d4605 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -57,7 +57,7 @@ let {{
+     class IntReg(IntRegOp):
+         @overrideInOperand
+         def regId(self):
+-            return f'(({self.reg_spec}) == gem5::X86ISA::INTREG_T0) ? ' \
++            return f'(({self.reg_spec}) == gem5::X86ISA::int_reg::T0) ? ' \
+                    f'RegId() : RegId({self.reg_class}, {self.reg_spec})'
+         def __init__(self, idx, id, data_size='dataSize', *args, **kwargs):
+             super().__init__('uqw', idx, 'IsInteger', id, *args, **kwargs)
+@@ -147,22 +147,22 @@ def operands {{
+         'PData':         PickedReg('data', 6),
+         'DataLow':       IntReg('dataLow', 6),
+         'DataHi':        IntReg('dataHi', 6),
+-        'ProdLow':       IntReg('X86ISA::INTREG_PRODLOW', 7),
+-        'ProdHi':        IntReg('X86ISA::INTREG_PRODHI', 8),
+-        'Quotient':      IntReg('X86ISA::INTREG_QUOTIENT', 9),
+-        'Remainder':     IntReg('X86ISA::INTREG_REMAINDER', 10),
+-        'Divisor':       IntReg('X86ISA::INTREG_DIVISOR', 11),
+-        'DoubleBits':    IntReg('X86ISA::INTREG_DOUBLEBITS', 11),
+-        'Rax':           IntReg('X86ISA::INTREG_RAX', 12),
+-        'Rbx':           IntReg('X86ISA::INTREG_RBX', 13),
+-        'Rcx':           IntReg('X86ISA::INTREG_RCX', 14),
+-        'Rdx':           IntReg('X86ISA::INTREG_RDX', 15),
+-        'Rsp':           IntReg('X86ISA::INTREG_RSP', 16),
+-        'Rbp':           IntReg('X86ISA::INTREG_RBP', 17),
+-        'Rsi':           IntReg('X86ISA::INTREG_RSI', 18),
+-        'Rdi':           IntReg('X86ISA::INTREG_RDI', 19),
+-        'R8':            IntReg('X86ISA::INTREG_R8', 20),
+-        'R9':            IntReg('X86ISA::INTREG_R9', 21),
++        'ProdLow':       IntReg('X86ISA::int_reg::Prodlow', 7),
++        'ProdHi':        IntReg('X86ISA::int_reg::Prodhi', 8),
++        'Quotient':      IntReg('X86ISA::int_reg::Quotient', 9),
++        'Remainder':     IntReg('X86ISA::int_reg::Remainder', 10),
++        'Divisor':       IntReg('X86ISA::int_reg::Divisor', 11),
++        'DoubleBits':    IntReg('X86ISA::int_reg::Doublebits', 11),
++        'Rax':           IntReg('X86ISA::int_reg::Rax', 12),
++        'Rbx':           IntReg('X86ISA::int_reg::Rbx', 13),
++        'Rcx':           IntReg('X86ISA::int_reg::Rcx', 14),
++        'Rdx':           IntReg('X86ISA::int_reg::Rdx', 15),
++        'Rsp':           IntReg('X86ISA::int_reg::Rsp', 16),
++        'Rbp':           IntReg('X86ISA::int_reg::Rbp', 17),
++        'Rsi':           IntReg('X86ISA::int_reg::Rsi', 18),
++        'Rdi':           IntReg('X86ISA::int_reg::Rdi', 19),
++        'R8':            IntReg('X86ISA::int_reg::R8', 20),
++        'R9':            IntReg('X86ISA::int_reg::R9', 21),
+         'FpSrcReg1':     FloatReg('src1', 22),
+         'FpSrcReg2':     FloatReg('src2', 23),
+         'FpDestReg':     FloatReg('dest', 24),
+diff --git a/src/arch/x86/isa/specialize.isa b/src/arch/x86/isa/specialize.isa
+index f90aa48..854fd4d 100644
+--- a/src/arch/x86/isa/specialize.isa
++++ b/src/arch/x86/isa/specialize.isa
+@@ -142,9 +142,9 @@ let {{
+                 #Figure out what to do with fixed register operands
+                 #This is the index to use, so we should stick it some place.
+                 if opType.reg in ("A", "B", "C", "D"):
+-                    regString = "INTREG_R%sX" % opType.reg
++                    regString = "int_reg::R%sx" % opType.reg.lower()
+                 else:
+-                    regString = "INTREG_R%s" % opType.reg
++                    regString = "int_reg::R%s" % opType.reg.lower()
+                 env.addReg(regString)
+                 if env.regmUsed:
+                     regString = "env.regm"
+@@ -275,12 +275,14 @@ let {{
+                 if opType.tag == "X":
+                     env.addToDisassembly(
+                             '''printMem(out, env.seg,
+-                                1, X86ISA::NUM_INTREGS, X86ISA::INTREG_RSI, 0,
++                                1, X86ISA::int_reg::NumRegs,
++                                X86ISA::int_reg::Rsi, 0,
+                                 env.addressSize, false);''')
+                 else:
+                     env.addToDisassembly(
+                             '''printMem(out, SEGMENT_REG_ES,
+-                                1, X86ISA::NUM_INTREGS, X86ISA::INTREG_RDI, 0,
++                                1, X86ISA::int_reg::NumRegs,
++                                X86ISA::int_reg::Rdi, 0,
+                                 env.addressSize, false);''')
+                 Name += "_M"
+             else:
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index 49274da..6004b58 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -108,24 +108,24 @@ struct GEM5_PACKED FXSave
+ 
+ static_assert(sizeof(FXSave) == 512, "Unexpected size of FXSave");
+ 
+-#define FOREACH_IREG()                          \
+-    do {                                        \
+-        APPLY_IREG(rax, INTREG_RAX);            \
+-        APPLY_IREG(rbx, INTREG_RBX);            \
+-        APPLY_IREG(rcx, INTREG_RCX);            \
+-        APPLY_IREG(rdx, INTREG_RDX);            \
+-        APPLY_IREG(rsi, INTREG_RSI);            \
+-        APPLY_IREG(rdi, INTREG_RDI);            \
+-        APPLY_IREG(rsp, INTREG_RSP);            \
+-        APPLY_IREG(rbp, INTREG_RBP);            \
+-        APPLY_IREG(r8, INTREG_R8);              \
+-        APPLY_IREG(r9, INTREG_R9);              \
+-        APPLY_IREG(r10, INTREG_R10);            \
+-        APPLY_IREG(r11, INTREG_R11);            \
+-        APPLY_IREG(r12, INTREG_R12);            \
+-        APPLY_IREG(r13, INTREG_R13);            \
+-        APPLY_IREG(r14, INTREG_R14);            \
+-        APPLY_IREG(r15, INTREG_R15);            \
++#define FOREACH_IREG() \
++    do { \
++        APPLY_IREG(rax, int_reg::Rax); \
++        APPLY_IREG(rbx, int_reg::Rbx); \
++        APPLY_IREG(rcx, int_reg::Rcx); \
++        APPLY_IREG(rdx, int_reg::Rdx); \
++        APPLY_IREG(rsi, int_reg::Rsi); \
++        APPLY_IREG(rdi, int_reg::Rdi); \
++        APPLY_IREG(rsp, int_reg::Rsp); \
++        APPLY_IREG(rbp, int_reg::Rbp); \
++        APPLY_IREG(r8, int_reg::R8); \
++        APPLY_IREG(r9, int_reg::R9); \
++        APPLY_IREG(r10, int_reg::R10); \
++        APPLY_IREG(r11, int_reg::R11); \
++        APPLY_IREG(r12, int_reg::R12); \
++        APPLY_IREG(r13, int_reg::R13); \
++        APPLY_IREG(r14, int_reg::R14); \
++        APPLY_IREG(r15, int_reg::R15); \
+     } while (0)
+ 
+ #define FOREACH_SREG()                                  \
+diff --git a/src/arch/x86/linux/fs_workload.cc b/src/arch/x86/linux/fs_workload.cc
+index f3c1b87..7b794e6 100644
+--- a/src/arch/x86/linux/fs_workload.cc
++++ b/src/arch/x86/linux/fs_workload.cc
+@@ -126,7 +126,7 @@ FsLinux::initState()
+      * Pass the location of the real mode data structure to the kernel
+      * using register %esi. We'll use %rsi which should be equivalent.
+      */
+-    system->threads[0]->setIntReg(INTREG_RSI, realModeData);
++    system->threads[0]->setIntReg(int_reg::Rsi, realModeData);
+ }
+ 
+ } // namespace X86ISA
+diff --git a/src/arch/x86/linux/linux.hh b/src/arch/x86/linux/linux.hh
+index 86d9c62..e937ca5 100644
+--- a/src/arch/x86/linux/linux.hh
++++ b/src/arch/x86/linux/linux.hh
+@@ -71,7 +71,7 @@ class X86Linux : public Linux
+         }
+ 
+         if (stack)
+-            ctc->setIntReg(X86ISA::INTREG_RSP, stack);
++            ctc->setIntReg(X86ISA::int_reg::Rsp, stack);
+     }
+ 
+     class SyscallABI {};
+@@ -88,7 +88,7 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        tc->setIntReg(X86ISA::INTREG_RAX, ret.encodedValue());
++        tc->setIntReg(X86ISA::int_reg::Rax, ret.encodedValue());
+     }
+ };
+ 
+diff --git a/src/arch/x86/linux/se_workload.cc b/src/arch/x86/linux/se_workload.cc
+index 26f2198..93086ee 100644
+--- a/src/arch/x86/linux/se_workload.cc
++++ b/src/arch/x86/linux/se_workload.cc
+@@ -97,12 +97,14 @@ namespace X86ISA
+ EmuLinux::EmuLinux(const Params &p) : SEWorkload(p, PageShift)
+ {}
+ 
+-const std::vector<IntRegIndex> EmuLinux::SyscallABI64::ArgumentRegs = {
+-    INTREG_RDI, INTREG_RSI, INTREG_RDX, INTREG_R10W, INTREG_R8W, INTREG_R9W
++const std::vector<RegIndex> EmuLinux::SyscallABI64::ArgumentRegs = {
++    int_reg::Rdi, int_reg::Rsi, int_reg::Rdx,
++    int_reg::R10, int_reg::R8, int_reg::R9
+ };
+ 
+-const std::vector<IntRegIndex> EmuLinux::SyscallABI32::ArgumentRegs = {
+-    INTREG_EBX, INTREG_ECX, INTREG_EDX, INTREG_ESI, INTREG_EDI, INTREG_EBP
++const std::vector<RegIndex> EmuLinux::SyscallABI32::ArgumentRegs = {
++    int_reg::Ebx, int_reg::Ecx, int_reg::Edx,
++    int_reg::Esi, int_reg::Edi, int_reg::Ebp
+ };
+ 
+ void
+@@ -113,7 +115,7 @@ EmuLinux::syscall(ThreadContext *tc)
+     // This will move into the base SEWorkload function at some point.
+     process->Process::syscall(tc);
+ 
+-    RegVal rax = tc->readIntReg(INTREG_RAX);
++    RegVal rax = tc->readIntReg(int_reg::Rax);
+     if (dynamic_cast<X86_64Process *>(process)) {
+         syscallDescs64.get(rax)->doSyscall(tc);
+     } else if (auto *proc32 = dynamic_cast<I386Process *>(process)) {
+diff --git a/src/arch/x86/linux/se_workload.hh b/src/arch/x86/linux/se_workload.hh
+index 7ae0434..4cb3ade 100644
+--- a/src/arch/x86/linux/se_workload.hh
++++ b/src/arch/x86/linux/se_workload.hh
+@@ -79,13 +79,13 @@ class EmuLinux : public SEWorkload
+     struct SyscallABI64 :
+         public GenericSyscallABI64, public X86Linux::SyscallABI
+     {
+-        static const std::vector<IntRegIndex> ArgumentRegs;
++        static const std::vector<RegIndex> ArgumentRegs;
+     };
+ 
+     struct SyscallABI32 :
+         public GenericSyscallABI32, public X86Linux::SyscallABI
+     {
+-        static const std::vector<IntRegIndex> ArgumentRegs;
++        static const std::vector<RegIndex> ArgumentRegs;
+     };
+ 
+   private:
+diff --git a/src/arch/x86/nativetrace.cc b/src/arch/x86/nativetrace.cc
+index 697fb18..5851d27 100644
+--- a/src/arch/x86/nativetrace.cc
++++ b/src/arch/x86/nativetrace.cc
+@@ -72,22 +72,22 @@ X86NativeTrace::ThreadState::update(NativeTrace *parent)
+ void
+ X86NativeTrace::ThreadState::update(ThreadContext *tc)
+ {
+-    rax = tc->readIntReg(X86ISA::INTREG_RAX);
+-    rcx = tc->readIntReg(X86ISA::INTREG_RCX);
+-    rdx = tc->readIntReg(X86ISA::INTREG_RDX);
+-    rbx = tc->readIntReg(X86ISA::INTREG_RBX);
+-    rsp = tc->readIntReg(X86ISA::INTREG_RSP);
+-    rbp = tc->readIntReg(X86ISA::INTREG_RBP);
+-    rsi = tc->readIntReg(X86ISA::INTREG_RSI);
+-    rdi = tc->readIntReg(X86ISA::INTREG_RDI);
+-    r8 = tc->readIntReg(X86ISA::INTREG_R8);
+-    r9 = tc->readIntReg(X86ISA::INTREG_R9);
+-    r10 = tc->readIntReg(X86ISA::INTREG_R10);
+-    r11 = tc->readIntReg(X86ISA::INTREG_R11);
+-    r12 = tc->readIntReg(X86ISA::INTREG_R12);
+-    r13 = tc->readIntReg(X86ISA::INTREG_R13);
+-    r14 = tc->readIntReg(X86ISA::INTREG_R14);
+-    r15 = tc->readIntReg(X86ISA::INTREG_R15);
++    rax = tc->readIntReg(X86ISA::int_reg::Rax);
++    rcx = tc->readIntReg(X86ISA::int_reg::Rcx);
++    rdx = tc->readIntReg(X86ISA::int_reg::Rdx);
++    rbx = tc->readIntReg(X86ISA::int_reg::Rbx);
++    rsp = tc->readIntReg(X86ISA::int_reg::Rsp);
++    rbp = tc->readIntReg(X86ISA::int_reg::Rbp);
++    rsi = tc->readIntReg(X86ISA::int_reg::Rsi);
++    rdi = tc->readIntReg(X86ISA::int_reg::Rdi);
++    r8 = tc->readIntReg(X86ISA::int_reg::R8);
++    r9 = tc->readIntReg(X86ISA::int_reg::R9);
++    r10 = tc->readIntReg(X86ISA::int_reg::R10);
++    r11 = tc->readIntReg(X86ISA::int_reg::R11);
++    r12 = tc->readIntReg(X86ISA::int_reg::R12);
++    r13 = tc->readIntReg(X86ISA::int_reg::R13);
++    r14 = tc->readIntReg(X86ISA::int_reg::R14);
++    r15 = tc->readIntReg(X86ISA::int_reg::R15);
+     rip = tc->pcState().as<X86ISA::PCState>().npc();
+     //This should be expanded if x87 registers are considered
+     for (int i = 0; i < 8; i++)
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index b1d2f43..56510c4 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -994,7 +994,7 @@ X86Process::argsInit(int pageSize,
+ 
+     ThreadContext *tc = system->threads[contextIds[0]];
+     // Set the stack pointer register
+-    tc->setIntReg(INTREG_RSP, stack_min);
++    tc->setIntReg(int_reg::Rsp, stack_min);
+ 
+     // There doesn't need to be any segment base added in since we're dealing
+     // with the flat segmentation model.
+diff --git a/src/arch/x86/pseudo_inst_abi.hh b/src/arch/x86/pseudo_inst_abi.hh
+index 456a18e..386b8a4 100644
+--- a/src/arch/x86/pseudo_inst_abi.hh
++++ b/src/arch/x86/pseudo_inst_abi.hh
+@@ -59,7 +59,7 @@ struct Result<X86PseudoInstABI, T>
+         // This assumes that all pseudo ops have their return value set
+         // by the pseudo op instruction. This may need to be revisited if we
+         // modify the pseudo op ABI in util/m5/m5op_x86.S
+-        tc->setIntReg(X86ISA::INTREG_RAX, ret);
++        tc->setIntReg(X86ISA::int_reg::Rax, ret);
+     }
+ };
+ 
+@@ -76,9 +76,9 @@ struct Argument<X86PseudoInstABI, uint64_t>
+ 
+         using namespace X86ISA;
+ 
+-        const int int_reg_map[] = {
+-            INTREG_RDI, INTREG_RSI, INTREG_RDX,
+-            INTREG_RCX, INTREG_R8, INTREG_R9
++        constexpr RegIndex int_reg_map[] = {
++            int_reg::Rdi, int_reg::Rsi, int_reg::Rdx,
++            int_reg::Rcx, int_reg::R8, int_reg::R9
+         };
+ 
+         return tc->readIntReg(int_reg_map[state++]);
+diff --git a/src/arch/x86/regs/int.hh b/src/arch/x86/regs/int.hh
+index 014f5a4..a7d9fd6 100644
+--- a/src/arch/x86/regs/int.hh
++++ b/src/arch/x86/regs/int.hh
+@@ -47,145 +47,149 @@ namespace gem5
+ 
+ namespace X86ISA
+ {
+-    BitUnion64(X86IntReg)
+-        Bitfield<63,0> R;
+-        SignedBitfield<63,0> SR;
+-        Bitfield<31,0> E;
+-        SignedBitfield<31,0> SE;
+-        Bitfield<15,0> X;
+-        SignedBitfield<15,0> SX;
+-        Bitfield<15,8> H;
+-        SignedBitfield<15,8> SH;
+-        Bitfield<7, 0> L;
+-        SignedBitfield<7, 0> SL;
+-    EndBitUnion(X86IntReg)
+-
+-    enum IntRegIndex
+-    {
+-        INTREG_RAX,
+-        INTREG_EAX = INTREG_RAX,
+-        INTREG_AX = INTREG_RAX,
+-        INTREG_AL = INTREG_RAX,
+-
+-        INTREG_RCX,
+-        INTREG_ECX = INTREG_RCX,
+-        INTREG_CX = INTREG_RCX,
+-        INTREG_CL = INTREG_RCX,
+-
+-        INTREG_RDX,
+-        INTREG_EDX = INTREG_RDX,
+-        INTREG_DX = INTREG_RDX,
+-        INTREG_DL = INTREG_RDX,
+-
+-        INTREG_RBX,
+-        INTREG_EBX = INTREG_RBX,
+-        INTREG_BX = INTREG_RBX,
+-        INTREG_BL = INTREG_RBX,
+-
+-        INTREG_RSP,
+-        INTREG_ESP = INTREG_RSP,
+-        INTREG_SP = INTREG_RSP,
+-        INTREG_SPL = INTREG_RSP,
+-        INTREG_AH = INTREG_RSP,
+-
+-        INTREG_RBP,
+-        INTREG_EBP = INTREG_RBP,
+-        INTREG_BP = INTREG_RBP,
+-        INTREG_BPL = INTREG_RBP,
+-        INTREG_CH = INTREG_RBP,
+-
+-        INTREG_RSI,
+-        INTREG_ESI = INTREG_RSI,
+-        INTREG_SI = INTREG_RSI,
+-        INTREG_SIL = INTREG_RSI,
+-        INTREG_DH = INTREG_RSI,
+-
+-        INTREG_RDI,
+-        INTREG_EDI = INTREG_RDI,
+-        INTREG_DI = INTREG_RDI,
+-        INTREG_DIL = INTREG_RDI,
+-        INTREG_BH = INTREG_RDI,
+-
+-        INTREG_R8,
+-        INTREG_R8D = INTREG_R8,
+-        INTREG_R8W = INTREG_R8,
+-        INTREG_R8B = INTREG_R8,
+-
+-        INTREG_R9,
+-        INTREG_R9D = INTREG_R9,
+-        INTREG_R9W = INTREG_R9,
+-        INTREG_R9B = INTREG_R9,
+-
+-        INTREG_R10,
+-        INTREG_R10D = INTREG_R10,
+-        INTREG_R10W = INTREG_R10,
+-        INTREG_R10B = INTREG_R10,
+-
+-        INTREG_R11,
+-        INTREG_R11D = INTREG_R11,
+-        INTREG_R11W = INTREG_R11,
+-        INTREG_R11B = INTREG_R11,
+-
+-        INTREG_R12,
+-        INTREG_R12D = INTREG_R12,
+-        INTREG_R12W = INTREG_R12,
+-        INTREG_R12B = INTREG_R12,
+-
+-        INTREG_R13,
+-        INTREG_R13D = INTREG_R13,
+-        INTREG_R13W = INTREG_R13,
+-        INTREG_R13B = INTREG_R13,
+-
+-        INTREG_R14,
+-        INTREG_R14D = INTREG_R14,
+-        INTREG_R14W = INTREG_R14,
+-        INTREG_R14B = INTREG_R14,
+-
+-        INTREG_R15,
+-        INTREG_R15D = INTREG_R15,
+-        INTREG_R15W = INTREG_R15,
+-        INTREG_R15B = INTREG_R15,
+-
+-        NUM_ARCH_INTREGS,
+-
+-        INTREG_MICRO_BEGIN = NUM_ARCH_INTREGS,
+-        INTREG_T0 = INTREG_MICRO_BEGIN,
+-        INTREG_MICRO_END = INTREG_MICRO_BEGIN + NumMicroIntRegs,
+-
+-        // The lower part of the result of multiplication.
+-        INTREG_PRODLOW,
+-        // The upper part of the result of multiplication.
+-        INTREG_PRODHI,
+-        // The quotient from division.
+-        INTREG_QUOTIENT,
+-        // The remainder from division.
+-        INTREG_REMAINDER,
+-        // The divisor for division.
+-        INTREG_DIVISOR,
+-        // The register to use for shift doubles.
+-        INTREG_DOUBLEBITS,
+-
+-        NUM_INTREGS,
+-    };
+-
+-    // This needs to be large enough to miss all the other bits of an index.
+-    static const IntRegIndex IntFoldBit = (IntRegIndex)(1 << 6);
+-
+-    inline static IntRegIndex
+-    INTREG_MICRO(int index)
+-    {
+-        return (IntRegIndex)(INTREG_MICRO_BEGIN + index);
+-    }
+-
+-    inline static IntRegIndex
+-    INTREG_FOLDED(int index, int foldBit)
+-    {
+-        if ((index & 0x1C) == 4 && foldBit)
+-            index = (index - 4) | foldBit;
+-        return (IntRegIndex)index;
+-    }
+-
+-    const int NumIntRegs = NUM_INTREGS;
++
++BitUnion64(X86IntReg)
++    Bitfield<63,0> R;
++    SignedBitfield<63,0> SR;
++    Bitfield<31,0> E;
++    SignedBitfield<31,0> SE;
++    Bitfield<15,0> X;
++    SignedBitfield<15,0> SX;
++    Bitfield<15,8> H;
++    SignedBitfield<15,8> SH;
++    Bitfield<7, 0> L;
++    SignedBitfield<7, 0> SL;
++EndBitUnion(X86IntReg)
++
++namespace int_reg
++{
++
++enum : RegIndex
++{
++    Rax,
++    Eax = Rax,
++    Ax = Rax,
++    Al = Rax,
++
++    Rcx,
++    Ecx = Rcx,
++    Cx = Rcx,
++    Cl = Rcx,
++
++    Rdx,
++    Edx = Rdx,
++    Dx = Rdx,
++    Dl = Rdx,
++
++    Rbx,
++    Ebx = Rbx,
++    Bx = Rbx,
++    Bl = Rbx,
++
++    Rsp,
++    Esp = Rsp,
++    Sp = Rsp,
++    Spl = Rsp,
++    Ah = Rsp,
++
++    Rbp,
++    Ebp = Rbp,
++    Bp = Rbp,
++    Bpl = Rbp,
++    Ch = Rbp,
++
++    Rsi,
++    Esi = Rsi,
++    Si = Rsi,
++    Sil = Rsi,
++    Dh = Rsi,
++
++    Rdi,
++    Edi = Rdi,
++    Di = Rdi,
++    Dil = Rdi,
++    Bh = Rdi,
++
++    R8,
++    R8d = R8,
++    R8w = R8,
++    R8b = R8,
++
++    R9,
++    R9d = R9,
++    R9w = R9,
++    R9b = R9,
++
++    R10,
++    R10d = R10,
++    R10w = R10,
++    R10b = R10,
++
++    R11,
++    R11d = R11,
++    R11w = R11,
++    R11b = R11,
++
++    R12,
++    R12d = R12,
++    R12w = R12,
++    R12b = R12,
++
++    R13,
++    R13d = R13,
++    R13w = R13,
++    R13b = R13,
++
++    R14,
++    R14d = R14,
++    R14w = R14,
++    R14b = R14,
++
++    R15,
++    R15d = R15,
++    R15w = R15,
++    R15b = R15,
++
++    NumArchRegs,
++
++    MicroBegin = NumArchRegs,
++    T0 = MicroBegin,
++    MicroEnd = MicroBegin + NumMicroIntRegs,
++
++    // The lower part of the result of multiplication.
++    Prodlow,
++    // The upper part of the result of multiplication.
++    Prodhi,
++    // The quotient from division.
++    Quotient,
++    // The remainder from division.
++    Remainder,
++    // The divisor for division.
++    Divisor,
++    // The register to use for shift doubles.
++    Doublebits,
++
++    NumRegs,
++};
++
++} // namespace int_reg
++
++// This needs to be large enough to miss all the other bits of an index.
++inline constexpr RegIndex IntFoldBit = 1 << 6;
++
++inline static constexpr RegIndex
++intRegMicro(int index)
++{
++    return int_reg::MicroBegin + index;
++}
++
++inline static constexpr RegIndex
++intRegFolded(RegIndex index, RegIndex foldBit)
++{
++    if ((index & 0x1C) == 4 && foldBit)
++        index = (index - 4) | foldBit;
++    return index;
++}
+ 
+ } // namespace X86ISA
+ } // namespace gem5
+diff --git a/src/arch/x86/remote_gdb.cc b/src/arch/x86/remote_gdb.cc
+index abb2154..3ce8b91 100644
+--- a/src/arch/x86/remote_gdb.cc
++++ b/src/arch/x86/remote_gdb.cc
+@@ -125,22 +125,22 @@ void
+ RemoteGDB::AMD64GdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+-    r.rax = context->readIntReg(INTREG_RAX);
+-    r.rbx = context->readIntReg(INTREG_RBX);
+-    r.rcx = context->readIntReg(INTREG_RCX);
+-    r.rdx = context->readIntReg(INTREG_RDX);
+-    r.rsi = context->readIntReg(INTREG_RSI);
+-    r.rdi = context->readIntReg(INTREG_RDI);
+-    r.rbp = context->readIntReg(INTREG_RBP);
+-    r.rsp = context->readIntReg(INTREG_RSP);
+-    r.r8 = context->readIntReg(INTREG_R8);
+-    r.r9 = context->readIntReg(INTREG_R9);
+-    r.r10 = context->readIntReg(INTREG_R10);
+-    r.r11 = context->readIntReg(INTREG_R11);
+-    r.r12 = context->readIntReg(INTREG_R12);
+-    r.r13 = context->readIntReg(INTREG_R13);
+-    r.r14 = context->readIntReg(INTREG_R14);
+-    r.r15 = context->readIntReg(INTREG_R15);
++    r.rax = context->readIntReg(int_reg::Rax);
++    r.rbx = context->readIntReg(int_reg::Rbx);
++    r.rcx = context->readIntReg(int_reg::Rcx);
++    r.rdx = context->readIntReg(int_reg::Rdx);
++    r.rsi = context->readIntReg(int_reg::Rsi);
++    r.rdi = context->readIntReg(int_reg::Rdi);
++    r.rbp = context->readIntReg(int_reg::Rbp);
++    r.rsp = context->readIntReg(int_reg::Rsp);
++    r.r8 = context->readIntReg(int_reg::R8);
++    r.r9 = context->readIntReg(int_reg::R9);
++    r.r10 = context->readIntReg(int_reg::R10);
++    r.r11 = context->readIntReg(int_reg::R11);
++    r.r12 = context->readIntReg(int_reg::R12);
++    r.r13 = context->readIntReg(int_reg::R13);
++    r.r14 = context->readIntReg(int_reg::R14);
++    r.r15 = context->readIntReg(int_reg::R15);
+     r.rip = context->pcState().instAddr();
+     r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+     r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+@@ -155,14 +155,14 @@ void
+ RemoteGDB::X86GdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+-    r.eax = context->readIntReg(INTREG_RAX);
+-    r.ecx = context->readIntReg(INTREG_RCX);
+-    r.edx = context->readIntReg(INTREG_RDX);
+-    r.ebx = context->readIntReg(INTREG_RBX);
+-    r.esp = context->readIntReg(INTREG_RSP);
+-    r.ebp = context->readIntReg(INTREG_RBP);
+-    r.esi = context->readIntReg(INTREG_RSI);
+-    r.edi = context->readIntReg(INTREG_RDI);
++    r.eax = context->readIntReg(int_reg::Rax);
++    r.ecx = context->readIntReg(int_reg::Rcx);
++    r.edx = context->readIntReg(int_reg::Rdx);
++    r.ebx = context->readIntReg(int_reg::Rbx);
++    r.esp = context->readIntReg(int_reg::Rsp);
++    r.ebp = context->readIntReg(int_reg::Rbp);
++    r.esi = context->readIntReg(int_reg::Rsi);
++    r.edi = context->readIntReg(int_reg::Rdi);
+     r.eip = context->pcState().instAddr();
+     r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+     r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+@@ -177,22 +177,22 @@ void
+ RemoteGDB::AMD64GdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+-    context->setIntReg(INTREG_RAX, r.rax);
+-    context->setIntReg(INTREG_RBX, r.rbx);
+-    context->setIntReg(INTREG_RCX, r.rcx);
+-    context->setIntReg(INTREG_RDX, r.rdx);
+-    context->setIntReg(INTREG_RSI, r.rsi);
+-    context->setIntReg(INTREG_RDI, r.rdi);
+-    context->setIntReg(INTREG_RBP, r.rbp);
+-    context->setIntReg(INTREG_RSP, r.rsp);
+-    context->setIntReg(INTREG_R8, r.r8);
+-    context->setIntReg(INTREG_R9, r.r9);
+-    context->setIntReg(INTREG_R10, r.r10);
+-    context->setIntReg(INTREG_R11, r.r11);
+-    context->setIntReg(INTREG_R12, r.r12);
+-    context->setIntReg(INTREG_R13, r.r13);
+-    context->setIntReg(INTREG_R14, r.r14);
+-    context->setIntReg(INTREG_R15, r.r15);
++    context->setIntReg(int_reg::Rax, r.rax);
++    context->setIntReg(int_reg::Rbx, r.rbx);
++    context->setIntReg(int_reg::Rcx, r.rcx);
++    context->setIntReg(int_reg::Rdx, r.rdx);
++    context->setIntReg(int_reg::Rsi, r.rsi);
++    context->setIntReg(int_reg::Rdi, r.rdi);
++    context->setIntReg(int_reg::Rbp, r.rbp);
++    context->setIntReg(int_reg::Rsp, r.rsp);
++    context->setIntReg(int_reg::R8, r.r8);
++    context->setIntReg(int_reg::R9, r.r9);
++    context->setIntReg(int_reg::R10, r.r10);
++    context->setIntReg(int_reg::R11, r.r11);
++    context->setIntReg(int_reg::R12, r.r12);
++    context->setIntReg(int_reg::R13, r.r13);
++    context->setIntReg(int_reg::R14, r.r14);
++    context->setIntReg(int_reg::R15, r.r15);
+     context->pcState(r.rip);
+     context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+     if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
+@@ -213,14 +213,14 @@ void
+ RemoteGDB::X86GdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+-    context->setIntReg(INTREG_RAX, r.eax);
+-    context->setIntReg(INTREG_RCX, r.ecx);
+-    context->setIntReg(INTREG_RDX, r.edx);
+-    context->setIntReg(INTREG_RBX, r.ebx);
+-    context->setIntReg(INTREG_RSP, r.esp);
+-    context->setIntReg(INTREG_RBP, r.ebp);
+-    context->setIntReg(INTREG_RSI, r.esi);
+-    context->setIntReg(INTREG_RDI, r.edi);
++    context->setIntReg(int_reg::Rax, r.eax);
++    context->setIntReg(int_reg::Rcx, r.ecx);
++    context->setIntReg(int_reg::Rdx, r.edx);
++    context->setIntReg(int_reg::Rbx, r.ebx);
++    context->setIntReg(int_reg::Rsp, r.esp);
++    context->setIntReg(int_reg::Rbp, r.ebp);
++    context->setIntReg(int_reg::Rsi, r.esi);
++    context->setIntReg(int_reg::Rdi, r.edi);
+     context->pcState(r.eip);
+     context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+     if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
+-- 
+1.8.3.1
+

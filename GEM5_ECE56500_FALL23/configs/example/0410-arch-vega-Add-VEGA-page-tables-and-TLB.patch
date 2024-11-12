@@ -1,0 +1,4005 @@
+From 539a2e2bcd3ccffdb62d9b4f089e87c444f72bf6 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 1 Sep 2021 18:25:19 -0500
+Subject: [PATCH 410/757] arch-vega: Add VEGA page tables and TLB
+
+Add the page table walker, page table format, TLB, TLB coalescer, and
+associated support in the AMDGPUDevice. This page table format used the
+hardware format for dGPU and is very different from APU/GCN3 which use
+the X86 page table format.
+
+In order to support either format for the GPU model, a common
+TranslationState called GpuTranslation state is created which holds the
+combined fields of both the APU and Vega translation state. Similarly
+the TlbEntry is cast at runtime by the corresponding arch files as they
+are the only files which touch the internals of the TlbEntry. The GPU
+model only checks if a TlbEntry is non-null and thus does not need to
+cast to peek inside the data structure.
+
+Change-Id: I4484c66239b48df5224d61caa6e968e56eea38a5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/51848
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/common/gpu_translation_state.hh | 106 +++
+ src/arch/amdgpu/common/tlb.cc                   |  33 +-
+ src/arch/amdgpu/common/tlb.hh                   |  52 --
+ src/arch/amdgpu/common/tlb_coalescer.cc         |   4 +-
+ src/arch/amdgpu/vega/SConscript                 |  16 +
+ src/arch/amdgpu/vega/VegaGPUTLB.py              |  74 ++
+ src/arch/amdgpu/vega/faults.cc                  |  51 ++
+ src/arch/amdgpu/vega/faults.hh                  |  89 +++
+ src/arch/amdgpu/vega/gpu_isa.hh                 |   1 +
+ src/arch/amdgpu/vega/page_size.hh               |  46 ++
+ src/arch/amdgpu/vega/pagetable.cc               |  72 ++
+ src/arch/amdgpu/vega/pagetable.hh               | 125 +++
+ src/arch/amdgpu/vega/pagetable_walker.cc        | 460 +++++++++++
+ src/arch/amdgpu/vega/pagetable_walker.hh        | 203 +++++
+ src/arch/amdgpu/vega/tlb.cc                     | 993 ++++++++++++++++++++++++
+ src/arch/amdgpu/vega/tlb.hh                     | 327 ++++++++
+ src/arch/amdgpu/vega/tlb_coalescer.cc           | 696 +++++++++++++++++
+ src/arch/amdgpu/vega/tlb_coalescer.hh           | 251 ++++++
+ src/dev/amdgpu/amdgpu_device.hh                 |  66 ++
+ src/gpu-compute/compute_unit.cc                 |   1 +
+ src/gpu-compute/fetch_unit.cc                   |   1 +
+ src/gpu-compute/shader.cc                       |   1 +
+ 22 files changed, 3599 insertions(+), 69 deletions(-)
+ create mode 100644 src/arch/amdgpu/common/gpu_translation_state.hh
+ create mode 100644 src/arch/amdgpu/vega/VegaGPUTLB.py
+ create mode 100644 src/arch/amdgpu/vega/faults.cc
+ create mode 100644 src/arch/amdgpu/vega/faults.hh
+ create mode 100644 src/arch/amdgpu/vega/page_size.hh
+ create mode 100644 src/arch/amdgpu/vega/pagetable.cc
+ create mode 100644 src/arch/amdgpu/vega/pagetable.hh
+ create mode 100644 src/arch/amdgpu/vega/pagetable_walker.cc
+ create mode 100644 src/arch/amdgpu/vega/pagetable_walker.hh
+ create mode 100644 src/arch/amdgpu/vega/tlb.cc
+ create mode 100644 src/arch/amdgpu/vega/tlb.hh
+ create mode 100644 src/arch/amdgpu/vega/tlb_coalescer.cc
+ create mode 100644 src/arch/amdgpu/vega/tlb_coalescer.hh
+
+diff --git a/src/arch/amdgpu/common/gpu_translation_state.hh b/src/arch/amdgpu/common/gpu_translation_state.hh
+new file mode 100644
+index 0000000..0fa528c
+--- /dev/null
++++ b/src/arch/amdgpu/common/gpu_translation_state.hh
+@@ -0,0 +1,106 @@
++/*
++ * Copyright (c) 2022 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_COMMON_GPU_TRANSLATION_STATE_HH__
++#define __ARCH_AMDGPU_COMMON_GPU_TRANSLATION_STATE_HH__
++
++#include "arch/generic/mmu.hh"
++
++namespace gem5
++{
++
++class ResponsePort;
++
++/**
++ * GPU TranslationState: this currently is a somewhat bastardization of
++ * the usage of SenderState, whereby the receiver of a packet is not
++ * usually supposed to need to look at the contents of the senderState,
++ * you're really only supposed to look at what you pushed on, pop it
++ * off, and send it back.
++ *
++ * However, since there is state that we want to pass to the TLBs using
++ * the send/recv Timing/Functional/etc. APIs, which don't allow for new
++ * arguments, we need a common TLB senderState to pass between TLBs,
++ * both "forwards" and "backwards."
++ *
++ * So, basically, the rule is that any packet received by a TLB port
++ * (cpuside OR memside) must be safely castable to a GpuTranslationState.
++ */
++
++struct GpuTranslationState : public Packet::SenderState
++{
++    // TLB mode, read or write
++    BaseMMU::Mode tlbMode;
++    // SE mode thread context associated with this req
++    ThreadContext *tc;
++    // FS mode related fields
++    int deviceId;
++    int pasId; // Process Address Space ID
++
++    /*
++    * TLB entry to be populated and passed back and filled in
++    * previous TLBs.  Equivalent to the data cache concept of
++    * "data return."
++    */
++    Serializable *tlbEntry;
++    // Is this a TLB prefetch request?
++    bool isPrefetch;
++    // When was the req for this translation issued
++    uint64_t issueTime;
++    // Remember where this came from
++    std::vector<ResponsePort*>ports;
++
++    // keep track of #uncoalesced reqs per packet per TLB level;
++    // reqCnt per level >= reqCnt higher level
++    std::vector<int> reqCnt;
++    // TLB level this packet hit in; 0 if it hit in the page table
++    int hitLevel;
++    Packet::SenderState *saved;
++
++    GpuTranslationState(BaseMMU::Mode tlb_mode, ThreadContext *_tc,
++                        bool _prefetch=false,
++                        Packet::SenderState *_saved=nullptr)
++        : tlbMode(tlb_mode), tc(_tc), deviceId(0), pasId(0), tlbEntry(nullptr),
++          isPrefetch(_prefetch), issueTime(0), hitLevel(0), saved(_saved)
++    { }
++
++    GpuTranslationState(BaseMMU::Mode tlb_mode,
++                       bool _prefetch=false,
++                       Packet::SenderState *_saved=nullptr)
++        : tlbMode(tlb_mode), tc(nullptr), deviceId(0), pasId(0),
++          tlbEntry(nullptr), isPrefetch(_prefetch), issueTime(0), hitLevel(0),
++          saved(_saved)
++    { }
++};
++
++} // namespace gem5
++
++#endif // __ARCH_AMDGPU_COMMON_GPU_TRANSLATION_STATE_HH__
+diff --git a/src/arch/amdgpu/common/tlb.cc b/src/arch/amdgpu/common/tlb.cc
+index 698570b..4652588 100644
+--- a/src/arch/amdgpu/common/tlb.cc
++++ b/src/arch/amdgpu/common/tlb.cc
+@@ -35,6 +35,7 @@
+ #include <cmath>
+ #include <cstring>
+ 
++#include "arch/amdgpu/common/gpu_translation_state.hh"
+ #include "arch/x86/faults.hh"
+ #include "arch/x86/insts/microldstop.hh"
+ #include "arch/x86/page_size.hh"
+@@ -664,8 +665,8 @@ namespace X86ISA
+         Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
+                                         X86ISA::PageBytes);
+ 
+-        TranslationState *sender_state =
+-                safe_cast<TranslationState*>(pkt->senderState);
++        GpuTranslationState *sender_state =
++                safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+         bool update_stats = !sender_state->isPrefetch;
+         ThreadContext * tmp_tc = sender_state->tc;
+@@ -788,8 +789,8 @@ namespace X86ISA
+         assert(pkt);
+         Addr vaddr = pkt->req->getVaddr();
+ 
+-        TranslationState *sender_state =
+-            safe_cast<TranslationState*>(pkt->senderState);
++        GpuTranslationState *sender_state =
++            safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+         ThreadContext *tc = sender_state->tc;
+         Mode mode = sender_state->tlbMode;
+@@ -799,7 +800,7 @@ namespace X86ISA
+         if (tlb_outcome == TLB_HIT) {
+             DPRINTF(GPUTLB, "Translation Done - TLB Hit for addr %#x\n",
+                 vaddr);
+-            local_entry = sender_state->tlbEntry;
++            local_entry = safe_cast<TlbEntry *>(sender_state->tlbEntry);
+         } else {
+             DPRINTF(GPUTLB, "Translation Done - TLB Miss for addr %#x\n",
+                     vaddr);
+@@ -809,7 +810,7 @@ namespace X86ISA
+              * lower TLB level. The senderState should be "carrying" a pointer
+              * to the correct TLBEntry.
+              */
+-            new_entry = sender_state->tlbEntry;
++            new_entry = safe_cast<TlbEntry *>(sender_state->tlbEntry);
+             assert(new_entry);
+             local_entry = new_entry;
+ 
+@@ -877,8 +878,8 @@ namespace X86ISA
+         assert(translationReturnEvent[virtPageAddr]);
+         assert(pkt);
+ 
+-        TranslationState *tmp_sender_state =
+-            safe_cast<TranslationState*>(pkt->senderState);
++        GpuTranslationState *tmp_sender_state =
++            safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+         int req_cnt = tmp_sender_state->reqCnt.back();
+         bool update_stats = !tmp_sender_state->isPrefetch;
+@@ -945,8 +946,8 @@ namespace X86ISA
+             DPRINTF(GPUTLB, "Doing a page walk for address %#x\n",
+                     virtPageAddr);
+ 
+-            TranslationState *sender_state =
+-                safe_cast<TranslationState*>(pkt->senderState);
++            GpuTranslationState *sender_state =
++                safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+             Process *p = sender_state->tc->getProcessPtr();
+             Addr vaddr = pkt->req->getVaddr();
+@@ -1038,8 +1039,8 @@ namespace X86ISA
+     void
+     GpuTLB::handleFuncTranslationReturn(PacketPtr pkt, tlbOutcome tlb_outcome)
+     {
+-        TranslationState *sender_state =
+-            safe_cast<TranslationState*>(pkt->senderState);
++        GpuTranslationState *sender_state =
++            safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+         ThreadContext *tc = sender_state->tc;
+         Mode mode = sender_state->tlbMode;
+@@ -1051,7 +1052,7 @@ namespace X86ISA
+             DPRINTF(GPUTLB, "Functional Translation Done - TLB hit for addr "
+                     "%#x\n", vaddr);
+ 
+-            local_entry = sender_state->tlbEntry;
++            local_entry = safe_cast<TlbEntry *>(sender_state->tlbEntry);
+         } else {
+             DPRINTF(GPUTLB, "Functional Translation Done - TLB miss for addr "
+                     "%#x\n", vaddr);
+@@ -1061,7 +1062,7 @@ namespace X86ISA
+              * lower TLB level. The senderState should be "carrying" a pointer
+              * to the correct TLBEntry.
+              */
+-            new_entry = sender_state->tlbEntry;
++            new_entry = safe_cast<TlbEntry *>(sender_state->tlbEntry);
+             assert(new_entry);
+             local_entry = new_entry;
+ 
+@@ -1110,8 +1111,8 @@ namespace X86ISA
+     void
+     GpuTLB::CpuSidePort::recvFunctional(PacketPtr pkt)
+     {
+-        TranslationState *sender_state =
+-            safe_cast<TranslationState*>(pkt->senderState);
++        GpuTranslationState *sender_state =
++            safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+         ThreadContext *tc = sender_state->tc;
+         bool update_stats = !sender_state->isPrefetch;
+diff --git a/src/arch/amdgpu/common/tlb.hh b/src/arch/amdgpu/common/tlb.hh
+index dec0d61..6e9014e 100644
+--- a/src/arch/amdgpu/common/tlb.hh
++++ b/src/arch/amdgpu/common/tlb.hh
+@@ -264,56 +264,6 @@ namespace X86ISA
+         Port &getPort(const std::string &if_name,
+                       PortID idx=InvalidPortID) override;
+ 
+-        /**
+-         * TLB TranslationState: this currently is a somewhat bastardization of
+-         * the usage of SenderState, whereby the receiver of a packet is not
+-         * usually supposed to need to look at the contents of the senderState,
+-         * you're really only supposed to look at what you pushed on, pop it
+-         * off, and send it back.
+-         *
+-         * However, since there is state that we want to pass to the TLBs using
+-         * the send/recv Timing/Functional/etc. APIs, which don't allow for new
+-         * arguments, we need a common TLB senderState to pass between TLBs,
+-         * both "forwards" and "backwards."
+-         *
+-         * So, basically, the rule is that any packet received by a TLB port
+-         * (cpuside OR memside) must be safely castable to a TranslationState.
+-         */
+-
+-        struct TranslationState : public Packet::SenderState
+-        {
+-            // TLB mode, read or write
+-            Mode tlbMode;
+-            // Thread context associated with this req
+-            ThreadContext *tc;
+-
+-            /*
+-            * TLB entry to be populated and passed back and filled in
+-            * previous TLBs.  Equivalent to the data cache concept of
+-            * "data return."
+-            */
+-            TlbEntry *tlbEntry;
+-            // Is this a TLB prefetch request?
+-            bool isPrefetch;
+-            // When was the req for this translation issued
+-            uint64_t issueTime;
+-            // Remember where this came from
+-            std::vector<ResponsePort*>ports;
+-
+-            // keep track of #uncoalesced reqs per packet per TLB level;
+-            // reqCnt per level >= reqCnt higher level
+-            std::vector<int> reqCnt;
+-            // TLB level this packet hit in; 0 if it hit in the page table
+-            int hitLevel;
+-            Packet::SenderState *saved;
+-
+-            TranslationState(Mode tlb_mode, ThreadContext *_tc,
+-                             bool is_prefetch=false,
+-                             Packet::SenderState *_saved=nullptr)
+-                : tlbMode(tlb_mode), tc(_tc), tlbEntry(nullptr),
+-                  isPrefetch(is_prefetch), issueTime(0),
+-                  hitLevel(0),saved(_saved) { }
+-        };
+ 
+         // maximum number of permitted coalesced requests per cycle
+         int maxCoalescedReqs;
+@@ -436,8 +386,6 @@ namespace X86ISA
+     };
+ }
+ 
+-using GpuTranslationState = X86ISA::GpuTLB::TranslationState;
+-
+ } // namespace gem5
+ 
+ #endif // __GPU_TLB_HH__
+diff --git a/src/arch/amdgpu/common/tlb_coalescer.cc b/src/arch/amdgpu/common/tlb_coalescer.cc
+index 367ce5c..1279ee3 100644
+--- a/src/arch/amdgpu/common/tlb_coalescer.cc
++++ b/src/arch/amdgpu/common/tlb_coalescer.cc
+@@ -33,6 +33,7 @@
+ 
+ #include <cstring>
+ 
++#include "arch/amdgpu/common/gpu_translation_state.hh"
+ #include "arch/x86/page_size.hh"
+ #include "base/logging.hh"
+ #include "debug/GPUTLB.hh"
+@@ -149,7 +150,8 @@ TLBCoalescer::updatePhysAddresses(PacketPtr pkt)
+     GpuTranslationState *sender_state =
+         safe_cast<GpuTranslationState*>(pkt->senderState);
+ 
+-    TheISA::TlbEntry *tlb_entry = sender_state->tlbEntry;
++    X86ISA::TlbEntry *tlb_entry =
++        safe_cast<X86ISA::TlbEntry *>(sender_state->tlbEntry);
+     assert(tlb_entry);
+     Addr first_entry_vaddr = tlb_entry->vaddr;
+     Addr first_entry_paddr = tlb_entry->paddr;
+diff --git a/src/arch/amdgpu/vega/SConscript b/src/arch/amdgpu/vega/SConscript
+index a8bab57..c825758 100644
+--- a/src/arch/amdgpu/vega/SConscript
++++ b/src/arch/amdgpu/vega/SConscript
+@@ -33,6 +33,21 @@ import sys
+ 
+ Import('*')
+ 
++if not env['BUILD_GPU']:
++    Return()
++
++SimObject('VegaGPUTLB.py', sim_objects=['VegaPagetableWalker',
++                                        'VegaGPUTLB',
++                                        'VegaTLBCoalescer'])
++
++Source('faults.cc')
++Source('pagetable.cc')
++Source('pagetable_walker.cc')
++Source('tlb.cc')
++Source('tlb_coalescer.cc')
++
++DebugFlag('GPUPTWalker', 'Debug flag for GPU page table walker')
++
+ if env['TARGET_GPU_ISA'] == 'vega':
+     Source('decoder.cc')
+     Source('insts/gpu_static_inst.cc')
+@@ -40,4 +55,5 @@ if env['TARGET_GPU_ISA'] == 'vega':
+     Source('insts/op_encodings.cc')
+     Source('isa.cc')
+     Source('registers.cc')
++
+     DebugFlag('VEGA', 'Debug flag for VEGA GPU ISA')
+diff --git a/src/arch/amdgpu/vega/VegaGPUTLB.py b/src/arch/amdgpu/vega/VegaGPUTLB.py
+new file mode 100644
+index 0000000..4d77f51
+--- /dev/null
++++ b/src/arch/amdgpu/vega/VegaGPUTLB.py
+@@ -0,0 +1,74 @@
++# Copyright (c) 2021 Advanced Micro Devices, Inc.
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are met:
++#
++# 1. Redistributions of source code must retain the above copyright notice,
++# this list of conditions and the following disclaimer.
++#
++# 2. Redistributions in binary form must reproduce the above copyright notice,
++# this list of conditions and the following disclaimer in the documentation
++# and/or other materials provided with the distribution.
++#
++# 3. Neither the name of the copyright holder nor the names of its
++# contributors may be used to endorse or promote products derived from this
++# software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++# POSSIBILITY OF SUCH DAMAGE.
++
++from m5.defines import buildEnv
++from m5.params import *
++from m5.proxy import *
++
++from m5.objects.ClockedObject import ClockedObject
++from m5.objects.AMDGPU import AMDGPUDevice
++from m5.SimObject import SimObject
++
++class VegaPagetableWalker(ClockedObject):
++    type = 'VegaPagetableWalker'
++    cxx_class = 'gem5::VegaISA::Walker'
++    cxx_header = 'arch/amdgpu/vega/pagetable_walker.hh'
++    port = RequestPort("Port for the hardware table walker")
++    system = Param.System(Parent.any, "system object")
++
++class VegaGPUTLB(ClockedObject):
++    type = 'VegaGPUTLB'
++    cxx_class = 'gem5::VegaISA::GpuTLB'
++    cxx_header = 'arch/amdgpu/vega/tlb.hh'
++    size = Param.Int(64, "TLB size (number of entries)")
++    assoc = Param.Int(64, "TLB associativity")
++
++    walker = Param.VegaPagetableWalker(VegaPagetableWalker(),
++                                   "page table walker")
++    gpu_device = Param.AMDGPUDevice(NULL, 'GPU Device')
++
++    hitLatency = Param.Int(2, "Latency of a TLB hit")
++    missLatency1 = Param.Int(5, "Latency #1 of a TLB miss")
++    missLatency2 = Param.Int(100, "Latency #2 of a TLB miss")
++    maxOutstandingReqs = Param.Int(64, "# of maximum outstanding requests")
++    cpu_side_ports = VectorResponsePort("Port on side closer to CPU/CU")
++    mem_side_ports = VectorRequestPort("Port on side closer to memory")
++    allocationPolicy = Param.Bool(True, "Allocate on an access")
++
++class VegaTLBCoalescer(ClockedObject):
++    type = 'VegaTLBCoalescer'
++    cxx_class = 'gem5::VegaTLBCoalescer'
++    cxx_header = 'arch/amdgpu/vega/tlb_coalescer.hh'
++    tlb_level = Param.Int(64, "tlb level")
++    maxDownstream = Param.Int(64, "max downstream @ this level")
++    probesPerCycle = Param.Int(2, "Number of TLB probes per cycle")
++    coalescingWindow = Param.Int(1, "Permit coalescing across that many ticks")
++    cpu_side_ports = VectorResponsePort("Port on side closer to CPU/CU")
++    mem_side_ports = VectorRequestPort("Port on side closer to memory")
++    disableCoalescing = Param.Bool(False,"Dispable Coalescing")
+diff --git a/src/arch/amdgpu/vega/faults.cc b/src/arch/amdgpu/vega/faults.cc
+new file mode 100644
+index 0000000..e443118
+--- /dev/null
++++ b/src/arch/amdgpu/vega/faults.cc
+@@ -0,0 +1,51 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/amdgpu/vega/faults.hh"
++
++#include "cpu/thread_context.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++void
++VegaFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
++{
++    // Currently only Vega10 is supported, which is not using XNACK on
++    // translation error. On hardware the process would be killed. Emulate
++    // that behavior in gem5 by exiting simulation.
++    panic("Vega translation resulted in page fault!");
++}
++
++} // namespace VegaISA
++} // namespace gem5
+diff --git a/src/arch/amdgpu/vega/faults.hh b/src/arch/amdgpu/vega/faults.hh
+new file mode 100644
+index 0000000..67c5bfd
+--- /dev/null
++++ b/src/arch/amdgpu/vega/faults.hh
+@@ -0,0 +1,89 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_VEGA_FAULTS_HH__
++#define __ARCH_AMDGPU_VEGA_FAULTS_HH__
++
++#include <string>
++
++#include "arch/generic/mmu.hh"
++#include "sim/faults.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++enum ExceptionCode : uint64_t
++{
++    INST_PAGE = 0,
++    LOAD_PAGE = 1,
++    STORE_PAGE = 2
++};
++
++class VegaFault : public FaultBase
++{
++  protected:
++    const FaultName _name;
++    const bool _interrupt;
++    ExceptionCode _code;
++
++    VegaFault(FaultName n, bool i, ExceptionCode c)
++        : _name(n), _interrupt(i), _code(c)
++    {}
++
++    FaultName name() const override { return _name; }
++    bool isInterrupt() const { return _interrupt; }
++    ExceptionCode exception() const { return _code; }
++    virtual RegVal trap_value() const { return 0; }
++
++    void invoke(ThreadContext *tc, const StaticInstPtr &inst) override;
++};
++
++class PageFault : public VegaFault
++{
++  protected:
++    Addr addr;
++
++  public:
++    PageFault(Addr _addr, ExceptionCode code, bool present,
++              BaseMMU::Mode mode, bool user)
++        : VegaFault("PageFault", false, code), addr(_addr)
++    {
++    }
++
++    RegVal trap_value() const override { return addr; }
++};
++
++} // namespace VegaISA
++} // namespace gem5
++
++#endif // __ARCH_VEGA_FAULTS_HH__
+diff --git a/src/arch/amdgpu/vega/gpu_isa.hh b/src/arch/amdgpu/vega/gpu_isa.hh
+index 82dd8dd..b449d5b 100644
+--- a/src/arch/amdgpu/vega/gpu_isa.hh
++++ b/src/arch/amdgpu/vega/gpu_isa.hh
+@@ -36,6 +36,7 @@
+ #include <type_traits>
+ 
+ #include "arch/amdgpu/vega/gpu_registers.hh"
++#include "arch/amdgpu/vega/tlb.hh"
+ #include "gpu-compute/dispatcher.hh"
+ #include "gpu-compute/hsa_queue_entry.hh"
+ #include "gpu-compute/misc.hh"
+diff --git a/src/arch/amdgpu/vega/page_size.hh b/src/arch/amdgpu/vega/page_size.hh
+new file mode 100644
+index 0000000..508c517
+--- /dev/null
++++ b/src/arch/amdgpu/vega/page_size.hh
+@@ -0,0 +1,46 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_VEGA_PAGE_SIZE_H__
++#define __ARCH_AMDGPU_VEGA_PAGE_SIZE_H__
++
++#include "base/types.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++    const Addr PageShift = 12;
++    const Addr PageBytes = 1ULL << PageShift;
++} // namespace VegaISA
++} // namespace gem5
++
++#endif // __ARCH_AMDGPU_VEGA_PAGE_SIZE_H__
+diff --git a/src/arch/amdgpu/vega/pagetable.cc b/src/arch/amdgpu/vega/pagetable.cc
+new file mode 100644
+index 0000000..5ffae24
+--- /dev/null
++++ b/src/arch/amdgpu/vega/pagetable.cc
+@@ -0,0 +1,72 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/amdgpu/vega/pagetable.hh"
++
++#include "sim/serialize.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++/**
++ * Serialize all of the POD fields in a TLB entry. These fields contain all
++ * of the information needed to handle any of the function calls in the entry.
++ */
++void
++VegaTlbEntry::serialize(CheckpointOut &cp) const
++{
++    SERIALIZE_SCALAR(paddr);
++    SERIALIZE_SCALAR(vaddr);
++    SERIALIZE_SCALAR(logBytes);
++    SERIALIZE_SCALAR(vmid);
++    SERIALIZE_SCALAR(pte);
++    SERIALIZE_SCALAR(lruSeq);
++}
++
++/**
++ * Unserialize all of the POD fields in a TLB entry. These fields contain all
++ * of the information needed to handle any of the function calls in the entry.
++ */
++void
++VegaTlbEntry::unserialize(CheckpointIn &cp)
++{
++    UNSERIALIZE_SCALAR(paddr);
++    UNSERIALIZE_SCALAR(vaddr);
++    UNSERIALIZE_SCALAR(logBytes);
++    UNSERIALIZE_SCALAR(vmid);
++    UNSERIALIZE_SCALAR(pte);
++    UNSERIALIZE_SCALAR(lruSeq);
++}
++
++} // namespace VegaISA
++} // namespace gem5
+diff --git a/src/arch/amdgpu/vega/pagetable.hh b/src/arch/amdgpu/vega/pagetable.hh
+new file mode 100644
+index 0000000..97e1a01
+--- /dev/null
++++ b/src/arch/amdgpu/vega/pagetable.hh
+@@ -0,0 +1,125 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_VEGA_PAGETABLE_H__
++#define __ARCH_AMDGPU_VEGA_PAGETABLE_H__
++
++#include "arch/amdgpu/vega/page_size.hh"
++#include "base/bitunion.hh"
++#include "base/types.hh"
++#include "sim/serialize.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++/**
++ * The page table entry is reverse engineered from the macros here:
++ *
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
++ *     drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h#L53
++ */
++BitUnion64(PageTableEntry)
++    Bitfield<58,57> m;
++    Bitfield<56> f;
++    Bitfield<55> l;
++    Bitfield<53,52> sw;
++    Bitfield<51> t;
++    Bitfield<47, 12> ppn;
++    Bitfield<11, 7> fragment;
++    Bitfield<6> w;
++    Bitfield<5> r;
++    Bitfield<4> x;
++    Bitfield<3> z;
++    Bitfield<2> c;
++    Bitfield<1> s;
++    Bitfield<0> v;
++EndBitUnion(PageTableEntry)
++
++BitUnion64(PageDirectoryEntry)
++    Bitfield<63,59> blockFragmentSize;
++    Bitfield<54> p;
++    Bitfield<47, 6> baseAddr;
++    Bitfield<2> c;
++    Bitfield<1> s;
++    Bitfield<0> v;
++EndBitUnion(PageDirectoryEntry)
++
++struct VegaTlbEntry : public Serializable
++{
++    uint16_t vmid;
++
++    // The base of the physical page.
++    Addr paddr;
++
++    // The beginning of the virtual page this entry maps.
++    Addr vaddr;
++    // The size of the page this represents, in address bits.
++    unsigned logBytes;
++
++    PageTableEntry pte;
++
++    // Read permission is always available, assuming it isn't blocked by
++    // other mechanisms.
++    bool writable() { return pte.w; };
++    // Whether the page is cacheable or not.
++    bool uncacheable() { return !pte.c; };
++    // Whether or not memory on this page can be executed.
++    bool noExec() { return !pte.x; };
++
++    // A sequence number to keep track of LRU.
++    uint64_t lruSeq;
++
++    VegaTlbEntry()
++        : vmid(0), paddr(0), vaddr(0), logBytes(PageShift), pte(), lruSeq(0)
++    {}
++
++    VegaTlbEntry(Addr _vmid, Addr _vaddr, Addr _paddr, unsigned _logBytes,
++                 PageTableEntry _pte)
++        : vmid(_vmid), paddr(_paddr), vaddr(_vaddr), logBytes(_logBytes),
++          pte(_pte), lruSeq(0)
++    {}
++
++    // Return the page size in bytes
++    Addr size() const
++    {
++        return (static_cast<Addr>(1) << logBytes);
++    }
++
++    void serialize(CheckpointOut &cp) const override;
++    void unserialize(CheckpointIn &cp) override;
++};
++
++} // namespace VegaISA
++} // namespace gem5
++
++#endif // __ARCH_AMDGPU_VEGA_PAGETABLE_H__
+diff --git a/src/arch/amdgpu/vega/pagetable_walker.cc b/src/arch/amdgpu/vega/pagetable_walker.cc
+new file mode 100644
+index 0000000..3725b32
+--- /dev/null
++++ b/src/arch/amdgpu/vega/pagetable_walker.cc
+@@ -0,0 +1,460 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/amdgpu/vega/pagetable_walker.hh"
++
++#include <memory>
++
++#include "arch/amdgpu/vega/faults.hh"
++#include "mem/packet_access.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++/*
++ * Functional/atomic mode methods
++ */
++Fault
++Walker::startFunctional(Addr base, Addr &addr, unsigned &logBytes,
++                        BaseMMU::Mode mode, bool &isSystem)
++{
++    PageTableEntry pte;
++    Addr vaddr = addr;
++    Fault fault = startFunctional(base, vaddr, pte, logBytes, mode);
++    isSystem = pte.s;
++    addr = ((pte.ppn << PageShift) & ~mask(logBytes))
++         | (vaddr & mask(logBytes));
++
++    return fault;
++}
++
++Fault
++Walker::startFunctional(Addr base, Addr vaddr, PageTableEntry &pte,
++                        unsigned &logBytes, BaseMMU::Mode mode)
++{
++    DPRINTF(GPUPTWalker, "Vega walker walker: %p funcState: %p "
++            "funcState->walker %p\n",
++            this, &funcState, funcState.getWalker());
++    funcState.initState(mode, base, vaddr, true);
++    return funcState.startFunctional(base, vaddr, pte, logBytes);
++}
++
++Fault
++Walker::WalkerState::startFunctional(Addr base, Addr vaddr,
++                                     PageTableEntry &pte, unsigned &logBytes)
++{
++    Fault fault = NoFault;
++    DPRINTF(GPUPTWalker, "Vega walker starting with addr: %#lx "
++            "logical: %#lx\n", vaddr, vaddr >> PageShift);
++
++    assert(!started);
++    started = true;
++
++    do {
++        DPRINTF(GPUPTWalker, "Sending functional read to %#lx\n",
++                read->getAddr());
++
++        walker->port.sendFunctional(read);
++
++        fault = stepWalk();
++        assert(fault == NoFault || read == NULL);
++
++        state = nextState;
++    } while (read);
++
++    logBytes = entry.logBytes;
++    pte = entry.pte;
++
++    return fault;
++}
++
++
++/*
++ * Timing mode methods
++ */
++void
++Walker::startTiming(PacketPtr pkt, Addr base, Addr vaddr, BaseMMU::Mode mode)
++{
++    DPRINTF(GPUPTWalker, "Vega walker starting with addr: %#lx "
++            "logical: %#lx\n", vaddr, vaddr >> PageShift);
++
++    WalkerState *newState = new WalkerState(this, pkt);
++
++    newState->initState(mode, base, vaddr);
++    currStates.push_back(newState);
++    DPRINTF(GPUPTWalker, "There are %ld walker states\n", currStates.size());
++
++    newState->startWalk();
++}
++
++void
++Walker::WalkerState::initState(BaseMMU::Mode _mode, Addr baseAddr, Addr vaddr,
++                               bool is_functional)
++{
++    DPRINTF(GPUPTWalker, "Walker::WalkerState::initState\n");
++    DPRINTF(GPUPTWalker, "Walker::WalkerState::initState %p\n", this);
++    DPRINTF(GPUPTWalker, "Walker::WalkerState::initState %d\n", state);
++    assert(state == Ready);
++
++    started = false;
++    mode = _mode;
++    timing = !is_functional;
++    enableNX = true;
++    dataSize = 8; // 64-bit PDEs / PTEs
++    nextState = PDE2;
++
++    DPRINTF(GPUPTWalker, "Setup walk with base %#lx\n", baseAddr);
++
++    // First level in Vega is PDE2. Calculate the address for that PDE using
++    // baseAddr and vaddr.
++    state = PDE2;
++    Addr logical_addr = vaddr >> PageShift;
++    Addr pde2Addr = (((baseAddr >> 6) << 3) + (logical_addr >> 3*9)) << 3;
++    DPRINTF(GPUPTWalker, "Walk PDE2 address is %#lx\n", pde2Addr);
++
++    // Start populating the VegaTlbEntry response
++    entry.vaddr = logical_addr;
++
++    // Prepare the read packet that will be used at each level
++    Request::Flags flags = Request::PHYSICAL;
++
++    RequestPtr request = std::make_shared<Request>(
++        pde2Addr, dataSize, flags, walker->deviceRequestorId);
++
++    read = new Packet(request, MemCmd::ReadReq);
++    read->allocate();
++}
++
++void
++Walker::WalkerState::startWalk()
++{
++    if (!started) {
++        // Read the first PDE to begin
++        DPRINTF(GPUPTWalker, "Sending timing read to %#lx\n",
++                read->getAddr());
++
++        sendPackets();
++        started = true;
++    } else {
++        // This is mostly the same as stepWalk except we update the state and
++        // send the new timing read request.
++        timingFault = stepWalk();
++        assert(timingFault == NoFault || read == NULL);
++
++        state = nextState;
++
++        if (read) {
++            DPRINTF(GPUPTWalker, "Sending timing read to %#lx\n",
++                    read->getAddr());
++            sendPackets();
++        } else {
++            // Set physical page address in entry
++            entry.paddr = bits(entry.pte, 47, entry.logBytes);
++            entry.paddr <<= entry.logBytes;
++
++            // Insert to TLB
++            assert(walker);
++            assert(walker->tlb);
++            walker->tlb->insert(entry.vaddr, entry);
++
++            // Send translation return event
++            walker->walkerResponse(this, entry, tlbPkt);
++        }
++    }
++}
++
++Fault
++Walker::WalkerState::stepWalk()
++{
++    assert(state != Ready && state != Waiting && read);
++    Fault fault = NoFault;
++    PageTableEntry pte = read->getLE<uint64_t>();
++
++    bool uncacheable = !pte.c;
++    Addr nextRead = 0;
++    bool doEndWalk = false;
++
++    walkStateMachine(pte, nextRead, doEndWalk, fault);
++
++    if (doEndWalk) {
++        DPRINTF(GPUPTWalker, "ending walk\n");
++        endWalk();
++    } else {
++        PacketPtr oldRead = read;
++
++        //If we didn't return, we're setting up another read.
++        Request::Flags flags = oldRead->req->getFlags();
++        flags.set(Request::UNCACHEABLE, uncacheable);
++        RequestPtr request = std::make_shared<Request>(
++            nextRead, oldRead->getSize(), flags, walker->deviceRequestorId);
++
++        read = new Packet(request, MemCmd::ReadReq);
++        read->allocate();
++
++        delete oldRead;
++    }
++
++    return fault;
++}
++
++void
++Walker::WalkerState::walkStateMachine(PageTableEntry &pte, Addr &nextRead,
++                                      bool &doEndWalk, Fault &fault)
++{
++    Addr vaddr = entry.vaddr;
++    bool badNX = pte.x && mode == BaseMMU::Execute && enableNX;
++    Addr part1 = 0;
++    Addr part2 = 0;
++    PageDirectoryEntry pde = static_cast<PageDirectoryEntry>(pte);
++
++    // For a four level page table block fragment size should not be needed.
++    // For now issue a panic to prevent strange behavior if it is non-zero.
++    panic_if(pde.blockFragmentSize, "PDE blockFragmentSize must be 0");
++
++    switch(state) {
++      case PDE2:
++        fatal_if(pde.p, "Fragment in PDE2 not implemented");
++
++        // Read the pde1Addr
++        part1 = ((((uint64_t)pte) >> 6) << 3);
++        part2 = offsetFunc(vaddr, 3*9, 2*9);
++        nextRead = ((part1 + part2) << 3) & mask(48);
++        DPRINTF(GPUPTWalker,
++                "Got PDE2 entry %#016x. write:%s->%#016x va:%#016x\n",
++                (uint64_t)pte, pte.w == 0 ? "yes" : "no", nextRead, vaddr);
++        nextState = PDE1;
++        break;
++      case PDE1:
++        fatal_if(pde.p, "Fragment in PDE1 not implemented");
++
++        // Read the pde0Addr
++        part1 = ((((uint64_t)pte) >> 6) << 3);
++        part2 = offsetFunc(vaddr, 2*9, 9);
++        nextRead = ((part1 + part2) << 3) & mask(48);
++        DPRINTF(GPUPTWalker,
++                "Got PDE1 entry %#016x. write:%s->%#016x va: %#016x\n",
++                (uint64_t)pte, pte.w == 0 ? "yes" : "no", nextRead, vaddr);
++        nextState = PDE0;
++        break;
++      case PDE0:
++        if (pde.p) {
++            DPRINTF(GPUPTWalker, "Treating PDE0 as PTE: %#016x frag: %d\n",
++                    (uint64_t)pte, pte.fragment);
++            entry.pte = pte;
++            int fragment = pte.fragment;
++            entry.logBytes = PageShift + std::min(9, fragment);
++            entry.vaddr <<= PageShift;
++            entry.vaddr = entry.vaddr & ~((1 << entry.logBytes) - 1);
++            entry.vaddr = entry.vaddr & ~mask(entry.logBytes);
++            doEndWalk = true;
++        }
++        // Read the PteAddr
++        part1 = ((((uint64_t)pte) >> 6) << 3);
++        part2 = offsetFunc(vaddr, 9, 0);
++        nextRead = ((part1 + part2) << 3) & mask(48);
++        DPRINTF(GPUPTWalker,
++                "Got PDE0 entry %#016x. write:%s->%#016x va:%#016x\n",
++                (uint64_t)pte, pte.w == 0 ? "yes" : "no", nextRead, vaddr);
++        nextState = PTE;
++        break;
++      case PTE:
++        DPRINTF(GPUPTWalker,
++                " PTE entry %#016x. write: %s va: %#016x\n",
++                (uint64_t)pte, pte.w == 0 ? "yes" : "no", vaddr);
++        entry.pte = pte;
++        entry.logBytes = PageShift;
++        entry.vaddr <<= PageShift;
++        entry.vaddr = entry.vaddr & ~mask(entry.logBytes);
++        doEndWalk = true;
++        break;
++      default:
++        panic("Unknown page table walker state %d!\n");
++    }
++
++    if (badNX || !pte.v) {
++        doEndWalk = true;
++        fault = pageFault(pte.v);
++        nextState = state;
++    }
++}
++
++void
++Walker::WalkerState::endWalk()
++{
++    nextState = Ready;
++    delete read;
++    read = NULL;
++    walker->currStates.remove(this);
++}
++
++/**
++ * Port related methods
++ */
++void
++Walker::WalkerState::sendPackets()
++{
++    // If we're already waiting for the port to become available, just return.
++    if (retrying)
++        return;
++
++    if (!walker->sendTiming(this, read)) {
++        DPRINTF(GPUPTWalker, "Timing request for %#lx failed\n",
++                read->getAddr());
++
++        retrying = true;
++    } else {
++        DPRINTF(GPUPTWalker, "Timing request for %#lx successful\n",
++                read->getAddr());
++    }
++}
++
++bool Walker::sendTiming(WalkerState* sending_walker, PacketPtr pkt)
++{
++    auto walker_state = new WalkerSenderState(sending_walker);
++    pkt->pushSenderState(walker_state);
++
++    if (port.sendTimingReq(pkt)) {
++        DPRINTF(GPUPTWalker, "Sending timing read to %#lx from walker %p\n",
++                pkt->getAddr(), sending_walker);
++
++        return true;
++    } else {
++        (void)pkt->popSenderState();
++    }
++
++    return false;
++}
++
++bool
++Walker::WalkerPort::recvTimingResp(PacketPtr pkt)
++{
++    walker->recvTimingResp(pkt);
++
++    return true;
++}
++
++void
++Walker::recvTimingResp(PacketPtr pkt)
++{
++    WalkerSenderState * senderState =
++        safe_cast<WalkerSenderState *>(pkt->popSenderState());
++
++    DPRINTF(GPUPTWalker, "Got response for %#lx from walker %p -- %#lx\n",
++            pkt->getAddr(), senderState->senderWalk, pkt->getLE<uint64_t>());
++    senderState->senderWalk->startWalk();
++
++    delete senderState;
++}
++
++void
++Walker::WalkerPort::recvReqRetry()
++{
++    walker->recvReqRetry();
++}
++
++void
++Walker::recvReqRetry()
++{
++    std::list<WalkerState *>::iterator iter;
++    for (iter = currStates.begin(); iter != currStates.end(); iter++) {
++        WalkerState * walkerState = *(iter);
++        if (walkerState->isRetrying()) {
++            walkerState->retry();
++        }
++    }
++}
++
++void
++Walker::walkerResponse(WalkerState *state, VegaTlbEntry& entry, PacketPtr pkt)
++{
++    tlb->walkerResponse(entry, pkt);
++
++    delete state;
++}
++
++
++/*
++ *  Helper methods
++ */
++bool
++Walker::WalkerState::isRetrying()
++{
++    return retrying;
++}
++
++void
++Walker::WalkerState::retry()
++{
++    retrying = false;
++    sendPackets();
++}
++
++Fault
++Walker::WalkerState::pageFault(bool present)
++{
++    DPRINTF(GPUPTWalker, "Raising page fault.\n");
++    ExceptionCode code;
++    if (mode == BaseMMU::Read)
++        code = ExceptionCode::LOAD_PAGE;
++    else if (mode == BaseMMU::Write)
++        code = ExceptionCode::STORE_PAGE;
++    else
++        code = ExceptionCode::INST_PAGE;
++    if (mode == BaseMMU::Execute && !enableNX)
++        mode = BaseMMU::Read;
++    return std::make_shared<PageFault>(entry.vaddr, code, present, mode, true);
++}
++
++uint64_t
++Walker::WalkerState::offsetFunc(Addr logicalAddr, int top, int lsb)
++{
++    assert(top < 32);
++    assert(lsb < 32);
++    return ((logicalAddr & ((1 << top) - 1)) >> lsb);
++}
++
++
++/**
++ * gem5 methods
++ */
++Port &
++Walker::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "port")
++        return port;
++    else
++        return ClockedObject::getPort(if_name, idx);
++}
++
++} // namespace VegaISA
++} // namespace gem5
+diff --git a/src/arch/amdgpu/vega/pagetable_walker.hh b/src/arch/amdgpu/vega/pagetable_walker.hh
+new file mode 100644
+index 0000000..48e1e60
+--- /dev/null
++++ b/src/arch/amdgpu/vega/pagetable_walker.hh
+@@ -0,0 +1,203 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_AMDGPU_PAGETABLE_WALKER_HH__
++#define __DEV_AMDGPU_PAGETABLE_WALKER_HH__
++
++#include <vector>
++
++#include "arch/amdgpu/vega/pagetable.hh"
++#include "arch/amdgpu/vega/tlb.hh"
++#include "base/types.hh"
++#include "debug/GPUPTWalker.hh"
++#include "mem/packet.hh"
++#include "params/VegaPagetableWalker.hh"
++#include "sim/clocked_object.hh"
++#include "sim/system.hh"
++
++namespace gem5
++{
++
++class ThreadContext;
++
++namespace VegaISA
++{
++
++class Walker : public ClockedObject
++{
++  protected:
++    // Port for accessing memory
++    class WalkerPort : public RequestPort
++    {
++      public:
++        WalkerPort(const std::string &_name, Walker * _walker) :
++            RequestPort(_name, _walker), walker(_walker)
++        {}
++
++      protected:
++        Walker *walker;
++
++        bool recvTimingResp(PacketPtr pkt);
++        void recvReqRetry();
++    };
++
++    friend class WalkerPort;
++    WalkerPort port;
++
++    // State to track each walk of the page table
++    class WalkerState
++    {
++        friend class Walker;
++
++      private:
++        enum State
++        {
++            Ready,
++            Waiting,
++            PDE2, PDE1, PDE0, PTE
++        };
++
++      protected:
++        Walker *walker;
++        State state;
++        State nextState;
++        int dataSize;
++        bool enableNX;
++        VegaTlbEntry entry;
++        PacketPtr read;
++        Fault timingFault;
++        BaseMMU::Mode mode;
++        bool retrying;
++        bool started;
++        bool timing;
++        PacketPtr tlbPkt;
++
++      public:
++        WalkerState(Walker *_walker, PacketPtr pkt, bool is_functional = false)
++            : walker(_walker), state(Ready), nextState(Ready), dataSize(8),
++              enableNX(true), retrying(false), started(false), tlbPkt(pkt)
++        {
++            DPRINTF(GPUPTWalker, "Walker::WalkerState %p %p %d\n",
++                    this, walker, state);
++        }
++
++        void initState(BaseMMU::Mode _mode, Addr baseAddr, Addr vaddr,
++                       bool is_functional = false);
++        void startWalk();
++        Fault startFunctional(Addr base, Addr vaddr, PageTableEntry &pte,
++                              unsigned &logBytes);
++
++        bool isRetrying();
++        void retry();
++        std::string name() const { return walker->name(); }
++        Walker* getWalker() const { return walker; }
++
++      private:
++        Fault stepWalk();
++        void stepTimingWalk();
++        void walkStateMachine(PageTableEntry &pte, Addr &nextRead,
++                              bool &doEndWalk, Fault &fault);
++        void sendPackets();
++        void endWalk();
++        Fault pageFault(bool present);
++        uint64_t offsetFunc(Addr logicalAddr, int top, int lsb);
++    };
++
++    friend class WalkerState;
++    // State for timing and atomic accesses (need multiple per walker in
++    // the case of multiple outstanding requests in timing mode)
++    std::list<WalkerState *> currStates;
++    // State for functional accesses (only need one of these per walker)
++    WalkerState funcState;
++
++    struct WalkerSenderState : public Packet::SenderState
++    {
++        WalkerState * senderWalk;
++        WalkerSenderState(WalkerState * _senderWalk) :
++            senderWalk(_senderWalk) {}
++    };
++
++  public:
++    // Kick off the state machine.
++    void startTiming(PacketPtr pkt, Addr base, Addr vaddr, BaseMMU::Mode mode);
++    Fault startFunctional(Addr base, Addr vaddr, PageTableEntry &pte,
++                          unsigned &logBytes, BaseMMU::Mode mode);
++    Fault startFunctional(Addr base, Addr &addr, unsigned &logBytes,
++                          BaseMMU::Mode mode, bool &isSystem);
++
++    Port &getPort(const std::string &if_name,
++                  PortID idx=InvalidPortID) override;
++
++    Addr getBaseAddr() const { return baseAddr; }
++    void setBaseAddr(Addr ta) { baseAddr = ta; }
++
++    void setDevRequestor(RequestorID mid) { deviceRequestorId = mid; }
++    RequestorID getDevRequestor() const { return deviceRequestorId; }
++
++  protected:
++    // The TLB we're supposed to load.
++    GpuTLB *tlb;
++    RequestorID requestorId;
++
++    // Base address set by MAP_PROCESS packet
++    Addr baseAddr;
++    RequestorID deviceRequestorId;
++
++    // Functions for dealing with packets.
++    void recvTimingResp(PacketPtr pkt);
++    void recvReqRetry();
++    bool sendTiming(WalkerState * sendingState, PacketPtr pkt);
++
++    void walkerResponse(WalkerState *state, VegaTlbEntry& entry,
++                        PacketPtr pkt);
++
++  public:
++    void setTLB(GpuTLB * _tlb)
++    {
++        assert(tlb == nullptr); // only set it once
++        tlb = _tlb;
++    }
++
++    Walker(const VegaPagetableWalkerParams &p)
++      : ClockedObject(p),
++        port(name() + ".port", this),
++        funcState(this, nullptr, true), tlb(nullptr),
++        requestorId(p.system->getRequestorId(this)),
++        deviceRequestorId(999)
++    {
++        DPRINTF(GPUPTWalker, "Walker::Walker %p\n", this);
++    }
++};
++
++} // namespace VegaISA
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_PAGETABLE_WALKER_HH__
+diff --git a/src/arch/amdgpu/vega/tlb.cc b/src/arch/amdgpu/vega/tlb.cc
+new file mode 100644
+index 0000000..ef7a465
+--- /dev/null
++++ b/src/arch/amdgpu/vega/tlb.cc
+@@ -0,0 +1,993 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/amdgpu/vega/tlb.hh"
++
++#include <cmath>
++#include <cstring>
++
++#include "arch/amdgpu/common/gpu_translation_state.hh"
++#include "arch/amdgpu/vega/faults.hh"
++#include "arch/amdgpu/vega/pagetable_walker.hh"
++#include "debug/GPUPrefetch.hh"
++#include "debug/GPUTLB.hh"
++#include "dev/amdgpu/amdgpu_device.hh"
++
++namespace gem5
++{
++namespace VegaISA
++{
++
++// we have no limit for the number of translations we send
++// downstream as we depend on the limit of the coalescer
++// above us
++GpuTLB::GpuTLB(const VegaGPUTLBParams &p)
++    :  ClockedObject(p), walker(p.walker),
++      gpuDevice(p.gpu_device), size(p.size), stats(this),
++      cleanupEvent([this]{ cleanup(); }, name(), false,
++                   Event::Maximum_Pri)
++{
++    assoc = p.assoc;
++    assert(assoc <= size);
++    numSets = size/assoc;
++    allocationPolicy = p.allocationPolicy;
++    hasMemSidePort = false;
++
++    tlb.assign(size, VegaTlbEntry());
++
++    freeList.resize(numSets);
++    entryList.resize(numSets);
++
++    for (int set = 0; set < numSets; ++set) {
++        for (int way = 0; way < assoc; ++way) {
++            int x = set * assoc + way;
++            freeList[set].push_back(&tlb.at(x));
++        }
++    }
++
++    FA = (size == assoc);
++    setMask = numSets - 1;
++
++    maxCoalescedReqs = p.maxOutstandingReqs;
++
++
++    outstandingReqs = 0;
++    hitLatency = p.hitLatency;
++    missLatency1 = p.missLatency1;
++    missLatency2 = p.missLatency2;
++
++    // create the response ports based on the number of connected ports
++    for (size_t i = 0; i < p.port_cpu_side_ports_connection_count; ++i) {
++        cpuSidePort.push_back(new CpuSidePort(csprintf("%s-port%d",
++                              name(), i), this, i));
++    }
++
++    // create the requestor ports based on the number of connected ports
++    for (size_t i = 0; i < p.port_mem_side_ports_connection_count; ++i) {
++        memSidePort.push_back(new MemSidePort(csprintf("%s-port%d",
++                              name(), i), this, i));
++    }
++
++    // assuming one walker per TLB, set our walker's TLB to this TLB.
++    walker->setTLB(this);
++}
++
++GpuTLB::~GpuTLB()
++{
++}
++
++Port &
++GpuTLB::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "cpu_side_ports") {
++        if (idx >= static_cast<PortID>(cpuSidePort.size())) {
++            panic("TLBCoalescer::getPort: unknown index %d\n", idx);
++        }
++
++        return *cpuSidePort[idx];
++    } else if (if_name == "mem_side_ports") {
++        if (idx >= static_cast<PortID>(memSidePort.size())) {
++            panic("TLBCoalescer::getPort: unknown index %d\n", idx);
++        }
++
++        hasMemSidePort = true;
++
++        return *memSidePort[idx];
++    } else {
++        panic("TLBCoalescer::getPort: unknown port %s\n", if_name);
++    }
++}
++
++Fault
++GpuTLB::createPagefault(Addr vaddr, Mode mode)
++{
++    DPRINTF(GPUTLB, "GPUTLB: Raising page fault.\n");
++    ExceptionCode code;
++    if (mode == BaseMMU::Read)
++        code = ExceptionCode::LOAD_PAGE;
++    else if (mode == BaseMMU::Write)
++        code = ExceptionCode::STORE_PAGE;
++    else
++        code = ExceptionCode::INST_PAGE;
++    return std::make_shared<PageFault>(vaddr, code, true, mode, true);
++}
++
++Addr
++GpuTLB::pageAlign(Addr vaddr)
++{
++    Addr pageMask = mask(VegaISA::PageShift);
++    return (vaddr & ~pageMask);
++}
++
++VegaTlbEntry*
++GpuTLB::insert(Addr vpn, VegaTlbEntry &entry)
++{
++    VegaTlbEntry *newEntry = nullptr;
++
++    /**
++     * vpn holds the virtual page address assuming native page size.
++     * However, we need to check the entry size as Vega supports
++     * flexible page sizes of arbitrary size. The set will assume
++     * native page size but the vpn needs to be fixed up to consider
++     * the flexible page size.
++     */
++    Addr real_vpn = vpn & ~(entry.size() - 1);
++
++    /**
++     * Also fix up the ppn as this is used in the math later to compute paddr.
++     */
++    Addr real_ppn = entry.paddr & ~(entry.size() - 1);
++
++    int set = (real_vpn >> VegaISA::PageShift) & setMask;
++
++    DPRINTF(GPUTLB, "Inserted %#lx -> %#lx of size %#lx into set %d\n",
++            real_vpn, real_ppn, entry.size(), set);
++
++    if (!freeList[set].empty()) {
++        newEntry = freeList[set].front();
++        freeList[set].pop_front();
++    } else {
++        newEntry = entryList[set].back();
++        entryList[set].pop_back();
++    }
++
++    *newEntry = entry;
++    newEntry->vaddr = real_vpn;
++    newEntry->paddr = real_ppn;
++    entryList[set].push_front(newEntry);
++
++    return newEntry;
++}
++
++GpuTLB::EntryList::iterator
++GpuTLB::lookupIt(Addr va, bool update_lru)
++{
++    int set = (va >> VegaISA::PageShift) & setMask;
++
++    if (FA) {
++        assert(!set);
++    }
++
++    auto entry = entryList[set].begin();
++    for (; entry != entryList[set].end(); ++entry) {
++        int page_size = (*entry)->size();
++
++        if ((*entry)->vaddr <= va && (*entry)->vaddr + page_size > va) {
++            DPRINTF(GPUTLB, "Matched vaddr %#x to entry starting at %#x "
++                    "with size %#x.\n", va, (*entry)->vaddr, page_size);
++
++            if (update_lru) {
++                entryList[set].push_front(*entry);
++                entryList[set].erase(entry);
++                entry = entryList[set].begin();
++            }
++
++            break;
++        }
++    }
++
++    return entry;
++}
++
++VegaTlbEntry*
++GpuTLB::lookup(Addr va, bool update_lru)
++{
++    int set = (va >> VegaISA::PageShift) & setMask;
++
++    auto entry = lookupIt(va, update_lru);
++
++    if (entry == entryList[set].end())
++        return nullptr;
++    else
++        return *entry;
++}
++
++void
++GpuTLB::invalidateAll()
++{
++    DPRINTF(GPUTLB, "Invalidating all entries.\n");
++
++    for (int i = 0; i < numSets; ++i) {
++        while (!entryList[i].empty()) {
++            VegaTlbEntry *entry = entryList[i].front();
++            entryList[i].pop_front();
++            freeList[i].push_back(entry);
++        }
++    }
++}
++
++void
++GpuTLB::demapPage(Addr va, uint64_t asn)
++{
++
++    int set = (va >> VegaISA::PageShift) & setMask;
++    auto entry = lookupIt(va, false);
++
++    if (entry != entryList[set].end()) {
++        freeList[set].push_back(*entry);
++        entryList[set].erase(entry);
++    }
++}
++
++
++
++/**
++ * TLB_lookup will only perform a TLB lookup returning the TLB entry on a TLB
++ * hit and nullptr on a TLB miss.
++ * Many of the checks about different modes have been converted to
++ * assertions, since these parts of the code are not really used.
++ * On a hit it will update the LRU stack.
++ */
++VegaTlbEntry *
++GpuTLB::tlbLookup(const RequestPtr &req, bool update_stats)
++{
++    Addr vaddr = req->getVaddr();
++    Addr alignedVaddr = pageAlign(vaddr);
++    DPRINTF(GPUTLB, "TLB Lookup for vaddr %#x.\n", vaddr);
++
++    //update LRU stack on a hit
++    VegaTlbEntry *entry = lookup(alignedVaddr, true);
++
++    if (!update_stats) {
++        // functional tlb access for memory initialization
++        // i.e., memory seeding or instr. seeding -> don't update
++        // TLB and stats
++        return entry;
++    }
++
++    stats.localNumTLBAccesses++;
++
++    if (!entry) {
++        stats.localNumTLBMisses++;
++    } else {
++        stats.localNumTLBHits++;
++    }
++
++    return entry;
++}
++
++Walker*
++GpuTLB::getWalker()
++{
++    return walker;
++}
++
++
++void
++GpuTLB::serialize(CheckpointOut &cp) const
++{
++}
++
++void
++GpuTLB::unserialize(CheckpointIn &cp)
++{
++}
++
++/**
++ * Do the TLB lookup for this coalesced request and schedule
++ * another event <TLB access latency> cycles later.
++ */
++
++void
++GpuTLB::issueTLBLookup(PacketPtr pkt)
++{
++    assert(pkt);
++    assert(pkt->senderState);
++
++    /**
++     * The page size is not fixed in Vega and tracking events by VPN could
++     * potentially lead to redundant page walks by using the smallest page
++     * size. The actual VPN can be determined after the first walk is done
++     * and fixed up later.
++     */
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
++                                    VegaISA::PageBytes);
++
++    GpuTranslationState *sender_state =
++            safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    bool update_stats = !sender_state->isPrefetch;
++
++    DPRINTF(GPUTLB, "Translation req. for virt. page addr %#x\n",
++            virt_page_addr);
++
++    int req_cnt = sender_state->reqCnt.back();
++
++    if (update_stats) {
++        stats.accessCycles -= (curCycle() * req_cnt);
++        stats.localCycles -= curCycle();
++        stats.globalNumTLBAccesses += req_cnt;
++    }
++
++    tlbOutcome lookup_outcome = TLB_MISS;
++    const RequestPtr &tmp_req = pkt->req;
++
++    // Access the TLB and figure out if it's a hit or a miss.
++    auto entry = tlbLookup(tmp_req, update_stats);
++
++    if (entry) {
++        lookup_outcome = TLB_HIT;
++        // Put the entry in SenderState
++        VegaTlbEntry *entry = lookup(virt_page_addr, false);
++        assert(entry);
++
++        // Set if this is a system request
++        pkt->req->setSystemReq(entry->pte.s);
++
++        Addr alignedPaddr = pageAlign(entry->paddr);
++        sender_state->tlbEntry =
++            new VegaTlbEntry(1 /* VMID */, virt_page_addr, alignedPaddr,
++                            entry->logBytes, entry->pte);
++
++        if (update_stats) {
++            // the reqCnt has an entry per level, so its size tells us
++            // which level we are in
++            sender_state->hitLevel = sender_state->reqCnt.size();
++            stats.globalNumTLBHits += req_cnt;
++        }
++    } else {
++        if (update_stats)
++            stats.globalNumTLBMisses += req_cnt;
++    }
++
++    /*
++     * We now know the TLB lookup outcome (if it's a hit or a miss), as
++     * well as the TLB access latency.
++     *
++     * We create and schedule a new TLBEvent which will help us take the
++     * appropriate actions (e.g., update TLB on a hit, send request to
++     * lower level TLB on a miss, or start a page walk if this was the
++     * last-level TLB)
++     */
++    TLBEvent *tlb_event =
++        new TLBEvent(this, virt_page_addr, lookup_outcome, pkt);
++
++    if (translationReturnEvent.count(virt_page_addr)) {
++        panic("Virtual Page Address %#x already has a return event\n",
++              virt_page_addr);
++    }
++
++    translationReturnEvent[virt_page_addr] = tlb_event;
++    assert(tlb_event);
++
++    DPRINTF(GPUTLB, "schedule translationReturnEvent @ curTick %d\n",
++            curTick() + cyclesToTicks(Cycles(hitLatency)));
++
++    schedule(tlb_event, curTick() + cyclesToTicks(Cycles(hitLatency)));
++}
++
++GpuTLB::TLBEvent::TLBEvent(GpuTLB* _tlb, Addr _addr,
++    tlbOutcome tlb_outcome, PacketPtr _pkt)
++        : Event(CPU_Tick_Pri), tlb(_tlb), virtPageAddr(_addr),
++          outcome(tlb_outcome), pkt(_pkt)
++{
++}
++
++/**
++ * Do Paging protection checks. If we encounter a page fault, then
++ * an assertion is fired.
++ */
++void
++GpuTLB::pagingProtectionChecks(PacketPtr pkt, VegaTlbEntry * tlb_entry,
++        Mode mode)
++{
++    // Do paging protection checks.
++    bool badWrite = (!tlb_entry->writable());
++
++    if (mode == BaseMMU::Write && badWrite) {
++        // The page must have been present to get into the TLB in
++        // the first place. We'll assume the reserved bits are
++        // fine even though we're not checking them.
++        fatal("Page fault on addr %lx PTE=%#lx", pkt->req->getVaddr(),
++                (uint64_t)tlb_entry->pte);
++    }
++}
++
++void
++GpuTLB::walkerResponse(VegaTlbEntry& entry, PacketPtr pkt)
++{
++    DPRINTF(GPUTLB, "WalkerResponse for %#lx. Entry: (%#lx, %#lx, %#lx)\n",
++            pkt->req->getVaddr(), entry.vaddr, entry.paddr, entry.size());
++
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
++                                    VegaISA::PageBytes);
++
++    Addr page_addr = entry.pte.ppn << VegaISA::PageShift;
++    Addr paddr = insertBits(page_addr, entry.logBytes - 1, 0, entry.vaddr);
++    pkt->req->setPaddr(paddr);
++    pkt->req->setSystemReq(entry.pte.s);
++
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++    sender_state->tlbEntry = new VegaTlbEntry(entry);
++
++    handleTranslationReturn(virt_page_addr, TLB_MISS, pkt);
++}
++
++/**
++ * handleTranslationReturn is called on a TLB hit,
++ * when a TLB miss returns or when a page fault returns.
++ * The latter calls handelHit with TLB miss as tlbOutcome.
++ */
++void
++GpuTLB::handleTranslationReturn(Addr virt_page_addr,
++    tlbOutcome tlb_outcome, PacketPtr pkt)
++{
++    assert(pkt);
++    Addr vaddr = pkt->req->getVaddr();
++
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    Mode mode = sender_state->tlbMode;
++
++    VegaTlbEntry *local_entry, *new_entry;
++
++    int req_cnt = sender_state->reqCnt.back();
++    bool update_stats = !sender_state->isPrefetch;
++
++    if (update_stats) {
++        stats.accessCycles += (req_cnt * curCycle());
++        stats.localCycles += curCycle();
++    }
++
++    if (tlb_outcome == TLB_HIT) {
++        DPRINTF(GPUTLB, "Translation Done - TLB Hit for addr %#x\n",
++            vaddr);
++        local_entry = safe_cast<VegaTlbEntry *>(sender_state->tlbEntry);
++    } else {
++        DPRINTF(GPUTLB, "Translation Done - TLB Miss for addr %#x\n",
++                vaddr);
++
++        /**
++         * We are returning either from a page walk or from a hit at a
++         * lower TLB level. The senderState should be "carrying" a pointer
++         * to the correct TLBEntry.
++         */
++        new_entry = safe_cast<VegaTlbEntry *>(sender_state->tlbEntry);
++        assert(new_entry);
++        local_entry = new_entry;
++
++        if (allocationPolicy) {
++            assert(new_entry->pte);
++            DPRINTF(GPUTLB, "allocating entry w/ addr %#lx of size %#lx\n",
++                    virt_page_addr, new_entry->size());
++
++            local_entry = insert(virt_page_addr, *new_entry);
++        }
++
++        assert(local_entry);
++    }
++
++    /**
++     * At this point the packet carries an up-to-date tlbEntry pointer
++     * in its senderState.
++     * Next step is to do the paging protection checks.
++     */
++    DPRINTF(GPUTLB, "Entry found with vaddr %#x,  doing protection checks "
++            "while paddr was %#x.\n", local_entry->vaddr,
++            local_entry->paddr);
++
++    pagingProtectionChecks(pkt, local_entry, mode);
++    int page_size = local_entry->size();
++    Addr paddr = local_entry->paddr | (vaddr & (page_size - 1));
++    DPRINTF(GPUTLB, "Translated %#x -> %#x.\n", vaddr, paddr);
++
++    // Since this packet will be sent through the cpu side port, it must be
++    // converted to a response pkt if it is not one already
++    if (pkt->isRequest()) {
++        pkt->makeTimingResponse();
++    }
++
++    pkt->req->setPaddr(paddr);
++
++    if (local_entry->uncacheable()) {
++         pkt->req->setFlags(Request::UNCACHEABLE);
++    }
++
++    //send packet back to coalescer
++    cpuSidePort[0]->sendTimingResp(pkt);
++    //schedule cleanup event
++    cleanupQueue.push(virt_page_addr);
++
++    DPRINTF(GPUTLB, "Scheduled %#lx for cleanup\n", virt_page_addr);
++
++    // schedule this only once per cycle.
++    // The check is required because we might have multiple translations
++    // returning the same cycle
++    // this is a maximum priority event and must be on the same cycle
++    // as the cleanup event in TLBCoalescer to avoid a race with
++    // IssueProbeEvent caused by TLBCoalescer::MemSidePort::recvReqRetry
++    if (!cleanupEvent.scheduled())
++        schedule(cleanupEvent, curTick());
++}
++
++/**
++ * Here we take the appropriate actions based on the result of the
++ * TLB lookup.
++ */
++void
++GpuTLB::translationReturn(Addr virtPageAddr, tlbOutcome outcome,
++                          PacketPtr pkt)
++{
++    DPRINTF(GPUTLB, "Triggered TLBEvent for addr %#x\n", virtPageAddr);
++
++    assert(translationReturnEvent[virtPageAddr]);
++    assert(pkt);
++
++    GpuTranslationState *tmp_sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    int req_cnt = tmp_sender_state->reqCnt.back();
++    bool update_stats = !tmp_sender_state->isPrefetch;
++
++
++    if (outcome == TLB_HIT) {
++        handleTranslationReturn(virtPageAddr, TLB_HIT, pkt);
++
++    } else if (outcome == TLB_MISS) {
++
++        DPRINTF(GPUTLB, "This is a TLB miss\n");
++        if (hasMemSidePort) {
++            // the one cyle added here represent the delay from when we get
++            // the reply back till when we propagate it to the coalescer
++            // above.
++
++            /**
++             * There is a TLB below. Send the coalesced request.
++             * We actually send the very first packet of all the
++             * pending packets for this virtual page address.
++             */
++            tmp_sender_state->deviceId = 1;
++            tmp_sender_state->pasId = 0;
++
++            if (!memSidePort[0]->sendTimingReq(pkt)) {
++                DPRINTF(GPUTLB, "Failed sending translation request to "
++                        "lower level TLB for addr %#x\n", virtPageAddr);
++
++                memSidePort[0]->retries.push_back(pkt);
++            } else {
++                DPRINTF(GPUTLB, "Sent translation request to lower level "
++                        "TLB for addr %#x\n", virtPageAddr);
++            }
++        } else {
++            //this is the last level TLB. Start a page walk
++            DPRINTF(GPUTLB, "Last level TLB - start a page walk for "
++                    "addr %#x\n", virtPageAddr);
++
++            if (update_stats)
++                stats.pageTableCycles -= (req_cnt*curCycle());
++
++            TLBEvent *tlb_event = translationReturnEvent[virtPageAddr];
++            assert(tlb_event);
++            tlb_event->updateOutcome(PAGE_WALK);
++            schedule(tlb_event,
++                     curTick() + cyclesToTicks(Cycles(missLatency2)));
++        }
++    } else if (outcome == PAGE_WALK) {
++        if (update_stats)
++            stats.pageTableCycles += (req_cnt*curCycle());
++
++        // Need to access the page table and update the TLB
++        DPRINTF(GPUTLB, "Doing a page walk for address %#x\n",
++                virtPageAddr);
++
++        Addr base = gpuDevice->getPageTableBase(1);
++        Addr vaddr = pkt->req->getVaddr();
++        walker->setDevRequestor(gpuDevice->vramRequestorId());
++
++        // Do page table walk
++        walker->startTiming(pkt, base, vaddr, BaseMMU::Mode::Read);
++    } else if (outcome == MISS_RETURN) {
++        /** we add an extra cycle in the return path of the translation
++         * requests in between the various TLB levels.
++         */
++        handleTranslationReturn(virtPageAddr, TLB_MISS, pkt);
++    } else {
++        panic("Unexpected TLB outcome %d", outcome);
++    }
++}
++
++void
++GpuTLB::TLBEvent::process()
++{
++    tlb->translationReturn(virtPageAddr, outcome, pkt);
++}
++
++const char*
++GpuTLB::TLBEvent::description() const
++{
++    return "trigger translationDoneEvent";
++}
++
++void
++GpuTLB::TLBEvent::updateOutcome(tlbOutcome _outcome)
++{
++    outcome = _outcome;
++}
++
++Addr
++GpuTLB::TLBEvent::getTLBEventVaddr()
++{
++    return virtPageAddr;
++}
++
++/**
++ * recvTiming receives a coalesced timing request from a TLBCoalescer
++ * and it calls issueTLBLookup()
++ * It only rejects the packet if we have exceeded the max
++ * outstanding number of requests for the TLB
++ */
++bool
++GpuTLB::CpuSidePort::recvTimingReq(PacketPtr pkt)
++{
++    bool ret = false;
++    [[maybe_unused]] Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
++                                                     VegaISA::PageBytes);
++
++    if (tlb->outstandingReqs < tlb->maxCoalescedReqs) {
++        assert(!tlb->translationReturnEvent.count(virt_page_addr));
++        tlb->issueTLBLookup(pkt);
++        // update number of outstanding translation requests
++        tlb->outstandingReqs++;
++        ret = true;
++    } else {
++        DPRINTF(GPUTLB, "Reached maxCoalescedReqs number %d\n",
++                tlb->outstandingReqs);
++        tlb->stats.maxDownstreamReached++;
++        ret = false;
++
++    }
++
++    if (tlb->outstandingReqs > tlb->stats.outstandingReqsMax.value())
++        tlb->stats.outstandingReqsMax = tlb->outstandingReqs;
++
++    return ret;
++}
++
++/**
++ * handleFuncTranslationReturn is called on a TLB hit,
++ * when a TLB miss returns or when a page fault returns.
++ * It updates LRU, inserts the TLB entry on a miss
++ * depending on the allocation policy and does the required
++ * protection checks. It does NOT create a new packet to
++ * update the packet's addr; this is done in hsail-gpu code.
++ */
++void
++GpuTLB::handleFuncTranslationReturn(PacketPtr pkt, tlbOutcome tlb_outcome)
++{
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    Mode mode = sender_state->tlbMode;
++    Addr vaddr = pkt->req->getVaddr();
++
++    VegaTlbEntry *local_entry, *new_entry;
++
++    if (tlb_outcome == TLB_HIT) {
++        DPRINTF(GPUTLB, "Functional Translation Done - TLB hit for addr "
++                "%#x\n", vaddr);
++
++        local_entry = safe_cast<VegaTlbEntry *>(sender_state->tlbEntry);
++    } else {
++        DPRINTF(GPUTLB, "Functional Translation Done - TLB miss for addr "
++                "%#x\n", vaddr);
++
++        /**
++         * We are returning either from a page walk or from a hit at a
++         * lower TLB level. The senderState should be "carrying" a pointer
++         * to the correct TLBEntry.
++         */
++        new_entry = safe_cast<VegaTlbEntry *>(sender_state->tlbEntry);
++        assert(new_entry);
++        local_entry = new_entry;
++
++        if (allocationPolicy) {
++            Addr virt_page_addr = roundDown(vaddr, VegaISA::PageBytes);
++
++            DPRINTF(GPUTLB, "allocating entry w/ addr %#lx\n",
++                    virt_page_addr);
++
++            local_entry = insert(virt_page_addr, *new_entry);
++        }
++
++        assert(local_entry);
++    }
++
++    DPRINTF(GPUTLB, "Entry found with vaddr %#x, doing protection checks "
++            "while paddr was %#x.\n", local_entry->vaddr,
++            local_entry->paddr);
++
++    /**
++     * Do paging checks if it's a normal functional access.  If it's for a
++     * prefetch, then sometimes you can try to prefetch something that
++     * won't pass protection. We don't actually want to fault becuase there
++     * is no demand access to deem this a violation.  Just put it in the
++     * TLB and it will fault if indeed a future demand access touches it in
++     * violation.
++     *
++     * This feature could be used to explore security issues around
++     * speculative memory accesses.
++     */
++    if (!sender_state->isPrefetch && sender_state->tlbEntry)
++        pagingProtectionChecks(pkt, local_entry, mode);
++
++    int page_size = local_entry->size();
++    Addr paddr = local_entry->paddr | (vaddr & (page_size - 1));
++    DPRINTF(GPUTLB, "Translated %#x -> %#x.\n", vaddr, paddr);
++
++    pkt->req->setPaddr(paddr);
++
++    if (local_entry->uncacheable())
++         pkt->req->setFlags(Request::UNCACHEABLE);
++}
++
++// This is used for atomic translations. Need to
++// make it all happen during the same cycle.
++void
++GpuTLB::CpuSidePort::recvFunctional(PacketPtr pkt)
++{
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    bool update_stats = !sender_state->isPrefetch;
++
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
++                                    VegaISA::PageBytes);
++
++    // do the TLB lookup without updating the stats
++    bool success = tlb->tlbLookup(pkt->req, update_stats);
++    tlbOutcome tlb_outcome = success ? TLB_HIT : TLB_MISS;
++
++    // functional mode means no coalescing
++    // global metrics are the same as the local metrics
++    if (update_stats) {
++        tlb->stats.globalNumTLBAccesses++;
++
++        if (success) {
++            sender_state->hitLevel = sender_state->reqCnt.size();
++            tlb->stats.globalNumTLBHits++;
++        } else {
++            tlb->stats.globalNumTLBMisses++;
++        }
++    }
++
++    if (!success) {
++        if (tlb->hasMemSidePort) {
++            // there is a TLB below -> propagate down the TLB hierarchy
++            tlb->memSidePort[0]->sendFunctional(pkt);
++            // If no valid translation from a prefetch, then just return
++            if (sender_state->isPrefetch && !pkt->req->hasPaddr())
++                return;
++        } else {
++            // Need to access the page table and update the TLB
++            DPRINTF(GPUTLB, "Doing a page walk for address %#x\n",
++                    virt_page_addr);
++
++            Addr vaddr = pkt->req->getVaddr();
++            [[maybe_unused]] Addr alignedVaddr =
++                tlb->pageAlign(virt_page_addr);
++            assert(alignedVaddr == virt_page_addr);
++
++            unsigned logBytes;
++            PageTableEntry pte;
++
++            // Initialize walker state for VMID
++            Addr base = tlb->gpuDevice->getPageTableBase(1);
++            tlb->walker->setDevRequestor(tlb->gpuDevice->vramRequestorId());
++
++            // Do page table walk
++            Fault fault = tlb->walker->startFunctional(base, vaddr, pte,
++                                                       logBytes,
++                                                       BaseMMU::Mode::Read);
++            if (fault != NoFault) {
++                fatal("Translation fault in TLB at %d!", __LINE__);
++            }
++
++            // PPN is already shifted by fragment so we only shift by native
++            // page size. Fragment is still used via logBytes to select lower
++            // bits from vaddr.
++            Addr page_addr = pte.ppn << PageShift;
++            Addr paddr = insertBits(page_addr, logBytes - 1, 0, vaddr);
++            Addr alignedPaddr = tlb->pageAlign(paddr);
++            pkt->req->setPaddr(paddr);
++            pkt->req->setSystemReq(pte.s);
++
++            if (!sender_state->isPrefetch) {
++                assert(paddr);
++
++                DPRINTF(GPUTLB, "Mapping %#x to %#x\n", vaddr, paddr);
++
++                sender_state->tlbEntry =
++                    new VegaTlbEntry(1 /* VMID */, virt_page_addr,
++                                 alignedPaddr, logBytes, pte);
++            } else {
++                // If this was a prefetch, then do the normal thing if it
++                // was a successful translation.  Otherwise, send an empty
++                // TLB entry back so that it can be figured out as empty
++                // and handled accordingly.
++                if (paddr) {
++                    DPRINTF(GPUTLB, "Mapping %#x to %#x\n", vaddr, paddr);
++
++                    sender_state->tlbEntry =
++                        new VegaTlbEntry(1 /* VMID */, virt_page_addr,
++                                     alignedPaddr, logBytes, pte);
++                } else {
++                    DPRINTF(GPUPrefetch, "Prefetch failed %#x\n", vaddr);
++
++                    sender_state->tlbEntry = nullptr;
++
++                    return;
++                }
++            }
++        }
++    } else {
++        VegaTlbEntry *entry = tlb->lookup(virt_page_addr, update_stats);
++        assert(entry);
++
++        if (sender_state->isPrefetch) {
++            DPRINTF(GPUPrefetch, "Functional Hit for vaddr %#x\n",
++                    entry->vaddr);
++        }
++
++        sender_state->tlbEntry = new VegaTlbEntry(1 /* VMID */, entry->vaddr,
++                                                 entry->paddr, entry->logBytes,
++                                                 entry->pte);
++    }
++
++    // This is the function that would populate pkt->req with the paddr of
++    // the translation. But if no translation happens (i.e Prefetch fails)
++    // then the early returns in the above code wiill keep this function
++    // from executing.
++    tlb->handleFuncTranslationReturn(pkt, tlb_outcome);
++}
++
++void
++GpuTLB::CpuSidePort::recvReqRetry()
++{
++    // The CPUSidePort never sends anything but replies. No retries
++    // expected.
++    panic("recvReqRetry called");
++}
++
++AddrRangeList
++GpuTLB::CpuSidePort::getAddrRanges() const
++{
++    // currently not checked by the requestor
++    AddrRangeList ranges;
++
++    return ranges;
++}
++
++/**
++ * MemSidePort receives the packet back.
++ * We need to call the handleTranslationReturn
++ * and propagate up the hierarchy.
++ */
++bool
++GpuTLB::MemSidePort::recvTimingResp(PacketPtr pkt)
++{
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(),
++                                    VegaISA::PageBytes);
++
++    DPRINTF(GPUTLB, "MemSidePort recvTiming for virt_page_addr %#x\n",
++            virt_page_addr);
++
++    TLBEvent *tlb_event = tlb->translationReturnEvent[virt_page_addr];
++    assert(tlb_event);
++    assert(virt_page_addr == tlb_event->getTLBEventVaddr());
++
++    tlb_event->updateOutcome(MISS_RETURN);
++    tlb->schedule(tlb_event, curTick()+tlb->clockPeriod());
++
++    return true;
++}
++
++void
++GpuTLB::MemSidePort::recvReqRetry()
++{
++    // No retries should reach the TLB. The retries
++    // should only reach the TLBCoalescer.
++    panic("recvReqRetry called");
++}
++
++void
++GpuTLB::cleanup()
++{
++    while (!cleanupQueue.empty()) {
++        Addr cleanup_addr = cleanupQueue.front();
++        cleanupQueue.pop();
++
++        DPRINTF(GPUTLB, "Deleting return event for %#lx\n", cleanup_addr);
++
++        // delete TLBEvent
++        TLBEvent * old_tlb_event = translationReturnEvent[cleanup_addr];
++        delete old_tlb_event;
++        translationReturnEvent.erase(cleanup_addr);
++
++        // update number of outstanding requests
++        outstandingReqs--;
++    }
++
++    /** the higher level coalescer should retry if it has
++     * any pending requests.
++     */
++    for (int i = 0; i < cpuSidePort.size(); ++i) {
++        cpuSidePort[i]->sendRetryReq();
++    }
++}
++
++GpuTLB::VegaTLBStats::VegaTLBStats(statistics::Group *parent)
++    : statistics::Group(parent),
++      ADD_STAT(maxDownstreamReached, "Number of refused translation requests"),
++      ADD_STAT(outstandingReqsMax, "Maximum count in coalesced request queue"),
++      ADD_STAT(localNumTLBAccesses, "Number of TLB accesses"),
++      ADD_STAT(localNumTLBHits, "Number of TLB hits"),
++      ADD_STAT(localNumTLBMisses, "Number of TLB misses"),
++      ADD_STAT(localTLBMissRate, "TLB miss rate"),
++      ADD_STAT(globalNumTLBAccesses, "Number of TLB accesses"),
++      ADD_STAT(globalNumTLBHits, "Number of TLB hits"),
++      ADD_STAT(globalNumTLBMisses, "Number of TLB misses"),
++      ADD_STAT(globalTLBMissRate, "TLB miss rate"),
++      ADD_STAT(accessCycles, "Cycles spent accessing this TLB level"),
++      ADD_STAT(pageTableCycles, "Cycles spent accessing the page table"),
++      ADD_STAT(localCycles, "Number of cycles spent in queue for all "
++               "incoming reqs"),
++      ADD_STAT(localLatency, "Avg. latency over incoming coalesced reqs")
++{
++    localTLBMissRate = 100 * localNumTLBMisses / localNumTLBAccesses;
++    globalTLBMissRate = 100 * globalNumTLBMisses / globalNumTLBAccesses;
++
++    localLatency = localCycles / localNumTLBAccesses;
++}
++
++} // namespace VegaISA
++} // namespace gem5
+diff --git a/src/arch/amdgpu/vega/tlb.hh b/src/arch/amdgpu/vega/tlb.hh
+new file mode 100644
+index 0000000..5ac108a
+--- /dev/null
++++ b/src/arch/amdgpu/vega/tlb.hh
+@@ -0,0 +1,327 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_VEGA_TLB_HH__
++#define __ARCH_AMDGPU_VEGA_TLB_HH__
++
++#include <list>
++#include <queue>
++#include <string>
++#include <vector>
++
++#include "arch/amdgpu/vega/pagetable.hh"
++#include "arch/generic/mmu.hh"
++#include "base/statistics.hh"
++#include "base/trace.hh"
++#include "mem/packet.hh"
++#include "mem/port.hh"
++#include "params/VegaGPUTLB.hh"
++#include "sim/clocked_object.hh"
++
++namespace gem5
++{
++
++class BaseMMU;
++class Packet;
++class AMDGPUDevice;
++class ThreadContext;
++
++namespace VegaISA
++{
++
++class Walker;
++
++class GpuTLB : public ClockedObject
++{
++  public:
++    GpuTLB(const VegaGPUTLBParams &p);
++    ~GpuTLB();
++
++    typedef enum BaseMMU::Mode Mode;
++
++    class Translation
++    {
++      public:
++        virtual ~Translation() { }
++
++        /**
++         * Signal that the translation has been delayed due to a hw page
++         * table walk.
++         */
++        virtual void markDelayed() = 0;
++
++        /**
++         * The memory for this object may be dynamically allocated, and it
++         * may be responsible for cleaning itslef up which will happen in
++         * this function. Once it's called the object is no longer valid.
++         */
++        virtual void finish(Fault fault, const RequestPtr &req,
++                            Mode mode) = 0;
++
++        /** This function is used by the page table walker to determine if
++         * it should translate the a pending request or if the underlying
++         * request has been squashed.
++         * @ return Is the instruction that requested this translation
++         * squashed?
++         */
++        virtual bool squashed() const { return false; }
++    };
++
++    Addr pageAlign(Addr vaddr);
++    void dumpAll();
++    VegaTlbEntry *lookup(Addr va, bool update_lru=true);
++
++    Walker *getWalker();
++    void invalidateAll();
++    void demapPage(Addr va, uint64_t asn);
++
++  protected:
++    typedef std::list<VegaTlbEntry*> EntryList;
++    EntryList::iterator lookupIt(Addr va, bool update_lru=true);
++    Walker *walker;
++    AMDGPUDevice *gpuDevice;
++
++    int size;
++    int assoc;
++    int numSets;
++
++    /**
++     *  true if this is a fully-associative TLB
++     */
++    bool FA;
++    Addr setMask;
++
++    /**
++     * Allocation Policy: true if we always allocate on a hit, false
++     * otherwise. Default is true.
++     */
++    bool allocationPolicy;
++
++    /**
++     * if true, then this is not the last level TLB
++     */
++    bool hasMemSidePort;
++
++    std::vector<VegaTlbEntry> tlb;
++
++    /*
++     * It's a per-set list. As long as we have not reached
++     * the full capacity of the given set, grab an entry from
++     * the freeList.
++     */
++    std::vector<EntryList> freeList;
++
++    /**
++     * An entryList per set is the equivalent of an LRU stack;
++     * it's used to guide replacement decisions. The head of the list
++     * contains the MRU TLB entry of the given set. If the freeList
++     * for this set is empty, the last element of the list
++     * is evicted (i.e., dropped on the floor).
++     */
++    std::vector<EntryList> entryList;
++
++  public:
++    // latencies for a TLB hit, miss and page fault
++    int hitLatency;
++    int missLatency1;
++    int missLatency2;
++
++    struct VegaTLBStats : public statistics::Group
++    {
++        VegaTLBStats(statistics::Group *parent);
++
++        Stats::Scalar maxDownstreamReached;
++        Stats::Scalar outstandingReqsMax;
++
++        // local_stats are as seen from the TLB
++        // without taking into account coalescing
++        Stats::Scalar localNumTLBAccesses;
++        Stats::Scalar localNumTLBHits;
++        Stats::Scalar localNumTLBMisses;
++        Stats::Formula localTLBMissRate;
++
++        // global_stats are as seen from the
++        // CU's perspective taking into account
++        // all coalesced requests.
++        Stats::Scalar globalNumTLBAccesses;
++        Stats::Scalar globalNumTLBHits;
++        Stats::Scalar globalNumTLBMisses;
++        Stats::Formula globalTLBMissRate;
++
++        // from the CU perspective (global)
++        Stats::Scalar accessCycles;
++        Stats::Scalar pageTableCycles;
++
++        // from the perspective of this TLB
++        Stats::Scalar localCycles;
++        Stats::Formula localLatency;
++    } stats;
++
++
++    VegaTlbEntry *insert(Addr vpn, VegaTlbEntry &entry);
++
++    // Checkpointing
++    virtual void serialize(CheckpointOut& cp) const override;
++    virtual void unserialize(CheckpointIn& cp) override;
++    void issueTranslation();
++    enum tlbOutcome {TLB_HIT, TLB_MISS, PAGE_WALK, MISS_RETURN};
++    VegaTlbEntry *tlbLookup(const RequestPtr &req, bool update_stats);
++
++    void walkerResponse(VegaTlbEntry& entry, PacketPtr pkt);
++    void handleTranslationReturn(Addr addr, tlbOutcome outcome,
++                                 PacketPtr pkt);
++
++    void handleFuncTranslationReturn(PacketPtr pkt, tlbOutcome outcome);
++
++    void pagingProtectionChecks(PacketPtr pkt,
++                                VegaTlbEntry *tlb_entry, Mode mode);
++
++    void updatePhysAddresses(Addr virt_page_addr, VegaTlbEntry *tlb_entry,
++                             Addr phys_page_addr);
++
++    void issueTLBLookup(PacketPtr pkt);
++
++    // CpuSidePort is the TLB Port closer to the CPU/CU side
++    class CpuSidePort : public ResponsePort
++    {
++      public:
++        CpuSidePort(const std::string &_name, GpuTLB * gpu_TLB,
++                    PortID _index)
++            : ResponsePort(_name, gpu_TLB), tlb(gpu_TLB), index(_index) { }
++
++      protected:
++        GpuTLB *tlb;
++        int index;
++
++        virtual bool recvTimingReq(PacketPtr pkt);
++        virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
++        virtual void recvFunctional(PacketPtr pkt);
++        virtual void recvRangeChange() { }
++        virtual void recvReqRetry();
++        virtual void recvRespRetry() { panic("recvRespRetry called"); }
++        virtual AddrRangeList getAddrRanges() const;
++    };
++
++    /**
++     * MemSidePort is the TLB Port closer to the memory side
++     * If this is a last level TLB then this port will not be connected.
++     *
++     * Future action item: if we ever do real page walks, then this port
++     * should be connected to a RubyPort.
++     */
++    class MemSidePort : public RequestPort
++    {
++      public:
++        MemSidePort(const std::string &_name, GpuTLB * gpu_TLB,
++                    PortID _index)
++            : RequestPort(_name, gpu_TLB), tlb(gpu_TLB), index(_index) { }
++
++        std::deque<PacketPtr> retries;
++
++      protected:
++        GpuTLB *tlb;
++        int index;
++
++        virtual bool recvTimingResp(PacketPtr pkt);
++        virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
++        virtual void recvFunctional(PacketPtr pkt) { }
++        virtual void recvRangeChange() { }
++        virtual void recvReqRetry();
++    };
++
++    // TLB ports on the cpu Side
++    std::vector<CpuSidePort*> cpuSidePort;
++    // TLB ports on the memory side
++    std::vector<MemSidePort*> memSidePort;
++
++    Port &getPort(const std::string &if_name,
++                  PortID idx=InvalidPortID) override;
++
++    Fault createPagefault(Addr vaddr, Mode mode);
++
++    // maximum number of permitted coalesced requests per cycle
++    int maxCoalescedReqs;
++
++    // Current number of outstandings coalesced requests.
++    // Should be <= maxCoalescedReqs
++    int outstandingReqs;
++
++    /**
++     * A TLBEvent is scheduled after the TLB lookup and helps us take the
++     * appropriate actions:
++     *  (e.g., update TLB on a hit,
++     *  send request to lower level TLB on a miss,
++     *  or start a page walk if this was the last-level TLB).
++     */
++    void translationReturn(Addr virtPageAddr, tlbOutcome outcome,
++                           PacketPtr pkt);
++
++    class TLBEvent : public Event
++    {
++        private:
++            GpuTLB *tlb;
++            Addr virtPageAddr;
++            /**
++             * outcome can be TLB_HIT, TLB_MISS, or PAGE_WALK
++             */
++            tlbOutcome outcome;
++            PacketPtr pkt;
++
++        public:
++            TLBEvent(GpuTLB *_tlb, Addr _addr, tlbOutcome outcome,
++                    PacketPtr _pkt);
++
++            void process();
++            const char *description() const;
++
++            // updateOutcome updates the tlbOutcome of a TLBEvent
++            void updateOutcome(tlbOutcome _outcome);
++            Addr getTLBEventVaddr();
++    };
++
++    std::unordered_map<Addr, TLBEvent*> translationReturnEvent;
++
++    // this FIFO queue keeps track of the virt. page addresses
++    // that are pending cleanup
++    std::queue<Addr> cleanupQueue;
++
++    // the cleanupEvent is scheduled after a TLBEvent triggers in order to
++    // free memory and do the required clean-up
++    void cleanup();
++
++    EventFunctionWrapper cleanupEvent;
++};
++
++} // namespace VegaISA
++
++} // namespace gem5
++
++#endif // __ARCH_AMDGPU_VEGA_TLB_HH__
+diff --git a/src/arch/amdgpu/vega/tlb_coalescer.cc b/src/arch/amdgpu/vega/tlb_coalescer.cc
+new file mode 100644
+index 0000000..d02c9bc
+--- /dev/null
++++ b/src/arch/amdgpu/vega/tlb_coalescer.cc
+@@ -0,0 +1,696 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/amdgpu/vega/tlb_coalescer.hh"
++
++#include <cstring>
++
++#include "arch/amdgpu/common/gpu_translation_state.hh"
++#include "arch/amdgpu/vega/pagetable.hh"
++#include "arch/generic/mmu.hh"
++#include "base/logging.hh"
++#include "debug/GPUTLB.hh"
++#include "sim/process.hh"
++
++namespace gem5
++{
++
++VegaTLBCoalescer::VegaTLBCoalescer(const VegaTLBCoalescerParams &p)
++    : ClockedObject(p),
++      TLBProbesPerCycle(p.probesPerCycle),
++      coalescingWindow(p.coalescingWindow),
++      disableCoalescing(p.disableCoalescing),
++      probeTLBEvent([this]{ processProbeTLBEvent(); },
++                    "Probe the TLB below",
++                    false, Event::CPU_Tick_Pri),
++      cleanupEvent([this]{ processCleanupEvent(); },
++                   "Cleanup issuedTranslationsTable hashmap",
++                   false, Event::Maximum_Pri),
++      tlb_level(p.tlb_level),
++      maxDownstream(p.maxDownstream),
++      numDownstream(0)
++{
++    // create the response ports based on the number of connected ports
++    for (size_t i = 0; i < p.port_cpu_side_ports_connection_count; ++i) {
++        cpuSidePort.push_back(new CpuSidePort(csprintf("%s-port%d", name(), i),
++                                              this, i));
++    }
++
++    // create the request ports based on the number of connected ports
++    for (size_t i = 0; i < p.port_mem_side_ports_connection_count; ++i) {
++        memSidePort.push_back(new MemSidePort(csprintf("%s-port%d", name(), i),
++                                              this, i));
++    }
++}
++
++Port &
++VegaTLBCoalescer::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "cpu_side_ports") {
++        if (idx >= static_cast<PortID>(cpuSidePort.size())) {
++            panic("VegaTLBCoalescer::getPort: unknown index %d\n", idx);
++        }
++
++        return *cpuSidePort[idx];
++    } else  if (if_name == "mem_side_ports") {
++        if (idx >= static_cast<PortID>(memSidePort.size())) {
++            panic("VegaTLBCoalescer::getPort: unknown index %d\n", idx);
++        }
++
++        return *memSidePort[idx];
++    } else {
++        panic("VegaTLBCoalescer::getPort: unknown port %s\n", if_name);
++    }
++}
++
++/*
++ * This method returns true if the <incoming_pkt>
++ * can be coalesced with <coalesced_pkt> and false otherwise.
++ * A given set of rules is checked.
++ * The rules can potentially be modified based on the TLB level.
++ */
++bool
++VegaTLBCoalescer::canCoalesce(PacketPtr incoming_pkt, PacketPtr coalesced_pkt)
++{
++    if (disableCoalescing)
++        return false;
++
++    GpuTranslationState *incoming_state =
++      safe_cast<GpuTranslationState*>(incoming_pkt->senderState);
++
++    GpuTranslationState *coalesced_state =
++     safe_cast<GpuTranslationState*>(coalesced_pkt->senderState);
++
++    // Rule 1: Coalesce requests only if they
++    // fall within the same virtual page
++    Addr incoming_virt_page_addr = roundDown(incoming_pkt->req->getVaddr(),
++                                             VegaISA::PageBytes);
++
++    Addr coalesced_virt_page_addr = roundDown(coalesced_pkt->req->getVaddr(),
++                                              VegaISA::PageBytes);
++
++    if (incoming_virt_page_addr != coalesced_virt_page_addr)
++        return false;
++
++    //* Rule 2: Coalesce requests only if they
++    // share a TLB Mode, i.e. they are both read
++    // or write requests.
++    BaseMMU::Mode incoming_mode = incoming_state->tlbMode;
++    BaseMMU::Mode coalesced_mode = coalesced_state->tlbMode;
++
++    if (incoming_mode != coalesced_mode)
++        return false;
++
++    // when we can coalesce a packet update the reqCnt
++    // that is the number of packets represented by
++    // this coalesced packet
++    if (!incoming_state->isPrefetch)
++        coalesced_state->reqCnt.back() += incoming_state->reqCnt.back();
++
++    return true;
++}
++
++/*
++ * We need to update the physical addresses of all the translation requests
++ * that were coalesced into the one that just returned.
++ */
++void
++VegaTLBCoalescer::updatePhysAddresses(PacketPtr pkt)
++{
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(), VegaISA::PageBytes);
++
++    DPRINTF(GPUTLB, "Update phys. addr. for %d coalesced reqs for page %#x\n",
++            issuedTranslationsTable[virt_page_addr].size(), virt_page_addr);
++
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    // Make a copy. This gets deleted after the first is sent back on the port
++    assert(sender_state->tlbEntry);
++    VegaISA::VegaTlbEntry tlb_entry =
++        *safe_cast<VegaISA::VegaTlbEntry *>(sender_state->tlbEntry);
++    Addr first_entry_vaddr = tlb_entry.vaddr;
++    Addr first_entry_paddr = tlb_entry.paddr;
++    int page_size = tlb_entry.size();
++    bool uncacheable = tlb_entry.uncacheable();
++    int first_hit_level = sender_state->hitLevel;
++
++    // Get the physical page address of the translated request
++    // Using the page_size specified in the TLBEntry allows us
++    // to support different page sizes.
++    Addr phys_page_paddr = pkt->req->getPaddr();
++    phys_page_paddr &= ~(page_size - 1);
++
++    bool is_system = pkt->req->systemReq();
++
++    for (int i = 0; i < issuedTranslationsTable[virt_page_addr].size(); ++i) {
++        PacketPtr local_pkt = issuedTranslationsTable[virt_page_addr][i];
++        GpuTranslationState *sender_state =
++            safe_cast<GpuTranslationState*>(local_pkt->senderState);
++
++        // we are sending the packet back, so pop the reqCnt associated
++        // with this level in the TLB hiearchy
++        if (!sender_state->isPrefetch) {
++            sender_state->reqCnt.pop_back();
++            localCycles += curCycle();
++        }
++
++        /*
++         * Only the first packet from this coalesced request has been
++         * translated. Grab the translated phys. page addr and update the
++         * physical addresses of the remaining packets with the appropriate
++         * page offsets.
++         */
++        if (i) {
++            Addr paddr = phys_page_paddr;
++            paddr |= (local_pkt->req->getVaddr() & (page_size - 1));
++            local_pkt->req->setPaddr(paddr);
++
++            if (uncacheable)
++                local_pkt->req->setFlags(Request::UNCACHEABLE);
++
++            // update senderState->tlbEntry, so we can insert
++            // the correct TLBEentry in the TLBs above.
++
++            //auto p = sender_state->tc->getProcessPtr();
++            if (sender_state->tlbEntry == NULL) {
++                // not set by lower(l2) coalescer
++                sender_state->tlbEntry =
++                    new VegaISA::VegaTlbEntry(1 /* VMID TODO */,
++                                              first_entry_vaddr,
++                                              first_entry_paddr,
++                                              tlb_entry.logBytes,
++                                              tlb_entry.pte);
++            }
++
++            // update the hitLevel for all uncoalesced reqs
++            // so that each packet knows where it hit
++            // (used for statistics in the CUs)
++            sender_state->hitLevel = first_hit_level;
++        }
++
++        // Copy PTE system bit information to coalesced requests
++        local_pkt->req->setSystemReq(is_system);
++
++        ResponsePort *return_port = sender_state->ports.back();
++        sender_state->ports.pop_back();
++
++        // Translation is done - Convert to a response pkt if necessary and
++        // send the translation back
++        if (local_pkt->isRequest()) {
++            local_pkt->makeTimingResponse();
++        }
++
++        return_port->sendTimingResp(local_pkt);
++    }
++
++    // schedule clean up for end of this cycle
++    // This is a maximum priority event and must be on
++    // the same cycle as GPUTLB cleanup event to prevent
++    // race conditions with an IssueProbeEvent caused by
++    // MemSidePort::recvReqRetry
++    cleanupQueue.push(virt_page_addr);
++
++    if (!cleanupEvent.scheduled())
++        schedule(cleanupEvent, curTick());
++}
++
++// Receive translation requests, create a coalesced request,
++// and send them to the TLB (TLBProbesPerCycle)
++bool
++VegaTLBCoalescer::CpuSidePort::recvTimingReq(PacketPtr pkt)
++{
++    // first packet of a coalesced request
++    PacketPtr first_packet = nullptr;
++    // true if we are able to do coalescing
++    bool didCoalesce = false;
++    // number of coalesced reqs for a given window
++    int coalescedReq_cnt = 0;
++
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    bool update_stats = !sender_state->isPrefetch;
++
++    if (coalescer->tlb_level == 1 && coalescer->mustStallCUPort(this))
++        return false;
++
++    // push back the port to remember the path back
++    sender_state->ports.push_back(this);
++
++    if (update_stats) {
++        // if reqCnt is empty then this packet does not represent
++        // multiple uncoalesced reqs(pkts) but just a single pkt.
++        // If it does though then the reqCnt for each level in the
++        // hierarchy accumulates the total number of reqs this packet
++        // represents
++        int req_cnt = 1;
++
++        if (!sender_state->reqCnt.empty())
++            req_cnt = sender_state->reqCnt.back();
++
++        sender_state->reqCnt.push_back(req_cnt);
++
++        // update statistics
++        coalescer->uncoalescedAccesses++;
++        req_cnt = sender_state->reqCnt.back();
++        DPRINTF(GPUTLB, "receiving pkt w/ req_cnt %d\n", req_cnt);
++        coalescer->queuingCycles -= (coalescer->curCycle() * req_cnt);
++        coalescer->localqueuingCycles -= coalescer->curCycle();
++        coalescer->localCycles -= coalescer->curCycle();
++    }
++
++    // Coalesce based on the time the packet arrives at the coalescer (here).
++    if (!sender_state->issueTime)
++        sender_state->issueTime = curTick();
++
++    // The tick index is used as a key to the coalescerFIFO hashmap.
++    // It is shared by all candidates that fall within the
++    // given coalescingWindow.
++    Tick tick_index = sender_state->issueTime / coalescer->coalescingWindow;
++
++    if (coalescer->coalescerFIFO.count(tick_index)) {
++        coalescedReq_cnt = coalescer->coalescerFIFO[tick_index].size();
++    }
++
++    // see if we can coalesce the incoming pkt with another
++    // coalesced request with the same tick_index
++    for (int i = 0; i < coalescedReq_cnt; ++i) {
++        first_packet = coalescer->coalescerFIFO[tick_index][i][0];
++
++        if (coalescer->canCoalesce(pkt, first_packet)) {
++            coalescer->coalescerFIFO[tick_index][i].push_back(pkt);
++
++            DPRINTF(GPUTLB, "Coalesced req %i w/ tick_index %d has %d reqs\n",
++                    i, tick_index,
++                    coalescer->coalescerFIFO[tick_index][i].size());
++
++            didCoalesce = true;
++            break;
++        }
++    }
++
++    // if this is the first request for this tick_index
++    // or we did not manage to coalesce, update stats
++    // and make necessary allocations.
++    if (!coalescedReq_cnt || !didCoalesce) {
++        if (update_stats)
++            coalescer->coalescedAccesses++;
++
++        std::vector<PacketPtr> new_array;
++        new_array.push_back(pkt);
++        coalescer->coalescerFIFO[tick_index].push_back(new_array);
++
++        DPRINTF(GPUTLB, "coalescerFIFO[%d] now has %d coalesced reqs after "
++                "push\n", tick_index,
++                coalescer->coalescerFIFO[tick_index].size());
++    }
++
++    //schedule probeTLBEvent next cycle to send the
++    //coalesced requests to the TLB
++    if (!coalescer->probeTLBEvent.scheduled()) {
++        coalescer->schedule(coalescer->probeTLBEvent,
++                curTick() + coalescer->clockPeriod());
++    }
++
++    return true;
++}
++
++void
++VegaTLBCoalescer::CpuSidePort::recvReqRetry()
++{
++    panic("recvReqRetry called");
++}
++
++void
++VegaTLBCoalescer::CpuSidePort::recvFunctional(PacketPtr pkt)
++{
++
++    GpuTranslationState *sender_state =
++        safe_cast<GpuTranslationState*>(pkt->senderState);
++
++    bool update_stats = !sender_state->isPrefetch;
++
++    if (update_stats)
++        coalescer->uncoalescedAccesses++;
++
++    Addr virt_page_addr = roundDown(pkt->req->getVaddr(), VegaISA::PageBytes);
++    int map_count = coalescer->issuedTranslationsTable.count(virt_page_addr);
++
++    if (map_count) {
++        DPRINTF(GPUTLB, "Warning! Functional access to addr %#x sees timing "
++                "req. pending\n", virt_page_addr);
++    }
++
++    coalescer->memSidePort[0]->sendFunctional(pkt);
++}
++
++AddrRangeList
++VegaTLBCoalescer::CpuSidePort::getAddrRanges() const
++{
++    // currently not checked by the requestor
++    AddrRangeList ranges;
++
++    return ranges;
++}
++
++/*
++ *  a translation completed and returned
++ */
++bool
++VegaTLBCoalescer::MemSidePort::recvTimingResp(PacketPtr pkt)
++{
++    coalescer->updatePhysAddresses(pkt);
++
++    if (coalescer->tlb_level != 1)
++        return true;
++
++
++    coalescer->decrementNumDownstream();
++
++    DPRINTF(GPUTLB,
++            "recvTimingReq: clscr = %p, numDownstream = %d, max = %d\n",
++            coalescer, coalescer->numDownstream, coalescer->maxDownstream);
++
++    coalescer->unstallPorts();
++    return true;
++}
++
++void
++VegaTLBCoalescer::MemSidePort::recvReqRetry()
++{
++    //we've receeived a retry. Schedule a probeTLBEvent
++    if (!coalescer->probeTLBEvent.scheduled())
++        coalescer->schedule(coalescer->probeTLBEvent,
++                curTick() + coalescer->clockPeriod());
++}
++
++void
++VegaTLBCoalescer::MemSidePort::recvFunctional(PacketPtr pkt)
++{
++    fatal("Memory side recvFunctional() not implemented in TLB coalescer.\n");
++}
++
++/*
++ * Here we scan the coalescer FIFO and issue the max
++ * number of permitted probes to the TLB below. We
++ * permit bypassing of coalesced requests for the same
++ * tick_index.
++ *
++ * We do not access the next tick_index unless we've
++ * drained the previous one. The coalesced requests
++ * that are successfully sent are moved to the
++ * issuedTranslationsTable table (the table which keeps
++ * track of the outstanding reqs)
++ */
++void
++VegaTLBCoalescer::processProbeTLBEvent()
++{
++    // number of TLB probes sent so far
++    int sent_probes = 0;
++
++    // It is set to true either when the recvTiming of the TLB below
++    // returns false or when there is another outstanding request for the
++    // same virt. page.
++
++    DPRINTF(GPUTLB, "triggered VegaTLBCoalescer %s\n", __func__);
++
++    if ((tlb_level == 1)
++        && (availDownstreamSlots() == 0)) {
++        DPRINTF(GPUTLB, "IssueProbeEvent - no downstream slots, bail out\n");
++        return;
++    }
++
++    for (auto iter = coalescerFIFO.begin();
++         iter != coalescerFIFO.end();) {
++        int coalescedReq_cnt = iter->second.size();
++        int i = 0;
++        int vector_index = 0;
++
++        DPRINTF(GPUTLB, "coalescedReq_cnt is %d for tick_index %d\n",
++               coalescedReq_cnt, iter->first);
++
++        while (i < coalescedReq_cnt) {
++            ++i;
++            PacketPtr first_packet = iter->second[vector_index][0];
++            //The request to coalescer is origanized as follows.
++            //The coalescerFIFO is a map which is indexed by coalescingWindow
++            // cycle. Only requests that falls in the same coalescingWindow
++            // considered for coalescing. Each entry of a coalescerFIFO is a
++            // vector of vectors. There is one entry for each different virtual
++            // page number and it contains vector of all request that are
++            // coalesced for the same virtual page address
++
++            // compute virtual page address for this request
++            Addr virt_page_addr = roundDown(first_packet->req->getVaddr(),
++                    VegaISA::PageBytes);
++
++            // is there another outstanding request for the same page addr?
++            int pending_reqs =
++                issuedTranslationsTable.count(virt_page_addr);
++
++            if (pending_reqs) {
++                DPRINTF(GPUTLB, "Cannot issue - There are pending reqs for "
++                        "page %#x\n", virt_page_addr);
++
++                ++vector_index;
++                continue;
++            }
++
++            // send the coalesced request for virt_page_addr
++            if (!memSidePort[0]->sendTimingReq(first_packet)) {
++                DPRINTF(GPUTLB,
++                        "Failed to send TLB request for page %#x",
++                        virt_page_addr);
++
++                // No need for a retries queue since we are already
++                // buffering the coalesced request in coalescerFIFO.
++                // Arka:: No point trying to send other requests to TLB at
++                // this point since it is busy. Retries will be called later
++                // by the TLB below
++                return;
++             } else {
++
++                if (tlb_level == 1)
++                    incrementNumDownstream();
++
++                GpuTranslationState *tmp_sender_state =
++                    safe_cast<GpuTranslationState*>(first_packet->senderState);
++
++                bool update_stats = !tmp_sender_state->isPrefetch;
++
++                if (update_stats) {
++                    // req_cnt is total number of packets represented
++                    // by the one we just sent counting all the way from
++                    // the top of TLB hiearchy (i.e., from the CU)
++                    int req_cnt = tmp_sender_state->reqCnt.back();
++                    queuingCycles += (curCycle() * req_cnt);
++
++                    DPRINTF(GPUTLB, "%s sending pkt w/ req_cnt %d\n",
++                            name(), req_cnt);
++
++                    // pkt_cnt is number of packets we coalesced into the one
++                    // we just sent but only at this coalescer level
++                    int pkt_cnt = iter->second[vector_index].size();
++                    localqueuingCycles += (curCycle() * pkt_cnt);
++                }
++
++                DPRINTF(GPUTLB, "Successfully sent TLB request for page %#x\n",
++                       virt_page_addr);
++
++                //copy coalescedReq to issuedTranslationsTable
++                issuedTranslationsTable[virt_page_addr]
++                    = iter->second[vector_index];
++
++                //erase the entry of this coalesced req
++                iter->second.erase(iter->second.begin() + vector_index);
++
++                if (iter->second.empty())
++                    assert( i == coalescedReq_cnt );
++
++                sent_probes++;
++
++                if (sent_probes == TLBProbesPerCycle ||
++                    ((tlb_level == 1) && (!availDownstreamSlots()))) {
++                    //Before returning make sure that empty vectors are taken
++                    // out. Not a big issue though since a later invocation
++                    // will take it out anyway.
++                    if (iter->second.empty())
++                        coalescerFIFO.erase(iter);
++
++                    //schedule probeTLBEvent next cycle to send the
++                    //coalesced requests to the TLB
++                    if (!probeTLBEvent.scheduled()) {
++                        schedule(probeTLBEvent,
++                                 cyclesToTicks(curCycle() + Cycles(1)));
++                    }
++                    return;
++                }
++            }
++        }
++
++        //if there are no more coalesced reqs for this tick_index
++        //erase the hash_map with the first iterator
++        if (iter->second.empty()) {
++            coalescerFIFO.erase(iter++);
++        } else {
++            ++iter;
++        }
++    }
++}
++
++void
++VegaTLBCoalescer::processCleanupEvent()
++{
++    while (!cleanupQueue.empty()) {
++        Addr cleanup_addr = cleanupQueue.front();
++        cleanupQueue.pop();
++        issuedTranslationsTable.erase(cleanup_addr);
++
++        DPRINTF(GPUTLB, "Cleanup - Delete coalescer entry with key %#x\n",
++                cleanup_addr);
++    }
++}
++
++void
++VegaTLBCoalescer::regStats()
++{
++    ClockedObject::regStats();
++
++    uncoalescedAccesses
++        .name(name() + ".uncoalesced_accesses")
++        .desc("Number of uncoalesced TLB accesses")
++        ;
++
++    coalescedAccesses
++        .name(name() + ".coalesced_accesses")
++        .desc("Number of coalesced TLB accesses")
++        ;
++
++    queuingCycles
++        .name(name() + ".queuing_cycles")
++        .desc("Number of cycles spent in queue")
++        ;
++
++    localqueuingCycles
++        .name(name() + ".local_queuing_cycles")
++        .desc("Number of cycles spent in queue for all incoming reqs")
++        ;
++
++   localCycles
++        .name(name() + ".local_cycles")
++        .desc("Number of cycles spent in queue for all incoming reqs")
++        ;
++
++    localLatency
++        .name(name() + ".local_latency")
++        .desc("Avg. latency over all incoming pkts")
++        ;
++
++    latency
++        .name(name() + ".latency")
++        .desc("Avg. latency over all incoming pkts")
++        ;
++
++    localLatency = localqueuingCycles / uncoalescedAccesses;
++    latency = localCycles / uncoalescedAccesses;
++}
++
++void
++VegaTLBCoalescer::insertStalledPortIfNotMapped(CpuSidePort *port)
++{
++    assert(tlb_level == 1);
++    if (stalledPortsMap.count(port) != 0)
++        return; // we already know this port is stalled
++
++    stalledPortsMap[port] = port;
++    stalledPortsQueue.push(port);
++    DPRINTF(GPUTLB,
++            "insertStalledPortIfNotMapped: port %p, mapSz = %d, qsz = %d\n",
++            port, stalledPortsMap.size(), stalledPortsQueue.size());
++}
++
++bool
++VegaTLBCoalescer::mustStallCUPort(CpuSidePort *port)
++{
++    assert(tlb_level == 1);
++
++    DPRINTF(GPUTLB, "mustStallCUPort: downstream = %d, max = %d\n",
++            numDownstream, maxDownstream);
++
++    if (availDownstreamSlots() == 0 || numDownstream == maxDownstream) {
++        warn("RED ALERT - VegaTLBCoalescer::mustStallCUPort\n");
++        insertStalledPortIfNotMapped(port);
++        return true;
++    }
++    else
++        return false;
++}
++
++void
++VegaTLBCoalescer::unstallPorts()
++{
++    assert(tlb_level == 1);
++    if (!stalledPorts() || availDownstreamSlots() == 0)
++        return;
++
++    DPRINTF(GPUTLB, "unstallPorts()\n");
++    /*
++     * this check is needed because we can be called from recvTiiningResponse()
++     * or, synchronously due to having called sendRetry, from recvTimingReq()
++     */
++    if (availDownstreamSlots() == 0) // can happen if retry sent 1 downstream
++        return;
++    /*
++     *  Consider this scenario
++     *        1) max downstream is reached
++     *        2) port1 tries to send a req, cant => stalledPortsQueue = [port1]
++     *        3) port2 tries to send a req, cant => stalledPortsQueue = [port1,
++     *              port2]
++     *        4) a request completes and we remove port1 from both data
++     *              structures & call
++     *             sendRetry => stalledPortsQueue = [port2]
++     *        5) port1 sends one req downstream and a second is rejected
++     *             => stalledPortsQueue = [port2, port1]
++     *
++     *        so we round robin and each stalled port can send 1 req on retry
++     */
++    assert(availDownstreamSlots() == 1);
++    auto port = stalledPortsQueue.front();
++    DPRINTF(GPUTLB, "sending retry for port = %p(%s)\n", port, port->name());
++    stalledPortsQueue.pop();
++    auto iter = stalledPortsMap.find(port);
++    assert(iter != stalledPortsMap.end());
++    stalledPortsMap.erase(iter);
++    port->sendRetryReq(); // cu will synchronously call recvTimingReq
++}
++
++} // namespace gem5
+diff --git a/src/arch/amdgpu/vega/tlb_coalescer.hh b/src/arch/amdgpu/vega/tlb_coalescer.hh
+new file mode 100644
+index 0000000..127c159
+--- /dev/null
++++ b/src/arch/amdgpu/vega/tlb_coalescer.hh
+@@ -0,0 +1,251 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_AMDGPU_VEGA_TLB_COALESCER_HH__
++#define __ARCH_AMDGPU_VEGA_TLB_COALESCER_HH__
++
++#include <list>
++#include <queue>
++#include <string>
++#include <vector>
++
++#include "arch/amdgpu/vega/tlb.hh"
++#include "arch/isa.hh"
++#include "base/statistics.hh"
++#include "mem/port.hh"
++#include "mem/request.hh"
++#include "params/VegaTLBCoalescer.hh"
++#include "sim/clocked_object.hh"
++
++namespace gem5
++{
++
++class Packet;
++class ThreadContext;
++
++/**
++ * The VegaTLBCoalescer is a ClockedObject sitting on the front side (CPUSide)
++ * of each TLB. It receives packets and issues coalesced requests to the
++ * TLB below it. It controls how requests are coalesced (the rules)
++ * and the permitted number of TLB probes per cycle (i.e., how many
++ * coalesced requests it feeds the TLB per cycle).
++ */
++class VegaTLBCoalescer : public ClockedObject
++{
++  public:
++    VegaTLBCoalescer(const VegaTLBCoalescerParams &p);
++    ~VegaTLBCoalescer() { }
++
++    // Number of TLB probes per cycle. Parameterizable - default 2.
++    int TLBProbesPerCycle;
++
++    // Consider coalescing across that many ticks.
++    // Paraemterizable - default 1.
++    int coalescingWindow;
++
++    // Each coalesced request consists of multiple packets
++    // that all fall within the same virtual page
++    typedef std::vector<PacketPtr> coalescedReq;
++
++    // disables coalescing when true
++    bool disableCoalescing;
++
++    /*
++     * This is a hash map with <tick_index> as a key.
++     * It contains a vector of coalescedReqs per <tick_index>.
++     * Requests are buffered here until they can be issued to
++     * the TLB, at which point they are copied to the
++     * issuedTranslationsTable hash map.
++     *
++     * In terms of coalescing, we coalesce requests in a given
++     * window of x cycles by using tick_index = issueTime/x as a
++     * key, where x = coalescingWindow. issueTime is the issueTime
++     * of the pkt from the ComputeUnit's perspective, but another
++     * option is to change it to curTick(), so we coalesce based
++     * on the receive time.
++     */
++    typedef std::map<Tick, std::vector<coalescedReq>> CoalescingFIFO;
++
++    CoalescingFIFO coalescerFIFO;
++
++    /*
++     * issuedTranslationsTable: a hash_map indexed by virtual page
++     * address. Each hash_map entry has a vector of PacketPtr associated
++     * with it denoting the different packets that share an outstanding
++     * coalesced translation request for the same virtual page.
++     *
++     * The rules that determine which requests we can coalesce are
++     * specified in the canCoalesce() method.
++     */
++    typedef std::unordered_map<Addr, coalescedReq> CoalescingTable;
++
++    CoalescingTable issuedTranslationsTable;
++
++    // number of packets the coalescer receives
++    Stats::Scalar uncoalescedAccesses;
++    // number packets the coalescer send to the TLB
++    Stats::Scalar coalescedAccesses;
++
++    // Number of cycles the coalesced requests spend waiting in
++    // coalescerFIFO. For each packet the coalescer receives we take into
++    // account the number of all uncoalesced requests this pkt "represents"
++    Stats::Scalar queuingCycles;
++
++    // On average how much time a request from the
++    // uncoalescedAccesses that reaches the TLB
++    // spends waiting?
++    Stats::Scalar localqueuingCycles;
++    Stats::Scalar localCycles;
++  // localqueuingCycles/uncoalescedAccesses
++    Stats::Formula localLatency;
++   // latency of a request to be completed
++    Stats::Formula latency;
++
++    bool canCoalesce(PacketPtr pkt1, PacketPtr pkt2);
++    void updatePhysAddresses(PacketPtr pkt);
++    void regStats() override;
++
++    class CpuSidePort : public ResponsePort
++    {
++      public:
++        CpuSidePort(const std::string &_name, VegaTLBCoalescer *tlb_coalescer,
++                    PortID _index)
++            : ResponsePort(_name, tlb_coalescer), coalescer(tlb_coalescer),
++              index(_index) { }
++
++      protected:
++        VegaTLBCoalescer *coalescer;
++        int index;
++
++        virtual bool recvTimingReq(PacketPtr pkt);
++        virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
++        virtual void recvFunctional(PacketPtr pkt);
++        virtual void recvRangeChange() { }
++        virtual void recvReqRetry();
++
++        virtual void
++        recvRespRetry()
++        {
++            fatal("recvRespRetry() is not implemented in the TLB "
++                "coalescer.\n");
++        }
++
++        virtual AddrRangeList getAddrRanges() const;
++    };
++
++    class MemSidePort : public RequestPort
++    {
++      public:
++        MemSidePort(const std::string &_name, VegaTLBCoalescer *tlb_coalescer,
++                    PortID _index)
++            : RequestPort(_name, tlb_coalescer), coalescer(tlb_coalescer),
++              index(_index) { }
++
++        std::deque<PacketPtr> retries;
++
++      protected:
++        VegaTLBCoalescer *coalescer;
++        int index;
++
++        virtual bool recvTimingResp(PacketPtr pkt);
++        virtual Tick recvAtomic(PacketPtr pkt) { return 0; }
++        virtual void recvFunctional(PacketPtr pkt);
++        virtual void recvRangeChange() { }
++        virtual void recvReqRetry();
++
++        virtual void
++        recvRespRetry()
++        {
++            fatal("recvRespRetry() not implemented in TLB coalescer");
++        }
++    };
++
++    // Coalescer response ports on the cpu Side
++    std::vector<CpuSidePort*> cpuSidePort;
++    // Coalescer request ports on the memory side
++    std::vector<MemSidePort*> memSidePort;
++
++    Port &getPort(const std::string &if_name,
++                  PortID idx=InvalidPortID) override;
++
++    void processProbeTLBEvent();
++    /// This event issues the TLB probes
++    EventFunctionWrapper probeTLBEvent;
++
++    void processCleanupEvent();
++    /// The cleanupEvent is scheduled after a TLBEvent triggers
++    /// in order to free memory and do the required clean-up
++    EventFunctionWrapper cleanupEvent;
++
++    int tlb_level;
++    int maxDownstream;
++    unsigned int numDownstream;
++    CpuSidePort *stalledPort;
++    std::queue<CpuSidePort *> stalledPortsQueue;
++    // enforce uniqueness in queue
++    std::map<CpuSidePort *, CpuSidePort *> stalledPortsMap;
++
++    unsigned int availDownstreamSlots() {
++        assert(tlb_level == 1);
++        return maxDownstream - numDownstream;
++    }
++
++    void insertStalledPortIfNotMapped(CpuSidePort *);
++    bool mustStallCUPort(CpuSidePort *);
++
++    bool stalledPorts() {
++        assert(tlb_level == 1);
++      return stalledPortsQueue.size() > 0;
++    }
++
++    void decrementNumDownstream() {
++        assert(tlb_level == 1);
++        assert(numDownstream > 0);
++        numDownstream--;
++    }
++
++    void incrementNumDownstream() {
++        assert(tlb_level == 1);
++        assert(maxDownstream >= numDownstream);
++        numDownstream++;
++    }
++
++    void unstallPorts();
++
++
++    // this FIFO queue keeps track of the virt. page
++    // addresses that are pending cleanup
++    std::queue<Addr> cleanupQueue;
++};
++
++} // namespace gem5
++
++#endif // __ARCH_AMDGPU_VEGA_TLB_COALESCER_HH__
+diff --git a/src/dev/amdgpu/amdgpu_device.hh b/src/dev/amdgpu/amdgpu_device.hh
+index b97d682..1265e2f 100644
+--- a/src/dev/amdgpu/amdgpu_device.hh
++++ b/src/dev/amdgpu/amdgpu_device.hh
+@@ -106,6 +106,53 @@ class AMDGPUDevice : public PciDevice
+     bool checkpoint_before_mmios;
+     int init_interrupt_count;
+ 
++    typedef struct GEM5_PACKED
++    {
++        // Page table addresses: from (Base + Start) to (End)
++        union
++        {
++            struct
++            {
++                uint32_t ptBaseL;
++                uint32_t ptBaseH;
++            };
++            Addr ptBase;
++        };
++        union
++        {
++            struct
++            {
++                uint32_t ptStartL;
++                uint32_t ptStartH;
++            };
++            Addr ptStart;
++        };
++        union
++        {
++            struct
++            {
++                uint32_t ptEndL;
++                uint32_t ptEndH;
++            };
++            Addr ptEnd;
++        };
++    } VMContext; // VM Context
++
++    typedef struct SysVMContext : VMContext
++    {
++        Addr agpBase;
++        Addr agpTop;
++        Addr agpBot;
++        Addr fbBase;
++        Addr fbTop;
++        Addr fbOffset;
++        Addr sysAddrL;
++        Addr sysAddrH;
++    } SysVMContext; // System VM Context
++
++    SysVMContext vmContext0;
++    std::vector<VMContext> vmContexts;
++
+   public:
+     AMDGPUDevice(const AMDGPUDeviceParams &p);
+ 
+@@ -127,6 +174,25 @@ class AMDGPUDevice : public PciDevice
+      */
+     void serialize(CheckpointOut &cp) const override;
+     void unserialize(CheckpointIn &cp) override;
++
++    /**
++     * Methods related to translations and system/device memory.
++     */
++    RequestorID vramRequestorId() { return 0; }
++
++    Addr
++    getPageTableBase(uint16_t vmid)
++    {
++        assert(vmid > 0 && vmid < vmContexts.size());
++        return vmContexts[vmid].ptBase;
++    }
++
++    Addr
++    getPageTableStart(uint16_t vmid)
++    {
++        assert(vmid > 0 && vmid < vmContexts.size());
++        return vmContexts[vmid].ptStart;
++    }
+ };
+ 
+ } // namespace gem5
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index 0273ae9..f3db81c 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -33,6 +33,7 @@
+ 
+ #include <limits>
+ 
++#include "arch/amdgpu/common/gpu_translation_state.hh"
+ #include "arch/amdgpu/common/tlb.hh"
+ #include "base/output.hh"
+ #include "debug/GPUDisp.hh"
+diff --git a/src/gpu-compute/fetch_unit.cc b/src/gpu-compute/fetch_unit.cc
+index a5a0370..6e35818 100644
+--- a/src/gpu-compute/fetch_unit.cc
++++ b/src/gpu-compute/fetch_unit.cc
+@@ -31,6 +31,7 @@
+ 
+ #include "gpu-compute/fetch_unit.hh"
+ 
++#include "arch/amdgpu/common/gpu_translation_state.hh"
+ #include "arch/amdgpu/common/tlb.hh"
+ #include "base/bitfield.hh"
+ #include "debug/GPUFetch.hh"
+diff --git a/src/gpu-compute/shader.cc b/src/gpu-compute/shader.cc
+index 5a8c939..a4e72b3 100644
+--- a/src/gpu-compute/shader.cc
++++ b/src/gpu-compute/shader.cc
+@@ -33,6 +33,7 @@
+ 
+ #include <limits>
+ 
++#include "arch/amdgpu/common/gpu_translation_state.hh"
+ #include "arch/amdgpu/common/tlb.hh"
+ #include "base/chunk_generator.hh"
+ #include "debug/GPUAgentDisp.hh"
+-- 
+1.8.3.1
+

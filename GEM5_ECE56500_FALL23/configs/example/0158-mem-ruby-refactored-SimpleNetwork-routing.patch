@@ -1,0 +1,825 @@
+From c3880c2c46aefe40cfc593c0792f91b22696ee41 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 11 Jun 2019 15:37:06 -0500
+Subject: [PATCH 158/757] mem-ruby: refactored SimpleNetwork routing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The routing algorithm is encapsulated in a separate SimObject to allow
+user to implement different routing strategies. The default
+implementation (WeightBased) maintains the original behavior.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I5c8927f358b8b04b2da55e59679c2f629c7cd2f9
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41858
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/common/TypeDefines.hh                 |   3 +
+ src/mem/ruby/network/Topology.hh                   |   2 -
+ src/mem/ruby/network/simple/PerfectSwitch.cc       |  97 +++------------
+ src/mem/ruby/network/simple/PerfectSwitch.hh       |  14 +--
+ src/mem/ruby/network/simple/SConscript             |  17 ++-
+ src/mem/ruby/network/simple/SimpleNetwork.cc       |   4 +-
+ src/mem/ruby/network/simple/SimpleNetwork.hh       |   2 -
+ src/mem/ruby/network/simple/SimpleNetwork.py       |  22 +++-
+ src/mem/ruby/network/simple/Switch.cc              |  10 +-
+ src/mem/ruby/network/simple/Switch.hh              |   8 +-
+ .../ruby/network/simple/routing/BaseRoutingUnit.hh | 100 +++++++++++++++
+ src/mem/ruby/network/simple/routing/WeightBased.cc | 134 +++++++++++++++++++++
+ src/mem/ruby/network/simple/routing/WeightBased.hh |  89 ++++++++++++++
+ 13 files changed, 397 insertions(+), 105 deletions(-)
+ create mode 100644 src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
+ create mode 100644 src/mem/ruby/network/simple/routing/WeightBased.cc
+ create mode 100644 src/mem/ruby/network/simple/routing/WeightBased.hh
+
+diff --git a/src/mem/ruby/common/TypeDefines.hh b/src/mem/ruby/common/TypeDefines.hh
+index 8f877be..8cc3e91 100644
+--- a/src/mem/ruby/common/TypeDefines.hh
++++ b/src/mem/ruby/common/TypeDefines.hh
+@@ -30,6 +30,8 @@
+ #ifndef __MEM_RUBY_COMMON_TYPEDEFINES_HH__
+ #define __MEM_RUBY_COMMON_TYPEDEFINES_HH__
+ 
++#include <string>
++
+ namespace gem5
+ {
+ 
+@@ -39,6 +41,7 @@ namespace ruby
+ typedef unsigned int LinkID;
+ typedef unsigned int NodeID;
+ typedef unsigned int SwitchID;
++typedef std::string PortDirection;
+ 
+ } // namespace ruby
+ } // namespace gem5
+diff --git a/src/mem/ruby/network/Topology.hh b/src/mem/ruby/network/Topology.hh
+index 5ce654f..301811e 100644
+--- a/src/mem/ruby/network/Topology.hh
++++ b/src/mem/ruby/network/Topology.hh
+@@ -42,7 +42,6 @@
+ #define __MEM_RUBY_NETWORK_TOPOLOGY_HH__
+ 
+ #include <iostream>
+-#include <string>
+ #include <vector>
+ 
+ #include "mem/ruby/common/TypeDefines.hh"
+@@ -65,7 +64,6 @@ class Network;
+  * represent the source ID, destination ID, and vnet number.
+  */
+ typedef std::vector<std::vector<std::vector<int>>> Matrix;
+-typedef std::string PortDirection;
+ 
+ struct LinkEntry
+ {
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.cc b/src/mem/ruby/network/simple/PerfectSwitch.cc
+index 4df3fcf..154e491 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.cc
++++ b/src/mem/ruby/network/simple/PerfectSwitch.cc
+@@ -59,13 +59,6 @@ namespace ruby
+ 
+ const int PRIORITY_SWITCH_LIMIT = 128;
+ 
+-// Operator for helper class
+-bool
+-operator<(const LinkOrder& l1, const LinkOrder& l2)
+-{
+-    return (l1.m_value < l2.m_value);
+-}
+-
+ PerfectSwitch::PerfectSwitch(SwitchID sid, Switch *sw, uint32_t virt_nets)
+     : Consumer(sw, Switch::PERFECTSWITCH_EV_PRI),
+       m_switch_id(sid), m_switch(sw)
+@@ -101,17 +94,15 @@ PerfectSwitch::addInPort(const std::vector<MessageBuffer*>& in)
+ 
+ void
+ PerfectSwitch::addOutPort(const std::vector<MessageBuffer*>& out,
+-                          const NetDest& routing_table_entry)
++                          const NetDest& routing_table_entry,
++                          const PortDirection &dst_inport)
+ {
+-    // Setup link order
+-    LinkOrder l;
+-    l.m_value = 0;
+-    l.m_link = m_out.size();
+-    m_link_order.push_back(l);
+-
+-    // Add to routing table
++    // Add to routing unit
++    m_switch->getRoutingUnit().addOutPort(m_out.size(),
++                                          out,
++                                          routing_table_entry,
++                                          dst_inport);
+     m_out.push_back(out);
+-    m_routing_table.push_back(routing_table_entry);
+ }
+ 
+ PerfectSwitch::~PerfectSwitch()
+@@ -167,8 +158,8 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+     Message *net_msg_ptr = NULL;
+ 
+     // temporary vectors to store the routing results
+-    std::vector<LinkID> output_links;
+-    std::vector<NetDest> output_link_destinations;
++    static thread_local std::vector<BaseRoutingUnit::RouteInfo> output_links;
++
+     Tick current_time = m_switch->clockEdge();
+ 
+     while (buffer->isReady(current_time)) {
+@@ -179,72 +170,16 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+         net_msg_ptr = msg_ptr.get();
+         DPRINTF(RubyNetwork, "Message: %s\n", (*net_msg_ptr));
+ 
+-        output_links.clear();
+-        output_link_destinations.clear();
+-        NetDest msg_dsts = net_msg_ptr->getDestination();
+-
+-        // Unfortunately, the token-protocol sends some
+-        // zero-destination messages, so this assert isn't valid
+-        // assert(msg_dsts.count() > 0);
+-
+-        assert(m_link_order.size() == m_routing_table.size());
+-        assert(m_link_order.size() == m_out.size());
+-
+-        if (m_network_ptr->getAdaptiveRouting()) {
+-            if (m_network_ptr->isVNetOrdered(vnet)) {
+-                // Don't adaptively route
+-                for (int out = 0; out < m_out.size(); out++) {
+-                    m_link_order[out].m_link = out;
+-                    m_link_order[out].m_value = 0;
+-                }
+-            } else {
+-                // Find how clogged each link is
+-                for (int out = 0; out < m_out.size(); out++) {
+-                    int out_queue_length = 0;
+-                    for (int v = 0; v < m_virtual_networks; v++) {
+-                        out_queue_length += m_out[out][v]->getSize(current_time);
+-                    }
+-                    int value =
+-                        (out_queue_length << 8) |
+-                        random_mt.random(0, 0xff);
+-                    m_link_order[out].m_link = out;
+-                    m_link_order[out].m_value = value;
+-                }
+-
+-                // Look at the most empty link first
+-                sort(m_link_order.begin(), m_link_order.end());
+-            }
+-        }
+-
+-        for (int i = 0; i < m_routing_table.size(); i++) {
+-            // pick the next link to look at
+-            int link = m_link_order[i].m_link;
+-            NetDest dst = m_routing_table[link];
+-            DPRINTF(RubyNetwork, "dst: %s\n", dst);
+-
+-            if (!msg_dsts.intersectionIsNotEmpty(dst))
+-                continue;
+-
+-            // Remember what link we're using
+-            output_links.push_back(link);
+ 
+-            // Need to remember which destinations need this message in
+-            // another vector.  This Set is the intersection of the
+-            // routing_table entry and the current destination set.  The
+-            // intersection must not be empty, since we are inside "if"
+-            output_link_destinations.push_back(msg_dsts.AND(dst));
+-
+-            // Next, we update the msg_destination not to include
+-            // those nodes that were already handled by this link
+-            msg_dsts.removeNetDest(dst);
+-        }
+-
+-        assert(msg_dsts.count() == 0);
++        output_links.clear();
++        m_switch->getRoutingUnit().route(*net_msg_ptr, vnet,
++                                         m_network_ptr->isVNetOrdered(vnet),
++                                         output_links);
+ 
+         // Check for resources - for all outgoing queues
+         bool enough = true;
+         for (int i = 0; i < output_links.size(); i++) {
+-            int outgoing = output_links[i];
++            int outgoing = output_links[i].m_link_id;
+ 
+             if (!m_out[outgoing][vnet]->areNSlotsAvailable(1, current_time))
+                 enough = false;
+@@ -282,7 +217,7 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+ 
+         // Enqueue it - for all outgoing queues
+         for (int i=0; i<output_links.size(); i++) {
+-            int outgoing = output_links[i];
++            int outgoing = output_links[i].m_link_id;
+ 
+             if (i > 0) {
+                 // create a private copy of the unmodified message
+@@ -292,7 +227,7 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+             // Change the internal destination set of the message so it
+             // knows which destinations this link is responsible for.
+             net_msg_ptr = msg_ptr.get();
+-            net_msg_ptr->getDestination() = output_link_destinations[i];
++            net_msg_ptr->getDestination() = output_links[i].m_destinations;
+ 
+             // Enqeue msg
+             DPRINTF(RubyNetwork, "Enqueuing net msg from "
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.hh b/src/mem/ruby/network/simple/PerfectSwitch.hh
+index 3249622..d6c836b 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.hh
++++ b/src/mem/ruby/network/simple/PerfectSwitch.hh
+@@ -66,14 +66,6 @@ class NetDest;
+ class SimpleNetwork;
+ class Switch;
+ 
+-struct LinkOrder
+-{
+-    int m_link;
+-    int m_value;
+-};
+-
+-bool operator<(const LinkOrder& l1, const LinkOrder& l2);
+-
+ class PerfectSwitch : public Consumer
+ {
+   public:
+@@ -86,7 +78,8 @@ class PerfectSwitch : public Consumer
+     void init(SimpleNetwork *);
+     void addInPort(const std::vector<MessageBuffer*>& in);
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+-                    const NetDest& routing_table_entry);
++                    const NetDest& routing_table_entry,
++                    const PortDirection &dst_inport);
+ 
+     int getInLinks() const { return m_in.size(); }
+     int getOutLinks() const { return m_out.size(); }
+@@ -113,9 +106,6 @@ class PerfectSwitch : public Consumer
+     std::vector<std::vector<MessageBuffer*> > m_in;
+     std::vector<std::vector<MessageBuffer*> > m_out;
+ 
+-    std::vector<NetDest> m_routing_table;
+-    std::vector<LinkOrder> m_link_order;
+-
+     uint32_t m_virtual_networks;
+     int m_wakeups_wo_switch;
+ 
+diff --git a/src/mem/ruby/network/simple/SConscript b/src/mem/ruby/network/simple/SConscript
+index 32c5082..92e1ff6 100644
+--- a/src/mem/ruby/network/simple/SConscript
++++ b/src/mem/ruby/network/simple/SConscript
+@@ -1,5 +1,17 @@
+ # -*- mode:python -*-
+ 
++# Copyright (c) 2021 ARM Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright (c) 2009 The Hewlett-Packard Development Company
+ # All rights reserved.
+ #
+@@ -32,10 +44,13 @@ if env['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('SimpleLink.py', sim_objects=['SimpleExtLink', 'SimpleIntLink'])
+-SimObject('SimpleNetwork.py', sim_objects=['SimpleNetwork', 'Switch'])
++SimObject('SimpleNetwork.py', sim_objects=['SimpleNetwork', 'BaseRoutingUnit',
++    'WeightBased', 'Switch'])
+ 
+ Source('PerfectSwitch.cc')
+ Source('SimpleLink.cc')
+ Source('SimpleNetwork.cc')
+ Source('Switch.cc')
+ Source('Throttle.cc')
++
++Source('routing/WeightBased.cc')
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.cc b/src/mem/ruby/network/simple/SimpleNetwork.cc
+index c11dd22..7bda404 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.cc
++++ b/src/mem/ruby/network/simple/SimpleNetwork.cc
+@@ -61,7 +61,6 @@ namespace ruby
+ SimpleNetwork::SimpleNetwork(const Params &p)
+     : Network(p), m_buffer_size(p.buffer_size),
+       m_endpoint_bandwidth(p.endpoint_bandwidth),
+-      m_adaptive_routing(p.adaptive_routing),
+       networkStats(this)
+ {
+     // record the routers
+@@ -162,7 +161,8 @@ SimpleNetwork::makeInternalLink(SwitchID src, SwitchID dest, BasicLink* link,
+     m_switches[dest]->addInPort(queues);
+     m_switches[src]->addOutPort(queues, routing_table_entry[0],
+                                 simple_link->m_latency,
+-                                simple_link->m_bw_multiplier);
++                                simple_link->m_bw_multiplier,
++                                dst_inport);
+ }
+ 
+ void
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.hh b/src/mem/ruby/network/simple/SimpleNetwork.hh
+index 464ab8b..f8a4e90 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.hh
++++ b/src/mem/ruby/network/simple/SimpleNetwork.hh
+@@ -70,7 +70,6 @@ class SimpleNetwork : public Network
+ 
+     int getBufferSize() { return m_buffer_size; }
+     int getEndpointBandwidth() { return m_endpoint_bandwidth; }
+-    bool getAdaptiveRouting() {return m_adaptive_routing; }
+ 
+     void collateStats();
+     void regStats();
+@@ -108,7 +107,6 @@ class SimpleNetwork : public Network
+     int m_num_connected_buffers;
+     const int m_buffer_size;
+     const int m_endpoint_bandwidth;
+-    const bool m_adaptive_routing;
+ 
+ 
+     struct NetworkStats : public statistics::Group
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.py b/src/mem/ruby/network/simple/SimpleNetwork.py
+index a186dae..f24dc9c 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.py
++++ b/src/mem/ruby/network/simple/SimpleNetwork.py
+@@ -39,6 +39,7 @@
+ from m5.params import *
+ from m5.proxy import *
+ 
++from m5.SimObject import SimObject
+ from m5.objects.Network import RubyNetwork
+ from m5.objects.BasicRouter import BasicRouter
+ from m5.objects.MessageBuffer import MessageBuffer
+@@ -51,7 +52,6 @@ class SimpleNetwork(RubyNetwork):
+     buffer_size = Param.Int(0,
+         "default buffer size; 0 indicates infinite buffering")
+     endpoint_bandwidth = Param.Int(1000, "bandwidth adjustment factor")
+-    adaptive_routing = Param.Bool(False, "enable adaptive routing")
+     int_link_buffers = VectorParam.MessageBuffer("Buffers for int_links")
+ 
+     physical_vnets_channels = VectorParam.Int([],
+@@ -110,6 +110,22 @@ class SimpleNetwork(RubyNetwork):
+                                      buffer_size = self.vnet_buffer_size(i)))
+             router.port_buffers = router_buffers
+ 
++
++class BaseRoutingUnit(SimObject):
++    type = 'BaseRoutingUnit'
++    abstract = True
++    cxx_header = 'mem/ruby/network/simple/routing/BaseRoutingUnit.hh'
++    cxx_class = 'gem5::ruby::BaseRoutingUnit'
++
++
++class WeightBased(BaseRoutingUnit):
++    type = 'WeightBased'
++    cxx_header = 'mem/ruby/network/simple/routing/WeightBased.hh'
++    cxx_class = 'gem5::ruby::WeightBased'
++
++    adaptive_routing = Param.Bool(False, "enable adaptive routing")
++
++
+ class Switch(BasicRouter):
+     type = 'Switch'
+     cxx_header = 'mem/ruby/network/simple/Switch.hh'
+@@ -118,3 +134,7 @@ class Switch(BasicRouter):
+     virt_nets = Param.Int(Parent.number_of_virtual_networks,
+                           "number of virtual networks")
+     port_buffers = VectorParam.MessageBuffer("Port buffers")
++
++    routing_unit = Param.BaseRoutingUnit(
++                        WeightBased(adaptive_routing = False),
++                        "Routing strategy to be used")
+diff --git a/src/mem/ruby/network/simple/Switch.cc b/src/mem/ruby/network/simple/Switch.cc
+index 0977ba7..8c0b229 100644
+--- a/src/mem/ruby/network/simple/Switch.cc
++++ b/src/mem/ruby/network/simple/Switch.cc
+@@ -59,7 +59,8 @@ using stl_helpers::operator<<;
+ Switch::Switch(const Params &p)
+   : BasicRouter(p),
+     perfectSwitch(m_id, this, p.virt_nets),  m_latency(p.latency),
+-    m_num_connected_buffers(0), switchStats(this)
++    m_routing_unit(*p.routing_unit), m_num_connected_buffers(0),
++    switchStats(this)
+ {
+     m_port_buffers.reserve(p.port_buffers.size());
+     for (auto& buffer : p.port_buffers) {
+@@ -72,6 +73,7 @@ Switch::init()
+ {
+     BasicRouter::init();
+     perfectSwitch.init(m_network_ptr);
++    m_routing_unit.init_parent(this);
+ }
+ 
+ void
+@@ -83,7 +85,8 @@ Switch::addInPort(const std::vector<MessageBuffer*>& in)
+ void
+ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+                    const NetDest& routing_table_entry,
+-                   Cycles link_latency, int bw_multiplier)
++                   Cycles link_latency, int bw_multiplier,
++                   PortDirection dst_inport)
+ {
+     const std::vector<int> &physical_vnets_channels =
+         m_network_ptr->params().physical_vnets_channels;
+@@ -118,7 +121,8 @@ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+     }
+ 
+     // Hook the queues to the PerfectSwitch
+-    perfectSwitch.addOutPort(intermediateBuffers, routing_table_entry);
++    perfectSwitch.addOutPort(intermediateBuffers, routing_table_entry,
++        dst_inport);
+ 
+     // Hook the queues to the Throttle
+     throttles.back().addLinks(intermediateBuffers, out);
+diff --git a/src/mem/ruby/network/simple/Switch.hh b/src/mem/ruby/network/simple/Switch.hh
+index 5312c5c..70e5340 100644
+--- a/src/mem/ruby/network/simple/Switch.hh
++++ b/src/mem/ruby/network/simple/Switch.hh
+@@ -61,6 +61,7 @@
+ #include "mem/ruby/network/BasicRouter.hh"
+ #include "mem/ruby/network/simple/PerfectSwitch.hh"
+ #include "mem/ruby/network/simple/Throttle.hh"
++#include "mem/ruby/network/simple/routing/BaseRoutingUnit.hh"
+ #include "mem/ruby/protocol/MessageSizeType.hh"
+ #include "params/Switch.hh"
+ 
+@@ -91,7 +92,8 @@ class Switch : public BasicRouter
+     void addInPort(const std::vector<MessageBuffer*>& in);
+     void addOutPort(const std::vector<MessageBuffer*>& out,
+                     const NetDest& routing_table_entry,
+-                    Cycles link_latency, int bw_multiplier);
++                    Cycles link_latency, int bw_multiplier,
++                    PortDirection dst_inport = "");
+ 
+     void resetStats();
+     void collateStats();
+@@ -110,6 +112,8 @@ class Switch : public BasicRouter
+ 
+     Tick latencyTicks() const { return cyclesToTicks(m_latency); }
+ 
++    BaseRoutingUnit& getRoutingUnit() { return m_routing_unit; }
++
+   private:
+     // Private copy constructor and assignment operator
+     Switch(const Switch& obj);
+@@ -121,6 +125,8 @@ class Switch : public BasicRouter
+ 
+     const Cycles m_latency;
+ 
++    BaseRoutingUnit &m_routing_unit;
++
+     unsigned m_num_connected_buffers;
+     std::vector<MessageBuffer*> m_port_buffers;
+ 
+diff --git a/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh b/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
+new file mode 100644
+index 0000000..20f27f3
+--- /dev/null
++++ b/src/mem/ruby/network/simple/routing/BaseRoutingUnit.hh
+@@ -0,0 +1,100 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_RUBY_NETWORK_SIMPLE_BASEROUTINGUNIT_HH__
++#define __MEM_RUBY_NETWORK_SIMPLE_BASEROUTINGUNIT_HH__
++
++#include <vector>
++
++#include "mem/ruby/network/Network.hh"
++#include "mem/ruby/slicc_interface/Message.hh"
++#include "params/BaseRoutingUnit.hh"
++#include "sim/sim_object.hh"
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++class Switch;
++
++class BaseRoutingUnit : public SimObject
++{
++  public:
++    PARAMS(BaseRoutingUnit);
++
++    BaseRoutingUnit(const Params &p)
++      :SimObject(p)
++    {
++    }
++
++    virtual void addOutPort(LinkID link_id,
++                           const std::vector<MessageBuffer*>& m_out_buffer,
++                           const NetDest& routing_table_entry,
++                           const PortDirection &direction) = 0;
++
++    struct RouteInfo
++    {
++        RouteInfo(const NetDest &dests, const LinkID link_id)
++          :m_destinations(dests), m_link_id(link_id)
++        {}
++        const NetDest m_destinations;
++        const LinkID m_link_id;
++    };
++
++    virtual void route(const Message &msg,
++                       int vnet,
++                       bool deterministic,
++                       std::vector<RouteInfo> &out_links) = 0;
++
++    void init_parent(Switch *parent_switch)
++    { m_parent_switch = parent_switch; }
++
++  protected:
++
++    Switch *m_parent_switch;
++
++};
++
++} // namespace ruby
++} // namespace gem5
++
++#endif // __MEM_RUBY_NETWORK_SIMPLE_BASEROUTINGUNIT_HH__
+diff --git a/src/mem/ruby/network/simple/routing/WeightBased.cc b/src/mem/ruby/network/simple/routing/WeightBased.cc
+new file mode 100644
+index 0000000..7db4665
+--- /dev/null
++++ b/src/mem/ruby/network/simple/routing/WeightBased.cc
+@@ -0,0 +1,134 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "mem/ruby/network/simple/routing/WeightBased.hh"
++
++#include <algorithm>
++
++#include "base/random.hh"
++#include "mem/ruby/network/simple/Switch.hh"
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++WeightBased::WeightBased(const Params &p)
++    :BaseRoutingUnit(p)
++{
++}
++
++void
++WeightBased::addOutPort(LinkID link_id,
++                    const std::vector<MessageBuffer*>& m_out_buffer,
++                    const NetDest& routing_table_entry,
++                    const PortDirection &direction)
++{
++    gem5_assert(link_id == m_links.size());
++    m_links.emplace_back(new LinkInfo{link_id,
++                        routing_table_entry,
++                        m_out_buffer,
++                        static_cast<int>(link_id)});
++}
++
++void
++WeightBased::route(const Message &msg,
++                   int vnet,
++                   bool deterministic,
++                   std::vector<RouteInfo> &out_links)
++{
++    // Makes sure ordering was reset adaptive option was set
++    if (params().adaptive_routing) {
++        if (deterministic) {
++            // Don't adaptively route
++            // Makes sure ordering is reset
++            for (auto &link : m_links)
++                link->m_order = static_cast<int>(link->m_link_id);
++        } else {
++            // Find how clogged each link is
++            for (auto &link : m_links) {
++                int out_queue_length = 0;
++                Tick current_time = m_parent_switch->clockEdge();
++                for (auto buffer : link->m_out_buffers) {
++                    out_queue_length += buffer->getSize(current_time);
++                }
++                // improve load distribution by randomizing order of links
++                // with the same queue length
++                link->m_order =
++                    (out_queue_length << 8) | random_mt.random(0, 0xff);
++            }
++        }
++
++        std::sort(m_links.begin(), m_links.end(),
++            [](const std::unique_ptr<LinkInfo> &a,
++               const std::unique_ptr<LinkInfo> &b) {
++                return a->m_order < b->m_order;
++            });
++    }
++
++    findRoute(msg, out_links);
++}
++
++void
++WeightBased::findRoute(const Message &msg,
++                       std::vector<RouteInfo> &out_links) const
++{
++    NetDest msg_dsts = msg.getDestination();
++    assert(out_links.size() == 0);
++    for (auto &link : m_links) {
++        const NetDest &dst = link->m_routing_entry;
++        if (msg_dsts.intersectionIsNotEmpty(dst)) {
++            // Need to remember which destinations need this message in
++            // another vector.  This Set is the intersection of the
++            // routing_table entry and the current destination set.
++            out_links.emplace_back(msg_dsts.AND(dst), link->m_link_id);
++
++            // Next, we update the msg_destination not to include
++            // those nodes that were already handled by this link
++            msg_dsts.removeNetDest(dst);
++        }
++    }
++
++    gem5_assert(msg_dsts.count() == 0);
++}
++
++} // namespace ruby
++} // namespace gem5
+diff --git a/src/mem/ruby/network/simple/routing/WeightBased.hh b/src/mem/ruby/network/simple/routing/WeightBased.hh
+new file mode 100644
+index 0000000..e0a2472
+--- /dev/null
++++ b/src/mem/ruby/network/simple/routing/WeightBased.hh
+@@ -0,0 +1,89 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_RUBY_NETWORK_SIMPLE_WEIGHTBASEDROUTINGUNIT_HH__
++#define __MEM_RUBY_NETWORK_SIMPLE_WEIGHTBASEDROUTINGUNIT_HH__
++
++#include "mem/ruby/network/simple/routing/BaseRoutingUnit.hh"
++#include "params/WeightBased.hh"
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++class WeightBased : public BaseRoutingUnit
++{
++  public:
++    PARAMS(WeightBased);
++
++    WeightBased(const Params &p);
++
++    void addOutPort(LinkID link_id,
++                    const std::vector<MessageBuffer*>& m_out_buffer,
++                    const NetDest& routing_table_entry,
++                    const PortDirection &direction) override;
++
++    void route(const Message &msg,
++                int vnet,
++                bool deterministic,
++                std::vector<RouteInfo> &out_links) override;
++
++  private:
++
++    struct LinkInfo {
++        const LinkID m_link_id;
++        const NetDest m_routing_entry;
++        const std::vector<MessageBuffer*> m_out_buffers;
++        int m_order;
++    };
++
++    std::vector<std::unique_ptr<LinkInfo>> m_links;
++
++    void findRoute(const Message &msg,
++                   std::vector<RouteInfo> &out_links) const;
++
++};
++
++} // namespace ruby
++} // namespace gem5
++
++#endif // __MEM_RUBY_NETWORK_SIMPLE_WEIGHTBASEDROUTINGUNIT_HH__
+-- 
+1.8.3.1
+

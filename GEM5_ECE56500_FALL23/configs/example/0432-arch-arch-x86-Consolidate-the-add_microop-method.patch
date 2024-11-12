@@ -1,0 +1,70 @@
+From 02cfdcfcc9cf6b3cdfb41b270bbafa51de2c6601 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 30 Jan 2022 21:31:11 -0800
+Subject: [PATCH 432/757] arch,arch-x86: Consolidate the add_microop method.
+
+This was defined in the Micro_Container base class, and then again in
+each subclass. The base definition was different and less complete than
+the others, but the others were identical. Replace the base class
+definition with the definition in the subclasses, and delete the ones in
+the subclasses.
+
+Change-Id: Ib2d1ce72958ec299115efb6efced2bd14c08467c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56330
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/micro_asm.py        | 2 ++
+ src/arch/x86/isa/macroop.isa | 4 ----
+ src/arch/x86/isa/rom.isa     | 6 ------
+ 3 files changed, 2 insertions(+), 10 deletions(-)
+
+diff --git a/src/arch/micro_asm.py b/src/arch/micro_asm.py
+index 1eb82b5..d85bd8f 100644
+--- a/src/arch/micro_asm.py
++++ b/src/arch/micro_asm.py
+@@ -49,6 +49,8 @@ class Micro_Container(object):
+         self.labels = {}
+ 
+     def add_microop(self, mnemonic, microop):
++        microop.mnemonic = mnemonic
++        microop.micropc = len(self.microops)
+         self.microops.append(microop)
+ 
+     def __str__(self):
+diff --git a/src/arch/x86/isa/macroop.isa b/src/arch/x86/isa/macroop.isa
+index 3710cf4..1cbdc85 100644
+--- a/src/arch/x86/isa/macroop.isa
++++ b/src/arch/x86/isa/macroop.isa
+@@ -133,10 +133,6 @@ def template MacroConstructor {{
+ let {{
+     from micro_asm import Combinational_Macroop, Rom_Macroop
+     class X86Macroop(Combinational_Macroop):
+-        def add_microop(self, mnemonic, microop):
+-            microop.mnemonic = mnemonic
+-            microop.micropc = len(self.microops)
+-            self.microops.append(microop)
+         def setAdjustEnv(self, val):
+             self.adjust_env = val
+         def adjustImm(self, val):
+diff --git a/src/arch/x86/isa/rom.isa b/src/arch/x86/isa/rom.isa
+index c7ba675..9aef3ba 100644
+--- a/src/arch/x86/isa/rom.isa
++++ b/src/arch/x86/isa/rom.isa
+@@ -41,12 +41,6 @@ let {{
+     from micro_asm import Rom
+ 
+     class X86MicrocodeRom(Rom):
+-        def add_microop(self, mnemonic, microop):
+-            microop.mnemonic = mnemonic
+-            microop.micropc = len(self.microops)
+-            self.microops.append(microop)
+-
+-
+         def getDeclaration(self):
+             declareLabels = \
+                 "GEM5_DEPRECATED_NAMESPACE(RomLabels, rom_labels);\n"
+-- 
+1.8.3.1
+

@@ -1,0 +1,283 @@
+From 5e1fdf758684ccdf14b8ebd086dd81bb10aab153 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 10 Aug 2021 03:25:06 -0700
+Subject: [PATCH 186/757] arch: Remove TheISA::VecElem from arch/vecregs.hh.
+
+Also remove unnecessary includes from the x86 version, and fix up
+transitive includes from other x86 files.
+
+Change-Id: I9f7d330f287c9ed52eed1544c47251b4354cfab3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49166
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/generic/vec_reg.hh       | 3 +--
+ src/arch/mips/vecregs.hh          | 3 ---
+ src/arch/null/vecregs.hh          | 5 -----
+ src/arch/power/vecregs.hh         | 5 -----
+ src/arch/riscv/vecregs.hh         | 5 -----
+ src/arch/sparc/vecregs.hh         | 3 ---
+ src/arch/x86/faults.cc            | 1 +
+ src/arch/x86/interrupts.cc        | 1 +
+ src/arch/x86/isa/includes.isa     | 4 ++++
+ src/arch/x86/linux/linux.hh       | 2 ++
+ src/arch/x86/linux/se_workload.cc | 1 +
+ src/arch/x86/linux/se_workload.hh | 1 +
+ src/arch/x86/pagetable_walker.cc  | 1 +
+ src/arch/x86/process.cc           | 1 +
+ src/arch/x86/vecregs.hh           | 7 -------
+ 15 files changed, 13 insertions(+), 30 deletions(-)
+
+diff --git a/src/arch/generic/vec_reg.hh b/src/arch/generic/vec_reg.hh
+index dfdc985..99d67f3 100644
+--- a/src/arch/generic/vec_reg.hh
++++ b/src/arch/generic/vec_reg.hh
+@@ -263,8 +263,7 @@ struct ShowParam<VecRegContainer<Sz>>
+  * vector registers.
+  */
+ /** @{ */
+-using DummyVecElem = uint32_t;
+-using DummyVecRegContainer = VecRegContainer<2 * sizeof(DummyVecElem)>;
++using DummyVecRegContainer = VecRegContainer<8>;
+ /** @} */
+ 
+ } // namespace gem5
+diff --git a/src/arch/mips/vecregs.hh b/src/arch/mips/vecregs.hh
+index 96dd881..546e4cf 100644
+--- a/src/arch/mips/vecregs.hh
++++ b/src/arch/mips/vecregs.hh
+@@ -40,10 +40,7 @@ namespace MipsISA
+ {
+ 
+ // Not applicable to MIPS
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to MIPS
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace MipsISA
+diff --git a/src/arch/null/vecregs.hh b/src/arch/null/vecregs.hh
+index 0476554..4ca2d2b 100644
+--- a/src/arch/null/vecregs.hh
++++ b/src/arch/null/vecregs.hh
+@@ -38,8 +38,6 @@
+ #ifndef __ARCH_NULL_VECREGS_HH__
+ #define __ARCH_NULL_VECREGS_HH__
+ 
+-#include <cstdint>
+-
+ #include "arch/generic/vec_pred_reg.hh"
+ #include "arch/generic/vec_reg.hh"
+ 
+@@ -50,10 +48,7 @@ namespace NullISA
+ {
+ 
+ // Not applicable to null
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to null
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace NullISA
+diff --git a/src/arch/power/vecregs.hh b/src/arch/power/vecregs.hh
+index 767a4be..33ac377 100644
+--- a/src/arch/power/vecregs.hh
++++ b/src/arch/power/vecregs.hh
+@@ -30,8 +30,6 @@
+ #ifndef __ARCH_POWER_VECREGS_HH__
+ #define __ARCH_POWER_VECREGS_HH__
+ 
+-#include <cstdint>
+-
+ #include "arch/generic/vec_pred_reg.hh"
+ #include "arch/generic/vec_reg.hh"
+ 
+@@ -42,10 +40,7 @@ namespace PowerISA
+ {
+ 
+ // Not applicable to Power
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to Power
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace PowerISA
+diff --git a/src/arch/riscv/vecregs.hh b/src/arch/riscv/vecregs.hh
+index 8bc0656..a6c11e1 100644
+--- a/src/arch/riscv/vecregs.hh
++++ b/src/arch/riscv/vecregs.hh
+@@ -46,8 +46,6 @@
+ #ifndef __ARCH_RISCV_VECREGS_HH__
+ #define __ARCH_RISCV_VECREGS_HH__
+ 
+-#include <cstdint>
+-
+ #include "arch/generic/vec_pred_reg.hh"
+ #include "arch/generic/vec_reg.hh"
+ 
+@@ -58,10 +56,7 @@ namespace RiscvISA
+ {
+ 
+ // Not applicable to RISC-V
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to RISC-V
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace RiscvISA
+diff --git a/src/arch/sparc/vecregs.hh b/src/arch/sparc/vecregs.hh
+index 1e4c1f9..d1d9dfd 100644
+--- a/src/arch/sparc/vecregs.hh
++++ b/src/arch/sparc/vecregs.hh
+@@ -39,10 +39,7 @@ namespace SparcISA
+ {
+ 
+ // Not applicable to SPARC
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to SPARC
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace SparcISA
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index ae9586b..347a857 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -43,6 +43,7 @@
+ #include "arch/x86/generated/decoder.hh"
+ #include "arch/x86/insts/static_inst.hh"
+ #include "arch/x86/mmu.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "base/loader/symtab.hh"
+ #include "base/trace.hh"
+ #include "cpu/thread_context.hh"
+diff --git a/src/arch/x86/interrupts.cc b/src/arch/x86/interrupts.cc
+index 8499bfb..47db3da 100644
+--- a/src/arch/x86/interrupts.cc
++++ b/src/arch/x86/interrupts.cc
+@@ -54,6 +54,7 @@
+ 
+ #include "arch/x86/intmessage.hh"
+ #include "arch/x86/regs/apic.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "cpu/base.hh"
+ #include "debug/LocalApic.hh"
+ #include "dev/x86/i82094aa.hh"
+diff --git a/src/arch/x86/isa/includes.isa b/src/arch/x86/isa/includes.isa
+index bb07405..9af394a 100644
+--- a/src/arch/x86/isa/includes.isa
++++ b/src/arch/x86/isa/includes.isa
+@@ -62,6 +62,9 @@ output header {{
+ #include "arch/x86/insts/microregop.hh"
+ #include "arch/x86/insts/microspecop.hh"
+ #include "arch/x86/insts/static_inst.hh"
++#include "arch/x86/regs/ccr.hh"
++#include "arch/x86/regs/int.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "arch/x86/types.hh"
+ #include "arch/x86/utility.hh"
+ #include "base/logging.hh"
+@@ -81,6 +84,7 @@ output decoder {{
+ #include "arch/x86/decoder.hh"
+ #include "arch/x86/faults.hh"
+ #include "arch/x86/microcode_rom.hh"
++#include "arch/x86/regs/ccr.hh"
+ #include "arch/x86/regs/float.hh"
+ #include "arch/x86/regs/int.hh"
+ #include "arch/x86/regs/misc.hh"
+diff --git a/src/arch/x86/linux/linux.hh b/src/arch/x86/linux/linux.hh
+index 928c580..86d9c62 100644
+--- a/src/arch/x86/linux/linux.hh
++++ b/src/arch/x86/linux/linux.hh
+@@ -40,6 +40,8 @@
+ 
+ #include <map>
+ 
++#include "arch/x86/regs/int.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "arch/x86/utility.hh"
+ #include "base/compiler.hh"
+ #include "kern/linux/flag_tables.hh"
+diff --git a/src/arch/x86/linux/se_workload.cc b/src/arch/x86/linux/se_workload.cc
+index d280c7c..26f2198 100644
+--- a/src/arch/x86/linux/se_workload.cc
++++ b/src/arch/x86/linux/se_workload.cc
+@@ -44,6 +44,7 @@
+ #include "arch/x86/page_size.hh"
+ #include "arch/x86/process.hh"
+ #include "arch/x86/regs/int.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "arch/x86/se_workload.hh"
+ #include "base/trace.hh"
+ #include "cpu/thread_context.hh"
+diff --git a/src/arch/x86/linux/se_workload.hh b/src/arch/x86/linux/se_workload.hh
+index 85b0d69..7ae0434 100644
+--- a/src/arch/x86/linux/se_workload.hh
++++ b/src/arch/x86/linux/se_workload.hh
+@@ -40,6 +40,7 @@
+ #define __ARCH_X86_LINUX_SE_WORKLOAD_HH__
+ 
+ #include "arch/x86/linux/linux.hh"
++#include "arch/x86/regs/int.hh"
+ #include "arch/x86/remote_gdb.hh"
+ #include "params/X86EmuLinux.hh"
+ #include "sim/process.hh"
+diff --git a/src/arch/x86/pagetable_walker.cc b/src/arch/x86/pagetable_walker.cc
+index cf84d17..5635895 100644
+--- a/src/arch/x86/pagetable_walker.cc
++++ b/src/arch/x86/pagetable_walker.cc
+@@ -53,6 +53,7 @@
+ 
+ #include "arch/x86/faults.hh"
+ #include "arch/x86/pagetable.hh"
++#include "arch/x86/regs/misc.hh"
+ #include "arch/x86/tlb.hh"
+ #include "base/bitfield.hh"
+ #include "base/trie.hh"
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index 90d3f7d..b4f8dee 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -46,6 +46,7 @@
+ 
+ #include "arch/x86/fs_workload.hh"
+ #include "arch/x86/page_size.hh"
++#include "arch/x86/regs/int.hh"
+ #include "arch/x86/regs/misc.hh"
+ #include "arch/x86/regs/segment.hh"
+ #include "arch/x86/se_workload.hh"
+diff --git a/src/arch/x86/vecregs.hh b/src/arch/x86/vecregs.hh
+index d03c7c2..64b7911 100644
+--- a/src/arch/x86/vecregs.hh
++++ b/src/arch/x86/vecregs.hh
+@@ -41,10 +41,6 @@
+ 
+ #include "arch/generic/vec_pred_reg.hh"
+ #include "arch/generic/vec_reg.hh"
+-#include "arch/x86/regs/ccr.hh"
+-#include "arch/x86/regs/float.hh"
+-#include "arch/x86/regs/int.hh"
+-#include "arch/x86/regs/misc.hh"
+ 
+ namespace gem5
+ {
+@@ -53,10 +49,7 @@ namespace X86ISA
+ {
+ 
+ // Not applicable to x86
+-using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-
+-// Not applicable to x86
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+ 
+ } // namespace X86ISA
+-- 
+1.8.3.1
+

@@ -1,0 +1,63 @@
+From 2ced661aed63598112e4bd362c98938dafe8c5f3 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Wed, 16 Mar 2022 11:49:02 +0800
+Subject: [PATCH 443/757] base: change bitunion default constructor to default
+
+Current implementation prevents customers from performing zero
+initialize on BitUnion class. Customers would get unexpected results
+when writing `BitUnion{}`. Changing the default constructor to default
+can solve this issue.
+
+After changing the default constructor, the test failed with unused
+variable. I also change one with zero initializer and make the other
+with maybe_unused label.
+```
+tests/build/ARM/base/bitunion.test.cc:133:14: error: 'emptySixteen' defined but not used [-Werror=unused-variable]
+  133 | EmptySixteen emptySixteen;
+      |              ^~~~~~~~~~~~
+tests/build/ARM/base/bitunion.test.cc:132:16: error: 'emptyThirtyTwo' defined but not used [-Werror=unused-variable]
+  132 | EmptyThirtyTwo emptyThirtyTwo;
+      |                ^~~~~~~~~~~~~~
+```
+
+Change-Id: Icbed36b3fa6751cbda63e84443eaab6d865d9bd6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57730
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/bitunion.hh      | 2 +-
+ src/base/bitunion.test.cc | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/base/bitunion.hh b/src/base/bitunion.hh
+index 92d747c..c8bb659 100644
+--- a/src/base/bitunion.hh
++++ b/src/base/bitunion.hh
+@@ -261,7 +261,7 @@ namespace bitfield_backend
+ 
+         BitUnionOperators(const BitUnionOperators &) = default;
+ 
+-        BitUnionOperators() {}
++        BitUnionOperators() = default;
+ 
+         //Conversion operators.
+         operator const typename Base::__StorageType () const
+diff --git a/src/base/bitunion.test.cc b/src/base/bitunion.test.cc
+index 7300efe..06c7a61 100644
+--- a/src/base/bitunion.test.cc
++++ b/src/base/bitunion.test.cc
+@@ -129,8 +129,8 @@ containingFunc(uint64_t init_val, uint64_t fieldVal)
+ // Declare these as global so g++ doesn't ignore them. Initialize them in
+ // various ways.
+ EmptySixtyFour emptySixtyFour = 0;
+-EmptyThirtyTwo emptyThirtyTwo;
+-EmptySixteen emptySixteen;
++EmptyThirtyTwo emptyThirtyTwo{};
++[[maybe_unused]] EmptySixteen emptySixteen;
+ EmptyEight emptyEight(0);
+ 
+ class BitUnionData : public testing::Test
+-- 
+1.8.3.1
+

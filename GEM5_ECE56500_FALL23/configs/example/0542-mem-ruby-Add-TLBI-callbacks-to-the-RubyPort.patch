@@ -1,0 +1,106 @@
+From 32ed7794d82cec817c094e2062ebcb0a6583bbfa Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:50:39 +0000
+Subject: [PATCH 542/757] mem-ruby: Add TLBI callbacks to the RubyPort
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I984fd497b7209772106150abb853c91c3d818dfd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57295
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/system/RubyPort.cc | 50 ++++++++++++++++++++++++++++++++++++++++-
+ src/mem/ruby/system/RubyPort.hh |  4 +++-
+ 2 files changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/ruby/system/RubyPort.cc b/src/mem/ruby/system/RubyPort.cc
+index c52ee58..48f655d 100644
+--- a/src/mem/ruby/system/RubyPort.cc
++++ b/src/mem/ruby/system/RubyPort.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013,2020 ARM Limited
++ * Copyright (c) 2012-2013,2020-2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -474,6 +474,54 @@ RubyPort::ruby_hit_callback(PacketPtr pkt)
+ }
+ 
+ void
++RubyPort::ruby_unaddressed_callback(PacketPtr pkt)
++{
++    DPRINTF(RubyPort, "Unaddressed callback for %s\n", pkt->cmdString());
++
++    assert(pkt->isRequest());
++
++    // First we must retrieve the request port from the sender State
++    RubyPort::SenderState *senderState =
++        safe_cast<RubyPort::SenderState *>(pkt->popSenderState());
++    MemResponsePort *port = senderState->port;
++    assert(port != NULL);
++    delete senderState;
++
++    port->hitCallback(pkt);
++
++    trySendRetries();
++}
++
++void
++RubyPort::ruby_stale_translation_callback(Addr txnId)
++{
++    DPRINTF(RubyPort, "Stale Translation Callback\n");
++
++    // Allocate the invalidate request and packet on the stack, as it is
++    // assumed they will not be modified or deleted by receivers.
++    // TODO: should this really be using funcRequestorId?
++    auto request = std::make_shared<Request>(
++        0, RubySystem::getBlockSizeBytes(), Request::TLBI_EXT_SYNC,
++        Request::funcRequestorId);
++    // Store the txnId in extraData instead of the address
++    request->setExtraData(txnId);
++
++    // Use a single packet to signal all snooping ports of the external sync.
++    // This assumes that snooping ports do NOT modify the packet/request
++    // TODO rename TlbiExtSync to StaleTranslation
++    Packet pkt(request, MemCmd::TlbiExtSync);
++    // TODO - see where response_ports is filled, might be we only want to send
++    // to specific places
++    for (auto &port : response_ports) {
++        // check if the connected request port is snooping
++        if (port->isSnooping()) {
++            // send as a snoop request
++            port->sendTimingSnoopReq(&pkt);
++        }
++    }
++}
++
++void
+ RubyPort::trySendRetries()
+ {
+     //
+diff --git a/src/mem/ruby/system/RubyPort.hh b/src/mem/ruby/system/RubyPort.hh
+index 12a88d4..e9d073e 100644
+--- a/src/mem/ruby/system/RubyPort.hh
++++ b/src/mem/ruby/system/RubyPort.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013,2019 ARM Limited
++ * Copyright (c) 2012-2013,2019,2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -179,6 +179,8 @@ class RubyPort : public ClockedObject
+   protected:
+     void trySendRetries();
+     void ruby_hit_callback(PacketPtr pkt);
++    void ruby_unaddressed_callback(PacketPtr pkt);
++    void ruby_stale_translation_callback(Addr txnId);
+     void testDrainComplete();
+     void ruby_eviction_callback(Addr address);
+ 
+-- 
+1.8.3.1
+

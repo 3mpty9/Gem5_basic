@@ -1,0 +1,46 @@
+From 3e83208332e31137f0507c1909fda47c364ba30d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 15 Dec 2021 21:17:39 -0800
+Subject: [PATCH 053/757] ext: Stop using the uninitialized pythonMain in sst.
+
+Import the __main__ module when it's first used.
+
+Change-Id: If800bd575398970faa8cb88072becd3d2b4218c0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54307
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/gem5.cc | 3 ++-
+ ext/sst/gem5.hh | 1 -
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ext/sst/gem5.cc b/ext/sst/gem5.cc
+index 1d90bc5..286f519 100644
+--- a/ext/sst/gem5.cc
++++ b/ext/sst/gem5.cc
+@@ -355,7 +355,8 @@ gem5Component::doSimLoop(gem5::EventQueue* eventq)
+ int
+ gem5Component::execPythonCommands(const std::vector<std::string>& commands)
+ {
+-    PyObject *dict = PyModule_GetDict(pythonMain);
++    static PyObject *dict =
++        py::module_::import("__main__").attr("__dict__").ptr();
+ 
+     PyObject *result;
+ 
+diff --git a/ext/sst/gem5.hh b/ext/sst/gem5.hh
+index 2712411..447c68c 100644
+--- a/ext/sst/gem5.hh
++++ b/ext/sst/gem5.hh
+@@ -104,7 +104,6 @@ class gem5Component: public SST::Component
+ 
+   // stuff needed for gem5 sim
+   public:
+-    PyObject *pythonMain;
+     int execPythonCommands(const std::vector<std::string>& commands);
+ 
+   private:
+-- 
+1.8.3.1
+

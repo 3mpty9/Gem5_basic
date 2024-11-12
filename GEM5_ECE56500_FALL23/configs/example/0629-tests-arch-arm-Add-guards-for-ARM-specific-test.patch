@@ -1,0 +1,65 @@
+From ed6c57e4ab5c359890e134703f258dd537c2326d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 10 May 2022 13:47:52 -0700
+Subject: [PATCH 629/757] tests,arch-arm: Add guards for ARM-specific test
+
+The nightly tests, https://jenkins.gem5.org/job/nightly/219/, were
+failing with the following error when running build/NULL/unittests.opt:
+
+```
+[ENUMDECL] m5.objects.ArmSystem, ArmExtension -> NULL/enums/ArmExtension.hh
+terminate called after throwing an instance of 'pybind11::error_already_set'
+  what():  ModuleNotFoundError: No module named 'm5.objects.ArmSystem'
+At:
+  <frozen importlib._bootstrap>(973): _find_and_load_unlocked
+  <frozen importlib._bootstrap>(991): _find_and_load
+  <frozen importlib._bootstrap>(1014): _gcd_import
+  /usr/lib/python3.8/importlib/__init__.py(127): import_module
+  build_tools/enum_hh.py(58): <module>
+Aborted (core dumped)
+scons: *** [build/NULL/enums/ArmExtension.hh] Error 134
+```
+
+The reason for this is the 'aapcs64.test' now transitively includes the
+'ArmExtension' enum via this commit:
+https://gem5-review.googlesource.com/c/public/gem5/+/59471.
+
+As this test now only works with the ARM ISA, a guard has been included.
+As noted in the comment, GTest does not have the 'tags' parameter so the
+'TARGET_ISA' environment variable was used. This will need updated when
+the multi-isa code is incorporated.
+
+Change-Id: I2793094bf7c813afd97933750332fa3f3b7bd8dd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59569
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/arm/SConscript | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/SConscript b/src/arch/arm/SConscript
+index 71f9196..bc720d1 100644
+--- a/src/arch/arm/SConscript
++++ b/src/arch/arm/SConscript
+@@ -40,7 +40,14 @@
+ 
+ Import('*')
+ 
+-GTest('aapcs64.test', 'aapcs64.test.cc', '../../base/debug.cc')
++# The GTest function does not have a 'tags' parameter. We therefore apply this
++# guard to ensure this test is only built when ARM is compiled.
++#
++# Note: This will need reconfigured for multi-isa. E.g., if this is
++# incorporated: https://gem5-review.googlesource.com/c/public/gem5/+/52491
++if env['TARGET_ISA'] == 'arm':
++    GTest('aapcs64.test', 'aapcs64.test.cc', '../../base/debug.cc')
++
+ Source('decoder.cc', tags='arm isa')
+ Source('faults.cc', tags='arm isa')
+ Source('htm.cc', tags='arm isa')
+-- 
+1.8.3.1
+

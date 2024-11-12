@@ -1,0 +1,137 @@
+From 19788d3b56d4c677fd19e44c24150e4aec416e31 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 9 Dec 2021 10:27:26 -0600
+Subject: [PATCH 020/757] arch-vega: Implement V_LSHL_OR_B32
+
+Change-Id: I237410e05df9a96323a6ceb7d09ae2a2a8608f16
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53864
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/decoder.cc            |  3 +-
+ src/arch/amdgpu/vega/insts/instructions.cc | 46 ++++++++++++++++++++++++++++++
+ src/arch/amdgpu/vega/insts/instructions.hh | 36 +++++++++++++++++++++++
+ 3 files changed, 83 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/decoder.cc b/src/arch/amdgpu/vega/decoder.cc
+index 814f7de..cc24d96 100644
+--- a/src/arch/amdgpu/vega/decoder.cc
++++ b/src/arch/amdgpu/vega/decoder.cc
+@@ -6948,8 +6948,7 @@ namespace VegaISA
+     GPUStaticInst*
+     Decoder::decode_OPU_VOP3__V_LSHL_OR_B32(MachInst iFmt)
+     {
+-        fatal("Trying to decode instruction without a class\n");
+-        return nullptr;
++        return new Inst_VOP3__V_LSHL_OR_B32(&iFmt->iFmt_VOP3A);
+     }
+ 
+     GPUStaticInst*
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index d709bb1..be3966d 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -32004,6 +32004,52 @@ namespace VegaISA
+         vcc.write();
+         vdst.write();
+     } // execute
++    // --- Inst_VOP3__V_LSHL_OR_B32 class methods ---
++
++    Inst_VOP3__V_LSHL_OR_B32::Inst_VOP3__V_LSHL_OR_B32(InFmt_VOP3A *iFmt)
++        : Inst_VOP3A(iFmt, "v_lshl_or_b32", false)
++    {
++        setFlag(ALU);
++    } // Inst_VOP3__V_LSHL_OR_B32
++
++    Inst_VOP3__V_LSHL_OR_B32::~Inst_VOP3__V_LSHL_OR_B32()
++    {
++    } // ~Inst_VOP3__V_LSHL_OR_B32
++
++    // --- description from .arch file ---
++    // D.u = (S0.u << S1.u[4:0]) | S2.u.
++    void
++    Inst_VOP3__V_LSHL_OR_B32::execute(GPUDynInstPtr gpuDynInst)
++    {
++        Wavefront *wf = gpuDynInst->wavefront();
++        ConstVecOperandU32 src0(gpuDynInst, extData.SRC0);
++        ConstVecOperandU32 src1(gpuDynInst, extData.SRC1);
++        ConstVecOperandU32 src2(gpuDynInst, extData.SRC2);
++        VecOperandU32 vdst(gpuDynInst, instData.VDST);
++
++        src0.readSrc();
++        src1.readSrc();
++        src2.readSrc();
++
++        /**
++         * input modifiers are supported by FP operations only
++         */
++        assert(!(instData.ABS & 0x1));
++        assert(!(instData.ABS & 0x2));
++        assert(!(instData.ABS & 0x4));
++        assert(!(extData.NEG & 0x1));
++        assert(!(extData.NEG & 0x2));
++        assert(!(extData.NEG & 0x4));
++
++        for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
++            if (wf->execMask(lane)) {
++                vdst[lane] = (src0[lane] << bits(src1[lane], 4, 0))
++                           | src2[lane];
++            }
++        }
++
++        vdst.write();
++    } // execute
+     // --- Inst_VOP3__V_MAD_F16 class methods ---
+ 
+     Inst_VOP3__V_MAD_F16::Inst_VOP3__V_MAD_F16(InFmt_VOP3A *iFmt)
+diff --git a/src/arch/amdgpu/vega/insts/instructions.hh b/src/arch/amdgpu/vega/insts/instructions.hh
+index 453327f..0c30ca4 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.hh
++++ b/src/arch/amdgpu/vega/insts/instructions.hh
+@@ -29496,6 +29496,42 @@ namespace VegaISA
+         void execute(GPUDynInstPtr) override;
+     }; // Inst_VOP3__V_MAD_I64_I32
+ 
++    class Inst_VOP3__V_LSHL_OR_B32 : public Inst_VOP3A
++    {
++      public:
++        Inst_VOP3__V_LSHL_OR_B32(InFmt_VOP3A*);
++        ~Inst_VOP3__V_LSHL_OR_B32();
++
++        int
++        getNumOperands() override
++        {
++            return numDstRegOperands() + numSrcRegOperands();
++        } // getNumOperands
++
++        int numDstRegOperands() override { return 1; }
++        int numSrcRegOperands() override { return 3; }
++
++        int
++        getOperandSize(int opIdx) override
++        {
++            switch (opIdx) {
++              case 0: //src_0
++                return 4;
++              case 1: //src_1
++                return 4;
++              case 2: //src_2
++                return 4;
++              case 3: //vdst
++                return 4;
++              default:
++                fatal("op idx %i out of bounds\n", opIdx);
++                return -1;
++            }
++        } // getOperandSize
++
++        void execute(GPUDynInstPtr) override;
++    }; // Inst_VOP3__V_LSHL_OR_B32
++
+     class Inst_VOP3__V_MAD_F16 : public Inst_VOP3A
+     {
+       public:
+-- 
+1.8.3.1
+

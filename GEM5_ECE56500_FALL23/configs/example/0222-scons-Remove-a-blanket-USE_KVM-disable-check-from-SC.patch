@@ -1,0 +1,37 @@
+From 8767fca2122514e5b39e49350735a8b3e5feef19 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 28 Jan 2022 00:09:18 -0800
+Subject: [PATCH 222/757] scons: Remove a blanket USE_KVM disable check from
+ SConstruct.
+
+Whether to honor the USE_KVM setting can be handled in a more targeted
+way down at individual consumers. They will know what ISA the host needs
+to be for their particular model to make sense, where the SConstruct has
+to enable or disable it for the entire build of gem5.
+
+Change-Id: I9e82e232203834f6fe56d0ce5cf696809a0970bc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56188
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index 6cdffe5..93b421e 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -733,9 +733,6 @@ Build variables for {dir}:
+     if env['USE_EFENCE']:
+         env.Append(LIBS=['efence'])
+ 
+-    if env['KVM_ISA'] != env['TARGET_ISA']:
+-        env['USE_KVM'] = False
+-
+     # Save sticky variable settings back to current variables file
+     sticky_vars.Save(current_vars_file, env)
+ 
+-- 
+1.8.3.1
+

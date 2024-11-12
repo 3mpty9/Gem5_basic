@@ -1,0 +1,94 @@
+From 5cf00e50554145bcc97e5ce669fdb2b52810887f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Sun, 19 Dec 2021 18:20:33 -0800
+Subject: [PATCH 073/757] configs,tests: Update refs to deprecated
+ 'x86-ubuntu-img'
+
+This resource has been deprecated in favor of 'x86-ubuntu-18.04-img'. In
+practise, these are the same resource (i.e., the same disk image), but
+we deprecate 'x86-ubuntu-img' as 'x86-ubuntu-18.04-img' is more explicit
+on what the disk image contains. Going forward we may want different
+disk image resources with different Ubuntu versions, and we want it to
+be clear what the user is retrieving.
+
+Change-Id: I06b08e6b65cf431067ffda35ebd10d419068d073
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54583
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/x86-ubuntu-run-with-kvm.py | 2 +-
+ configs/example/gem5_library/x86-ubuntu-run.py          | 2 +-
+ tests/gem5/configs/boot_kvm_fork_run.py                 | 2 +-
+ tests/gem5/configs/boot_kvm_switch_exit.py              | 2 +-
+ tests/gem5/configs/x86_boot_exit_run.py                 | 2 +-
+ 5 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+index fa84960..1aea258 100644
+--- a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
++++ b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+@@ -121,7 +121,7 @@ board.set_kernel_disk_workload(
+     kernel=Resource("x86-linux-kernel-5.4.49"),
+     # The x86 ubuntu image will be automatically downloaded to the if not
+     # already present.
+-    disk_image=Resource("x86-ubuntu-img"),
++    disk_image=Resource("x86-ubuntu-18.04-img"),
+     readfile_contents=command,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-ubuntu-run.py b/configs/example/gem5_library/x86-ubuntu-run.py
+index c6f6f83..2aee8c7 100644
+--- a/configs/example/gem5_library/x86-ubuntu-run.py
++++ b/configs/example/gem5_library/x86-ubuntu-run.py
+@@ -58,7 +58,7 @@ board = X86DemoBoard()
+ # downloaded.
+ board.set_kernel_disk_workload(
+     kernel=Resource("x86-linux-kernel-5.4.49"),
+-    disk_image=Resource("x86-ubuntu-img"),
++    disk_image=Resource("x86-ubuntu-18.04-img"),
+ )
+ 
+ simulator = Simulator(board=board)
+diff --git a/tests/gem5/configs/boot_kvm_fork_run.py b/tests/gem5/configs/boot_kvm_fork_run.py
+index 2cd180a..662ef23 100644
+--- a/tests/gem5/configs/boot_kvm_fork_run.py
++++ b/tests/gem5/configs/boot_kvm_fork_run.py
+@@ -203,7 +203,7 @@ motherboard.set_kernel_disk_workload(
+         resource_directory=args.resource_directory,
+     ),
+     disk_image=Resource(
+-        "x86-ubuntu-img",
++        "x86-ubuntu-18.04-img",
+         resource_directory=args.resource_directory,
+     ),
+     readfile_contents=dedent(
+diff --git a/tests/gem5/configs/boot_kvm_switch_exit.py b/tests/gem5/configs/boot_kvm_switch_exit.py
+index 9f5f7ee..5cfee40 100644
+--- a/tests/gem5/configs/boot_kvm_switch_exit.py
++++ b/tests/gem5/configs/boot_kvm_switch_exit.py
+@@ -188,7 +188,7 @@ motherboard.set_kernel_disk_workload(
+         resource_directory=args.resource_directory,
+     ),
+     disk_image=Resource(
+-        "x86-ubuntu-img",
++        "x86-ubuntu-18.04-img",
+         resource_directory=args.resource_directory,
+     ),
+     # The first exit signals to switch processors.
+diff --git a/tests/gem5/configs/x86_boot_exit_run.py b/tests/gem5/configs/x86_boot_exit_run.py
+index 5c8b025..93c9028 100644
+--- a/tests/gem5/configs/x86_boot_exit_run.py
++++ b/tests/gem5/configs/x86_boot_exit_run.py
+@@ -207,7 +207,7 @@ motherboard.set_kernel_disk_workload(
+         resource_directory=args.resource_directory,
+     ),
+     disk_image=Resource(
+-        "x86-ubuntu-img",
++        "x86-ubuntu-18.04-img",
+         resource_directory=args.resource_directory,
+     ),
+     kernel_args=kernal_args,
+-- 
+1.8.3.1
+

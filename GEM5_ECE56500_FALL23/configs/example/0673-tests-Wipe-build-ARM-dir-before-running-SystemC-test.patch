@@ -1,0 +1,39 @@
+From 0770c80fb9b07b461cb9c483018dda52bb611284 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 27 May 2022 18:30:07 -0700
+Subject: [PATCH 673/757] tests: Wipe 'build/ARM' dir before running SystemC
+ tests
+
+It if the ARM code is changed, the building of the library for the
+systemc tests can sometimes fail. This appears to have happened in
+recent Nightly test failures: https://jenkins.gem5.org/job/nightly/237.
+
+It's safer to just wipe the 'build/ARM' directory before running this
+test.
+
+Change-Id: I203c4e74c01215128b85bf69176921f8ecef4988
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60096
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ tests/nightly.sh | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index de90d61..bbed675 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -179,6 +179,7 @@ cd -;
+ build_and_run_SST RISCV opt
+ 
+ build_and_run_systemc () {
++    rm -rf "${gem5_root}/build/ARM"
+     docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+         "${gem5_root}" --memory="${docker_mem_limit}" --rm \
+         gcr.io/gem5-test/ubuntu-20.04_all-dependencies:latest bash -c "\
+-- 
+1.8.3.1
+

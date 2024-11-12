@@ -1,0 +1,69 @@
+From 5e721db9a2aeb071ea61a197474219aaa86f0358 Mon Sep 17 00:00:00 2001
+From: Kyle Roarty <kyleroarty1716@gmail.com>
+Date: Mon, 28 Feb 2022 18:40:54 -0600
+Subject: [PATCH 314/757] arch-vega: Handle signed offsets in Global/Scratch
+ instructions
+
+The offset field in Flat-style instructions is treated differently
+based on if the instruction is Flat or Global/Scratch.
+
+In Flat insts, the offset is treated as a 12-bit unsigned number.
+
+In Global/Scratch insts, the offset is treated as a 13-bit signed number.
+
+This patch updates the calcAddr function for Flat-style instructions
+to properly sign-extend the offset on Global/Scratch instructions
+
+Change-Id: I57f10258c23d900da9bf6ded6717c6e8abd177b7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57209
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+---
+ src/arch/amdgpu/vega/insts/op_encodings.hh | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.hh b/src/arch/amdgpu/vega/insts/op_encodings.hh
+index 2642cd7..e9ce4cc 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.hh
++++ b/src/arch/amdgpu/vega/insts/op_encodings.hh
+@@ -905,8 +905,16 @@ namespace VegaISA
+ 
+         void
+         calcAddr(GPUDynInstPtr gpuDynInst, ConstVecOperandU64 &vaddr,
+-                 ScalarRegU32 saddr, ScalarRegU32 offset)
++                 ScalarRegU32 saddr, ScalarRegI32 offset)
+         {
++            // Offset is a 13-bit field w/the following meanings:
++            // In Flat instructions, offset is a 12-bit unsigned number
++            // In Global/Scratch instructions, offset is a 13-bit signed number
++            if (isFlat()) {
++                offset = offset & 0xfff;
++            } else {
++                offset = (ScalarRegI32)sext<13>(offset);
++            }
+             // If saddr = 0x7f there is no scalar reg to read and address will
+             // be a 64-bit address. Otherwise, saddr is the reg index for a
+             // scalar reg used as the base address for a 32-bit address.
+@@ -956,7 +964,7 @@ namespace VegaISA
+ 
+         void
+         calcAddrSgpr(GPUDynInstPtr gpuDynInst, ConstVecOperandU64 &vaddr,
+-                     ConstScalarOperandU64 &saddr, ScalarRegU32 offset)
++                     ConstScalarOperandU64 &saddr, ScalarRegI32 offset)
+         {
+             // Use SGPR pair as a base address and add VGPR-offset and
+             // instruction offset. The VGPR-offset is always 32-bits so we
+@@ -971,7 +979,7 @@ namespace VegaISA
+ 
+         void
+         calcAddrVgpr(GPUDynInstPtr gpuDynInst, ConstVecOperandU64 &addr,
+-                     ScalarRegU32 offset)
++                     ScalarRegI32 offset)
+         {
+             for (int lane = 0; lane < NumVecElemPerVecReg; ++lane) {
+                 if (gpuDynInst->exec_mask[lane]) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,48 @@
+From 85dc34ebf8285b8b05a8a94ddf248754d2d1fb33 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 11 Nov 2021 10:48:15 +0000
+Subject: [PATCH 005/757] ext: Make gem5-SST support CMOs
+
+Change-Id: I45047702018512dfef5a93a633871821f3c69820
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53626
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/translator.hh | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/ext/sst/translator.hh b/ext/sst/translator.hh
+index a2faebb..2d8c8b7 100644
+--- a/ext/sst/translator.hh
++++ b/ext/sst/translator.hh
+@@ -48,6 +48,7 @@ gem5RequestToSSTRequest(gem5::PacketPtr pkt,
+     switch ((gem5::MemCmd::Command)pkt->cmd.toInt()) {
+         case gem5::MemCmd::HardPFReq:
+         case gem5::MemCmd::SoftPFReq:
++        case gem5::MemCmd::SoftPFExReq:
+         case gem5::MemCmd::LoadLockedReq:
+         case gem5::MemCmd::ReadExReq:
+         case gem5::MemCmd::ReadReq:
+@@ -58,8 +59,15 @@ gem5RequestToSSTRequest(gem5::PacketPtr pkt,
+         case gem5::MemCmd::WriteReq:
+             cmd = SST::Interfaces::SimpleMem::Request::Command::Write;
+             break;
++        case gem5::MemCmd::CleanInvalidReq:
++        case gem5::MemCmd::InvalidateReq:
++            cmd = SST::Interfaces::SimpleMem::Request::Command::FlushLineInv;
++            break;
++        case gem5::MemCmd::CleanSharedReq:
++            cmd = SST::Interfaces::SimpleMem::Request::Command::FlushLine;
++            break;
+         default:
+-            assert(false && "Unable to convert gem5 packet");
++            panic("Unable to convert gem5 packet: %s\n", pkt->cmd.toString());
+     }
+ 
+     SST::Interfaces::SimpleMem::Addr addr = pkt->getAddr();
+-- 
+1.8.3.1
+

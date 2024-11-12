@@ -1,0 +1,322 @@
+From b354e1a252c2a771f05079a1a21eeb0b2fecae54 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 8 Feb 2022 17:34:52 -0600
+Subject: [PATCH 247/757] mem-ruby: Fix handling of stale CleanUnique
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1185
+
+Fixed an issue in which a CleanUnique responder would incorrectly
+deallocate the cache block when handling an stale CU when the state
+is UD_RU or UC_RU (thus incorrectly transitioning to RU).
+
+The fix is to handle stale CUs similarly to stale WBs where we
+override the dataValid TBE field to prevent the wrong state
+transition.
+
+This patch moves the stale code path to a separate transition
+(similarly to stale WBs/Evicts) and moves the dataValid override to
+Initiate_Request_Stale so it applies to all stale request types.
+Notice now the stale field is also set on stale Comp_UC responses.
+
+Additional minor change: CheckUpgrade_FromRU is the same as
+CheckUpgrade_FromStore so it was removed.
+
+Change-Id: I0a2cedcfde1dc30d67aa2c16d71b7470369c2b6e
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56810
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm     | 100 ++++++++++++---------
+ src/mem/ruby/protocol/chi/CHI-cache-ports.sm       |   5 ++
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm |  21 ++++-
+ src/mem/ruby/protocol/chi/CHI-cache.sm             |   2 +
+ 4 files changed, 84 insertions(+), 44 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index b1a7d99..93a97d4 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -219,6 +219,17 @@ action(Initiate_Request_Stale, desc="") {
+     was_retried := in_msg.allowRetry == false;
+   }
+   copyCacheAndDir(cache_entry, getDirEntry(address), tbe, initial);
++
++  // usually we consider data locally invalid on RU states even if we
++  // have a copy; so it override it to valid so we can comeback to UD_RU/UC_RU
++  // at the end of this transaction
++  if (tbe.dir_ownerExists && tbe.dir_ownerIsExcl && is_valid(cache_entry)) {
++    // treat the data we got from the cache as valid
++    tbe.dataBlk := cache_entry.DataBlk;
++    tbe.dataBlkValid.fillMask();
++    tbe.dataValid := true;
++  }
++
+   incomingTransactionStart(address, curTransitionEvent(), initial, was_retried);
+ }
+ 
+@@ -288,6 +299,8 @@ action(RestoreFromHazard, desc="") {
+     tbe.is_stale := (tbe.dataValid && tbe.dataUnique) == false;
+   } else if (hazard_tbe.pendReqType == CHIRequestType:Evict) {
+     tbe.is_stale := tbe.dataValid == false;
++  } else if (hazard_tbe.pendReqType == CHIRequestType:CleanUnique) {
++    tbe.is_stale := tbe.dataValid == false;
+   }
+ 
+   // a pending action from the original request may have been stalled during
+@@ -575,45 +588,50 @@ action(Initiate_ReadUnique_Hit_InvUpstream, desc="") {
+ action(Initiate_CleanUnique, desc="") {
+   tbe.actions.push(Event:ReadMissPipe); // TODO need another latency pipe ??
+ 
++  // invalidates everyone except requestor
++  if (tbe.dir_sharers.count() > 1) {
++    tbe.actions.push(Event:SendSnpCleanInvalidNoReq);
++  }
++  // auto upgrade if HN
++  tbe.dataUnique := tbe.dataUnique || is_HN;
++  // get unique permission
++  if (tbe.dataUnique == false) {
++    tbe.actions.push(Event:SendCleanUnique);
++    tbe.actions.push(Event:CheckUpgrade_FromCU);
++  }
++  // next actions will depend on the data state after snoops+CleanUnique
++  tbe.actions.push(Event:FinishCleanUnique);
++}
++
++action(Initiate_CleanUnique_Stale, desc="") {
+   // requestor don't have the line anymore; send response but don't update the
+   // directory on CompAck. The requestor knows we are not tracking it and will
+   // send a ReadUnique later
+-  if (tbe.dir_sharers.isElement(tbe.requestor) == false) {
+-    tbe.actions.push(Event:SendCompUCResp);
+-    tbe.actions.push(Event:WaitCompAck);
+-    tbe.updateDirOnCompAck := false;
+-  } else {
+-    // invalidates everyone except requestor
+-    if (tbe.dir_sharers.count() > 1) {
+-      tbe.actions.push(Event:SendSnpCleanInvalidNoReq);
+-    }
+-    // auto upgrade if HN
+-    tbe.dataUnique := tbe.dataUnique || is_HN;
+-    // get unique permission
+-    if (tbe.dataUnique == false) {
+-      tbe.actions.push(Event:SendCleanUnique);
+-      tbe.actions.push(Event:CheckUpgrade_FromCU);
+-    }
+-    // next actions will depend on the data state after snoops+CleanUnique
+-    tbe.actions.push(Event:FinishCleanUnique);
+-  }
++  tbe.actions.push(Event:SendCompUCRespStale);
++  tbe.actions.push(Event:WaitCompAck);
++  tbe.updateDirOnCompAck := false;
+ }
+ 
+ action(Finish_CleanUnique, desc="") {
+   // This is should be executed at the end of a transaction
+   assert(tbe.actions.empty());
+-  tbe.actions.push(Event:SendCompUCResp);
+-  tbe.actions.push(Event:WaitCompAck);
+ 
+   // everyone may have been hit by an invalidation so check again
+   if (tbe.dir_sharers.isElement(tbe.requestor) == false) {
+     tbe.updateDirOnCompAck := false;
+     assert(tbe.dataValid == false);
++    assert(tbe.is_stale);
++    tbe.actions.push(Event:SendCompUCRespStale);
++    tbe.actions.push(Event:WaitCompAck);
++    tbe.is_stale := false;
+   } else {
+     // must be the only one in sharers map
+     assert(tbe.dir_sharers.count() == 1);
+     assert(tbe.dataUnique);
+ 
++    tbe.actions.push(Event:SendCompUCResp);
++    tbe.actions.push(Event:WaitCompAck);
++
+     // similar to Initiate_MaitainCoherence; writeback if the owner has data as
+     // clean data and we have it dirty and cannot keep it
+     bool fill_pipeline := tbe.dataValid && tbe.dataDirty;
+@@ -828,13 +846,6 @@ action(Initiate_CopyBack_Stale, desc="") {
+   tbe.dir_sharers.remove(tbe.requestor);
+   assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
+ 
+-  // usually we consider data locally invalid on RU states even if we
+-  // have a copy; consider it valid for this transition only so we can
+-  // comeback to UD_RU/UC_RU
+-  if (is_valid(cache_entry) && (tbe.dataValid == false) &&
+-      tbe.dir_ownerExists && tbe.dir_ownerIsExcl) {
+-    tbe.dataValid := true;
+-  }
+ }
+ 
+ action(Initiate_Evict, desc="") {
+@@ -2452,6 +2463,19 @@ action(Send_CompUC, desc="") {
+   }
+ }
+ 
++action(Send_CompUC_Stale, desc="") {
++  assert(is_valid(tbe));
++  enqueue(rspOutPort, CHIResponseMsg, response_latency) {
++    out_msg.addr := address;
++    out_msg.type := CHIResponseType:Comp_UC;
++    out_msg.responder := machineID;
++    out_msg.Destination.add(tbe.requestor);
++    // We don't know if this is a stale clean unique or a bug, so flag the
++    // reponse so the requestor can make further checks
++    out_msg.stale := true;
++  }
++}
++
+ action(Send_CompAck, desc="") {
+   assert(is_valid(tbe));
+   enqueue(rspOutPort, CHIResponseMsg, response_latency) {
+@@ -2549,20 +2573,25 @@ action(Send_PCrdGrant, desc="") {
+   }
+ }
+ 
+-// Note on CheckUpgrade_FromStore/CheckUpgrade_FromCU/CheckUpgrade_FromRU
++// Note on CheckUpgrade_FromStoreOrRU/CheckUpgrade_FromCU
+ // We will always get Comp_UC; but if our data is invalidated before
+ // Comp_UC we would need to go to UCE. Since we don't use the UCE state
+ // we remain in the transient state and follow-up with ReadUnique.
+ // Note this assumes the responder knows we have invalid data when sending
+ // us Comp_UC and does not register us as owner.
+ 
+-action(CheckUpgrade_FromStore, desc="") {
++action(CheckUpgrade_FromStoreOrRU, desc="") {
+   assert(is_HN == false);
+   if (tbe.dataUnique) {
+     // success, just send CompAck next
+     assert(tbe.dataValid);
+   } else {
++    // will need to get data instead
+     tbe.actions.pushFront(Event:SendReadUnique);
++    // we must have received an invalidation snoop that marked
++    // the req as stale
++    assert(tbe.is_stale);
++    tbe.is_stale := false;
+   }
+   tbe.actions.pushFront(Event:SendCompAck);
+ }
+@@ -2579,17 +2608,6 @@ action(CheckUpgrade_FromCU, desc="") {
+   tbe.actions.pushFront(Event:SendCompAck);
+ }
+ 
+-action(CheckUpgrade_FromRU, desc="") {
+-  assert(is_HN == false);
+-  if (tbe.dataUnique) {
+-    // success, just send CompAck next
+-    assert(tbe.dataValid);
+-  } else {
+-    // will need to get data instead
+-    tbe.actions.pushFront(Event:SendReadUnique);
+-  }
+-  tbe.actions.pushFront(Event:SendCompAck);
+-}
+ 
+ action(Finalize_UpdateCacheFromTBE, desc="") {
+   assert(is_valid(tbe));
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+index efba9bc..d9cb0f1 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+@@ -284,6 +284,11 @@ in_port(reqRdyPort, CHIRequestMsg, reqRdy, rank=3,
+             (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
+           trigger(Event:Evict_Stale, in_msg.addr, cache_entry, tbe);
+         }
++      } else if (in_msg.type == CHIRequestType:CleanUnique) {
++        if (is_invalid(dir_entry) ||
++            (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
++          trigger(Event:CleanUnique_Stale, in_msg.addr, cache_entry, tbe);
++        }
+       }
+ 
+       // Normal request path
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index 816bbe4..c4eb8ff 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -326,6 +326,15 @@ transition({I, SC, UC, SD, UD, RU, RSC, RSD, RUSD, RUSC,
+   ProcessNextState;
+ }
+ 
++transition({I, SC, UC, SD, UD, RU, RSC, RSD, RUSD, RUSC,
++            SC_RSC, SD_RSD, SD_RSC, UC_RSC, UC_RU, UD_RU, UD_RSD, UD_RSC},
++            CleanUnique_Stale, BUSY_BLKD) {
++  Initiate_Request_Stale;
++  Initiate_CleanUnique_Stale;
++  Pop_ReqRdyQueue;
++  ProcessNextState;
++}
++
+ // WriteUniquePtl
+ 
+ transition({UD,UD_RU,UD_RSD,UD_RSC,UC,UC_RU,UC_RSC},
+@@ -661,7 +670,7 @@ transition(BUSY_INTR, {SnpOnce,SnpOnceFwd}, BUSY_BLKD) {
+ 
+ transition({BUSY_BLKD,BUSY_INTR},
+             {ReadShared, ReadNotSharedDirty, ReadUnique, ReadUnique_PoC,
+-            ReadOnce, CleanUnique,
++            ReadOnce, CleanUnique, CleanUnique_Stale,
+             Load, Store, Prefetch,
+             WriteBackFull, WriteBackFull_Stale,
+             WriteEvictFull, WriteEvictFull_Stale,
+@@ -847,6 +856,12 @@ transition(BUSY_BLKD, SendCompUCResp) {
+   ProcessNextState_ClearPending;
+ }
+ 
++transition(BUSY_BLKD, SendCompUCRespStale) {
++  Pop_TriggerQueue;
++  Send_CompUC_Stale;
++  ProcessNextState_ClearPending;
++}
++
+ transition(BUSY_BLKD, SendRespSepData) {
+   Pop_TriggerQueue;
+   Send_RespSepData;
+@@ -1011,7 +1026,7 @@ transition(BUSY_BLKD, FinishCleanUnique) {
+ transition(BUSY_BLKD, CheckUpgrade_FromStore) {
+   Pop_TriggerQueue;
+   Callback_Miss; // note: Callback happens only if tbe.dataValid
+-  CheckUpgrade_FromStore;
++  CheckUpgrade_FromStoreOrRU;
+   ProcessNextState_ClearPending;
+ }
+ 
+@@ -1023,7 +1038,7 @@ transition(BUSY_BLKD, CheckUpgrade_FromCU) {
+ 
+ transition(BUSY_BLKD, CheckUpgrade_FromRU) {
+   Pop_TriggerQueue;
+-  CheckUpgrade_FromRU;
++  CheckUpgrade_FromStoreOrRU;
+   ProcessNextState_ClearPending;
+ }
+ 
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache.sm b/src/mem/ruby/protocol/chi/CHI-cache.sm
+index a0d1888..5a12575 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache.sm
+@@ -356,6 +356,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     WriteBackFull_Stale,    desc="";
+     WriteEvictFull_Stale,   desc="";
+     WriteCleanFull_Stale,   desc="";
++    CleanUnique_Stale,   desc="";
+ 
+     // Cache fill handling
+     CheckCacheFill,   desc="Check if need to write or update the cache and trigger any necessary allocation and evictions";
+@@ -425,6 +426,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     SendCompIResp,  desc="Ack Evict with Comp_I";
+     SendCleanUnique,desc="Send a CleanUnique";
+     SendCompUCResp, desc="Ack CleanUnique with Comp_UC";
++    SendCompUCRespStale, desc="Ack stale CleanUnique with Comp_UC";
+ 
+     // Checks if an upgrade using a CleanUnique was sucessfull
+     CheckUpgrade_FromStore, desc="Upgrade needed by a Store";
+-- 
+1.8.3.1
+

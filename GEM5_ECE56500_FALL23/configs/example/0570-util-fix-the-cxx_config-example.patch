@@ -1,0 +1,82 @@
+From cbd401ebc4640f51b7cd20b7703bee9f13b38c21 Mon Sep 17 00:00:00 2001
+From: Iru Cai <mytbk920423@gmail.com>
+Date: Tue, 19 Apr 2022 10:23:27 +0800
+Subject: [PATCH 570/757] util: fix the cxx_config example
+
+This change replaces and removes the out-of-date APIs to fix the build
+error, and add fixClockFrequency() call to fix the runtime error. We
+also need the TRACING_ON macro and C++17 to build because of the
+header changes.
+
+Tested with X86 and tests/test-progs/hello. Checkpoint restore is not
+tested yet.
+
+Change-Id: Id92bb7954defea15b026eba3229a453b688929be
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58989
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/cxx_config/Makefile |  4 ++--
+ util/cxx_config/main.cc  | 11 +++++------
+ 2 files changed, 7 insertions(+), 8 deletions(-)
+
+diff --git a/util/cxx_config/Makefile b/util/cxx_config/Makefile
+index 1cb2eda..455d031 100644
+--- a/util/cxx_config/Makefile
++++ b/util/cxx_config/Makefile
+@@ -36,8 +36,8 @@
+ ARCH = ARM
+ VARIANT = opt
+ 
+-CXXFLAGS = -I../../build/$(ARCH) -L../../build/$(ARCH)
+-CXXFLAGS += -std=c++0x
++CXXFLAGS = -I../../build/$(ARCH) -L../../build/$(ARCH) -DTRACING_ON=1
++CXXFLAGS += -std=c++17
+ LIBS = -lgem5_$(VARIANT)
+ 
+ ## You may also need protobuf flags
+diff --git a/util/cxx_config/main.cc b/util/cxx_config/main.cc
+index ede2d1d..dc4435c 100644
+--- a/util/cxx_config/main.cc
++++ b/util/cxx_config/main.cc
+@@ -108,11 +108,10 @@ main(int argc, char **argv)
+     if (argc == 1)
+         usage(prog_name);
+ 
+-    cxxConfigInit();
+-
+     initSignals();
+ 
+     setClockFrequency(1000000000000);
++    fixClockFrequency();
+     curEventQueue(getEventQueue(0));
+ 
+     statistics::initSimStats();
+@@ -248,7 +247,7 @@ main(int argc, char **argv)
+         /* FIXME, this should really be serialising just for
+          *  config_manager rather than using serializeAll's ugly
+          *  SimObject static object list */
+-        Serializable::serializeAll(checkpoint_dir);
++        SimObject::serializeAll(checkpoint_dir);
+ 
+         std::cerr << "Completed checkpoint\n";
+ 
+@@ -258,11 +257,11 @@ main(int argc, char **argv)
+     if (checkpoint_restore) {
+         std::cerr << "Restoring checkpoint\n";
+ 
+-        CheckpointIn *checkpoint = new CheckpointIn(checkpoint_dir,
+-            config_manager->getSimObjectResolver());
++        SimObject::setSimObjectResolver(
++            &config_manager->getSimObjectResolver());
++        CheckpointIn *checkpoint = new CheckpointIn(checkpoint_dir);
+ 
+         DrainManager::instance().preCheckpointRestore();
+-        Serializable::unserializeGlobals(*checkpoint);
+         config_manager->loadState(*checkpoint);
+         config_manager->startup();
+ 
+-- 
+1.8.3.1
+

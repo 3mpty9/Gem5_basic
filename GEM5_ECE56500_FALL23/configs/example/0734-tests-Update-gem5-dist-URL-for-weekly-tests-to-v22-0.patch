@@ -1,0 +1,39 @@
+From e9beee0134ac0b1002629c84d0fb62be1c3b81f2 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 16:50:08 -0700
+Subject: [PATCH 734/757] tests: Update gem5 dist URL for weekly tests to v22-0
+
+Change-Id: I6ebcb5739df76bd071a3fe261254edfc72cf6839
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60552
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/weekly.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index febfae4..838ccd4 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -240,7 +240,7 @@ docker run --rm -v ${PWD}:${PWD} \
+        "export GEM5_PATH=${gem5_root} ; make gem5-fusion"
+ 
+ # # get input dataset for BC test
+-wget http://dist.gem5.org/dist/develop/datasets/pannotia/bc/1k_128k.gr
++wget http://dist.gem5.org/dist/v22-0/datasets/pannotia/bc/1k_128k.gr
+ # run BC
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+        --memory="${docker_mem_limit}" hacc-test-weekly \
+@@ -317,7 +317,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+        "export GEM5_PATH=${gem5_root} ; make gem5-fusion"
+ 
+ # get PageRank input dataset
+-wget http://dist.gem5.org/dist/develop/datasets/pannotia/pagerank/coAuthorsDBLP.graph
++wget http://dist.gem5.org/dist/v22-0/datasets/pannotia/pagerank/coAuthorsDBLP.graph
+ # run PageRank (Default)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+        --memory="${docker_mem_limit}" hacc-test-weekly \
+-- 
+1.8.3.1
+

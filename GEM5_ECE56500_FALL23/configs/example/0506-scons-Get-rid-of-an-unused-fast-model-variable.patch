@@ -1,0 +1,39 @@
+From f56d43eadfe1ec76f65170fcf03388cd831ee947 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 29 Mar 2022 22:29:31 -0700
+Subject: [PATCH 506/757] scons: Get rid of an unused fast model variable.
+
+This held the location of the license file, assuming it actually was a
+license file and not a license server URL. If this variable was unset
+because the fast model configuration parameters hadn't been set, then
+the "File" would resolve to the local directory, and SCons would get
+upset that you'd called the same path a directory and a file.
+
+We can avoid this problem by just getting rid of this variable, since
+it isn't used anyway.
+
+Change-Id: I2ccda90b85f2c83c73816967d145e6bf45733f89
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58351
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index cbb2c15..a7f6e17 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -74,8 +74,6 @@ pvlib_home, maxcore_home, armlmd_license_file = \
+ 
+ pvlib_home = Dir(pvlib_home)
+ maxcore_home = Dir(maxcore_home)
+-armlmd_license_file = File(armlmd_license_file)
+-
+ 
+ pvlib_flavor = env['CONF']['PVLIB_FLAVOR']
+ pvlib_lib_dir = pvlib_home.Dir('lib').Dir(pvlib_flavor)
+-- 
+1.8.3.1
+

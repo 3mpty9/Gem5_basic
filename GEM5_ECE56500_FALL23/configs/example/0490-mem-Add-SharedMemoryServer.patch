@@ -1,0 +1,518 @@
+From 75eedb1d0bddaad6878347ac1421dea44a2ccbd3 Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Tue, 15 Mar 2022 13:33:34 +0800
+Subject: [PATCH 490/757] mem: Add SharedMemoryServer
+
+Add an utility class that provides a service for another process
+query and get the fd of the corresponding region in gem5's physmem.
+
+Basically, the service works in this way:
+1. client connect to the unix socket created by a SharedMemoryServer
+2. client send a request {start, end} to gem5
+3. the server locates the corresponding shared memory
+4. gem5 response {offset} and pass {fd} in ancillary data
+
+mmap fd at offset will provide the client the view into the physical
+memory of the request range.
+
+Change-Id: I9d42fd8a41fc28dcfebb45dec10bc9ebb8e21d11
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57729
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Boris Shingarov <shingarov@labware.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/socket.hh              |  14 +--
+ src/mem/SConscript              |   2 +
+ src/mem/SharedMemoryServer.py   |  15 +++
+ src/mem/physical.cc             |   3 +-
+ src/mem/physical.hh             |  18 ++-
+ src/mem/shared_memory_server.cc | 248 ++++++++++++++++++++++++++++++++++++++++
+ src/mem/shared_memory_server.hh |  95 +++++++++++++++
+ 7 files changed, 384 insertions(+), 11 deletions(-)
+ create mode 100644 src/mem/SharedMemoryServer.py
+ create mode 100644 src/mem/shared_memory_server.cc
+ create mode 100644 src/mem/shared_memory_server.hh
+
+diff --git a/src/base/socket.hh b/src/base/socket.hh
+index 4ed6185..3375ccc 100644
+--- a/src/base/socket.hh
++++ b/src/base/socket.hh
+@@ -62,14 +62,6 @@ class ListenSocket
+      */
+     static void cleanup();
+ 
+-  private:
+-    /* Create a socket, adding SOCK_CLOEXEC if available. */
+-    static int socketCloexec(int domain, int type, int protocol);
+-    /* Accept a connection, adding SOCK_CLOEXEC if available. */
+-    static int acceptCloexec(int sockfd, struct sockaddr *addr,
+-                              socklen_t *addrlen);
+-
+-
+   public:
+     /**
+      * @ingroup api_socket
+@@ -84,6 +76,12 @@ class ListenSocket
+ 
+     int getfd() const { return fd; }
+     bool islistening() const { return listening; }
++
++    /* Create a socket, adding SOCK_CLOEXEC if available. */
++    static int socketCloexec(int domain, int type, int protocol);
++    /* Accept a connection, adding SOCK_CLOEXEC if available. */
++    static int acceptCloexec(int sockfd, struct sockaddr *addr,
++                              socklen_t *addrlen);
+     /** @} */ // end of api_socket
+ };
+ 
+diff --git a/src/mem/SConscript b/src/mem/SConscript
+index 7790e1d..e07942e 100644
+--- a/src/mem/SConscript
++++ b/src/mem/SConscript
+@@ -56,6 +56,7 @@ SimObject('NVMInterface.py', sim_objects=['NVMInterface'])
+ SimObject('ExternalMaster.py', sim_objects=['ExternalMaster'])
+ SimObject('ExternalSlave.py', sim_objects=['ExternalSlave'])
+ SimObject('CfiMemory.py', sim_objects=['CfiMemory'])
++SimObject('SharedMemoryServer.py', sim_objects=['SharedMemoryServer'])
+ SimObject('SimpleMemory.py', sim_objects=['SimpleMemory'])
+ SimObject('XBar.py', sim_objects=[
+     'BaseXBar', 'NoncoherentXBar', 'CoherentXBar', 'SnoopFilter'])
+@@ -80,6 +81,7 @@ Source('port.cc')
+ Source('packet_queue.cc')
+ Source('port_proxy.cc')
+ Source('physical.cc')
++Source('shared_memory_server.cc')
+ Source('simple_mem.cc')
+ Source('snoop_filter.cc')
+ Source('stack_dist_calc.cc')
+diff --git a/src/mem/SharedMemoryServer.py b/src/mem/SharedMemoryServer.py
+new file mode 100644
+index 0000000..3a63f45
+--- /dev/null
++++ b/src/mem/SharedMemoryServer.py
+@@ -0,0 +1,15 @@
++from m5.SimObject import SimObject
++from m5.params import Param
++from m5.proxy import Parent
++
++
++class SharedMemoryServer(SimObject):
++    type = "SharedMemoryServer"
++    cxx_header = "mem/shared_memory_server.hh"
++    cxx_class = "gem5::memory::SharedMemoryServer"
++
++    system = Param.System(
++        Parent.any,
++        "The system where the target shared memory is actually stored.")
++    server_path = Param.String(
++        "The unix socket path where the server should be running upon.")
+diff --git a/src/mem/physical.cc b/src/mem/physical.cc
+index 08707eb..cae37a0 100644
+--- a/src/mem/physical.cc
++++ b/src/mem/physical.cc
+@@ -247,7 +247,8 @@ PhysicalMemory::createBackingStore(
+     // remember this backing store so we can checkpoint it and unmap
+     // it appropriately
+     backingStore.emplace_back(range, pmem,
+-                              conf_table_reported, in_addr_map, kvm_map);
++                              conf_table_reported, in_addr_map, kvm_map,
++                              shm_fd, map_offset);
+ 
+     // point the memories to their backing store
+     for (const auto& m : _memories) {
+diff --git a/src/mem/physical.hh b/src/mem/physical.hh
+index ff0dc61..3a976ed 100644
+--- a/src/mem/physical.hh
++++ b/src/mem/physical.hh
+@@ -70,9 +70,11 @@ class BackingStoreEntry
+      * pointers, because PhysicalMemory is responsible for that.
+      */
+     BackingStoreEntry(AddrRange range, uint8_t* pmem,
+-                      bool conf_table_reported, bool in_addr_map, bool kvm_map)
++                      bool conf_table_reported, bool in_addr_map, bool kvm_map,
++                      int shm_fd=-1, off_t shm_offset=0)
+         : range(range), pmem(pmem), confTableReported(conf_table_reported),
+-          inAddrMap(in_addr_map), kvmMap(kvm_map)
++          inAddrMap(in_addr_map), kvmMap(kvm_map), shmFd(shm_fd),
++          shmOffset(shm_offset)
+         {}
+ 
+     /**
+@@ -101,6 +103,18 @@ class BackingStoreEntry
+       * acceleration.
+       */
+      bool kvmMap;
++
++     /**
++      * If this backing store is based on a shared memory, this is the fd to
++      * the shared memory. Otherwise, it should be -1.
++      */
++     int shmFd;
++
++     /**
++      * If this backing store is based on a shared memory, this is the offset
++      * of this backing store in the share memory. Otherwise, the value is 0.
++      */
++     off_t shmOffset;
+ };
+ 
+ /**
+diff --git a/src/mem/shared_memory_server.cc b/src/mem/shared_memory_server.cc
+new file mode 100644
+index 0000000..24dd9f6
+--- /dev/null
++++ b/src/mem/shared_memory_server.cc
+@@ -0,0 +1,248 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "mem/shared_memory_server.hh"
++
++#include <arpa/inet.h>
++#include <fcntl.h>
++#include <poll.h>
++#include <sys/mman.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <sys/un.h>
++#include <unistd.h>
++
++#include <algorithm>
++#include <cerrno>
++#include <cstring>
++
++#include "base/logging.hh"
++#include "base/output.hh"
++#include "base/pollevent.hh"
++#include "base/socket.hh"
++
++namespace gem5
++{
++namespace memory
++{
++
++SharedMemoryServer::SharedMemoryServer(const SharedMemoryServerParams& params)
++    : SimObject(params), unixSocketPath(simout.resolve(params.server_path)),
++      system(params.system), serverFd(-1)
++{
++    fatal_if(system == nullptr, "Requires a system to share memory from!");
++    // Ensure the unix socket path to use is not occupied. Also, if there's
++    // actually anything to be removed, warn the user something might be off.
++    if (unlink(unixSocketPath.c_str()) == 0) {
++        warn(
++            "The server path %s was occupied and will be replaced. Please "
++            "make sure there is no other server using the same path.",
++            unixSocketPath.c_str());
++    }
++    // Create a new unix socket.
++    serverFd = ListenSocket::socketCloexec(AF_UNIX, SOCK_STREAM, 0);
++    panic_if(serverFd < 0, "%s: cannot create unix socket: %s", name().c_str(),
++             strerror(errno));
++    // Bind to the specified path.
++    sockaddr_un serv_addr = {};
++    serv_addr.sun_family = AF_UNIX;
++    strncpy(serv_addr.sun_path, unixSocketPath.c_str(),
++            sizeof(serv_addr.sun_path) - 1);
++    warn_if(strlen(serv_addr.sun_path) != unixSocketPath.size(),
++            "%s: unix socket path truncated, expect '%s' but get '%s'",
++            name().c_str(), unixSocketPath.c_str(), serv_addr.sun_path);
++    int bind_retv = bind(serverFd, reinterpret_cast<sockaddr*>(&serv_addr),
++                         sizeof(serv_addr));
++    fatal_if(bind_retv != 0, "%s: cannot bind unix socket: %s", name().c_str(),
++             strerror(errno));
++    // Start listening.
++    int listen_retv = listen(serverFd, 1);
++    fatal_if(listen_retv != 0, "%s: listen failed: %s", name().c_str(),
++             strerror(errno));
++    listenSocketEvent.reset(new ListenSocketEvent(serverFd, this));
++    pollQueue.schedule(listenSocketEvent.get());
++    inform("%s: listening at %s", name().c_str(), unixSocketPath.c_str());
++}
++
++SharedMemoryServer::~SharedMemoryServer()
++{
++    int unlink_retv = unlink(unixSocketPath.c_str());
++    warn_if(unlink_retv != 0, "%s: cannot unlink unix socket: %s",
++            name().c_str(), strerror(errno));
++    int close_retv = close(serverFd);
++    warn_if(close_retv != 0, "%s: cannot close unix socket: %s",
++            name().c_str(), strerror(errno));
++}
++
++SharedMemoryServer::BaseShmPollEvent::BaseShmPollEvent(
++    int fd, SharedMemoryServer* shm_server)
++    : PollEvent(fd, POLLIN), shmServer(shm_server),
++      eventName(shmServer->name() + ".fd" + std::to_string(fd))
++{
++}
++
++const std::string&
++SharedMemoryServer::BaseShmPollEvent::name() const
++{
++    return eventName;
++}
++
++bool
++SharedMemoryServer::BaseShmPollEvent::tryReadAll(void* buffer, size_t size)
++{
++    char* char_buffer = reinterpret_cast<char*>(buffer);
++    for (size_t offset = 0; offset < size;) {
++        ssize_t retv = recv(pfd.fd, char_buffer + offset, size - offset, 0);
++        if (retv >= 0) {
++            offset += retv;
++        } else if (errno != EINTR) {
++            warn("%s: recv failed: %s", name().c_str(), strerror(errno));
++            return false;
++        }
++    }
++    return true;
++}
++
++void
++SharedMemoryServer::ListenSocketEvent::process(int revents)
++{
++    panic_if(revents & (POLLERR | POLLNVAL), "%s: listen socket is broken",
++             name().c_str());
++    int cli_fd = ListenSocket::acceptCloexec(pfd.fd, nullptr, nullptr);
++    panic_if(cli_fd < 0, "%s: accept failed: %s", name().c_str(),
++             strerror(errno));
++    panic_if(shmServer->clientSocketEvent.get(),
++             "%s: cannot serve two clients at once", name().c_str());
++    inform("%s: accept new connection %d", name().c_str(), cli_fd);
++    shmServer->clientSocketEvent.reset(
++        new ClientSocketEvent(cli_fd, shmServer));
++    pollQueue.schedule(shmServer->clientSocketEvent.get());
++}
++
++void
++SharedMemoryServer::ClientSocketEvent::process(int revents)
++{
++    do {
++        // Ensure the connection is not closed nor broken.
++        if (revents & (POLLHUP | POLLERR | POLLNVAL)) {
++            break;
++        }
++
++        // Receive a request packet. We ignore the endianness as unix socket
++        // only allows communication on the same system anyway.
++        RequestType req_type;
++        struct
++        {
++            uint64_t start;
++            uint64_t end;
++        } request;
++        if (!tryReadAll(&req_type, sizeof(req_type))) {
++            break;
++        }
++        if (req_type != RequestType::kGetPhysRange) {
++            warn("%s: receive unknown request: %d", name().c_str(),
++                 static_cast<int>(req_type));
++            break;
++        }
++        if (!tryReadAll(&request, sizeof(request))) {
++            break;
++        }
++        AddrRange range(request.start, request.end);
++        inform("%s: receive request: %s", name().c_str(),
++               range.to_string().c_str());
++
++        // Identify the backing store.
++        const auto& stores = shmServer->system->getPhysMem().getBackingStore();
++        auto it = std::find_if(
++            stores.begin(), stores.end(), [&](const BackingStoreEntry& entry) {
++                return entry.shmFd >= 0 && range.isSubset(entry.range);
++            });
++        if (it == stores.end()) {
++            warn("%s: cannot find backing store for %s", name().c_str(),
++                 range.to_string().c_str());
++            break;
++        }
++        inform("%s: find shared backing store for %s at %s, shm=%d:%lld",
++               name().c_str(), range.to_string().c_str(),
++               it->range.to_string().c_str(), it->shmFd,
++               (unsigned long long)it->shmOffset);
++
++        // Populate response message.
++        // mmap fd @ offset <===> [start, end] in simulated phys mem.
++        msghdr msg = {};
++        // Setup iovec for fields other than fd. We ignore the endianness as
++        // unix socket only allows communication on the same system anyway.
++        struct
++        {
++            off_t offset;
++        } response;
++        // (offset of the request range in shared memory) =
++        //     (offset of the full range in shared memory) +
++        //     (offset of the request range in the full range)
++        response.offset = it->shmOffset + (range.start() - it->range.start());
++        iovec ios = {.iov_base = &response, .iov_len = sizeof(response)};
++        msg.msg_iov = &ios;
++        msg.msg_iovlen = 1;
++        // Setup fd as an ancillary data.
++        union
++        {
++            char buf[CMSG_SPACE(sizeof(it->shmFd))];
++            struct cmsghdr align;
++        } cmsgs;
++        msg.msg_control = cmsgs.buf;
++        msg.msg_controllen = sizeof(cmsgs.buf);
++        cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
++        cmsg->cmsg_level = SOL_SOCKET;
++        cmsg->cmsg_type = SCM_RIGHTS;
++        cmsg->cmsg_len = CMSG_LEN(sizeof(it->shmFd));
++        memcpy(CMSG_DATA(cmsg), &it->shmFd, sizeof(it->shmFd));
++        // Send the response.
++        int retv = sendmsg(pfd.fd, &msg, 0);
++        if (retv < 0) {
++            warn("%s: sendmsg failed: %s", name().c_str(), strerror(errno));
++            break;
++        }
++        if (retv != sizeof(response)) {
++            warn("%s: failed to send all response at once", name().c_str());
++            break;
++        }
++
++        // Request done.
++        inform("%s: request done", name().c_str());
++        return;
++    } while (false);
++
++    // If we ever reach here, our client either close the connection or is
++    // somehow broken. We'll just close the connection and move on.
++    inform("%s: closing connection", name().c_str());
++    close(pfd.fd);
++    shmServer->clientSocketEvent.reset();
++}
++
++} // namespace memory
++} // namespace gem5
+diff --git a/src/mem/shared_memory_server.hh b/src/mem/shared_memory_server.hh
+new file mode 100644
+index 0000000..9102d74
+--- /dev/null
++++ b/src/mem/shared_memory_server.hh
+@@ -0,0 +1,95 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_SHARED_MEMORY_SERVER_HH__
++#define __MEM_SHARED_MEMORY_SERVER_HH__
++
++#include <memory>
++#include <string>
++
++#include "base/pollevent.hh"
++#include "params/SharedMemoryServer.hh"
++#include "sim/sim_object.hh"
++#include "sim/system.hh"
++
++namespace gem5
++{
++namespace memory
++{
++
++class SharedMemoryServer : public SimObject
++{
++  public:
++    enum class RequestType : int
++    {
++        kGetPhysRange = 0,
++    };
++
++    explicit SharedMemoryServer(const SharedMemoryServerParams& params);
++    ~SharedMemoryServer();
++
++  private:
++    class BaseShmPollEvent : public PollEvent
++    {
++      public:
++        BaseShmPollEvent(int fd, SharedMemoryServer* shm_server);
++
++        const std::string& name() const;
++
++      protected:
++        bool tryReadAll(void* buffer, size_t size);
++
++        SharedMemoryServer* shmServer;
++        std::string eventName;
++    };
++
++    class ListenSocketEvent : public BaseShmPollEvent
++    {
++      public:
++        using BaseShmPollEvent::BaseShmPollEvent;
++        void process(int revent) override;
++    };
++
++    class ClientSocketEvent : public BaseShmPollEvent
++    {
++      public:
++        using BaseShmPollEvent::BaseShmPollEvent;
++        void process(int revent) override;
++    };
++
++    std::string unixSocketPath;
++    System* system;
++
++    int serverFd;
++    std::unique_ptr<ListenSocketEvent> listenSocketEvent;
++    std::unique_ptr<ClientSocketEvent> clientSocketEvent;
++};
++
++} // namespace memory
++} // namespace gem5
++
++#endif  // __MEM_SHARED_MEMORY_SERVER_HH__
+-- 
+1.8.3.1
+

@@ -1,0 +1,61 @@
+From cfe3ed47a6a5d2f28d4946b42dbf121a868ac8b2 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 00:18:47 -0700
+Subject: [PATCH 553/757] arch-x86: Override make(Read|Write) instead of
+ (read|write)_code.
+
+Change-Id: Iab077f58e19aa6bfeed555caa31a4c8b3d261059
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49741
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa/operands.isa | 27 ++++++++++++++++++---------
+ 1 file changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index 2eaab4b..afbb8a0 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -55,20 +55,29 @@ def operand_types {{
+ 
+ let {{
+     class IntReg(IntRegOp):
+-        def __init__(self, idx, id, *args, **kwargs):
++        def __init__(self, idx, id, data_size='dataSize', *args, **kwargs):
+             super().__init__('uqw', idx, 'IsInteger', id, *args, **kwargs)
++            self.attrs['data_size'] = data_size
+ 
+     class PickedReg(IntReg):
+-        def __init__(self, idx, id, size='dataSize'):
+-            super().__init__(idx, id,
+-                    read_code='pick(xc->getRegOperand(this, %(op_idx)s), '
+-                              '%(reg_idx)s, ' + size + ')')
++        @overrideInOperand
++        def makeRead(self, predRead, op_idx):
++            return f'{self.base_name} = pick(xc->getRegOperand(' \
++                        f'this, {op_idx}), {self.reg_spec}, ' \
++                        f'{self.data_size});\n'
++
++        def __init__(self, idx, id, data_size='dataSize'):
++            super().__init__(idx, id, data_size)
+ 
+     class SignedPickedReg(IntReg):
+-        def __init__(self, idx, id, size='dataSize'):
+-            super().__init__(idx, id,
+-                    read_code='signedPick(xc->getRegOperand(this, '
+-                            '%(op_idx)s), %(reg_idx)s, ' + size + ')')
++        @overrideInOperand
++        def makeRead(self, predRead, op_idx):
++            return f'{self.base_name} = signedPick(xc->getRegOperand(' \
++                        f'this, {op_idx}), {self.reg_spec}, ' \
++                        f'{self.data_size});\n'
++
++        def __init__(self, idx, id, data_size='dataSize'):
++            super().__init__(idx, id, data_size)
+ 
+     class FloatReg(FloatRegOp):
+         def __init__(self, idx, id):
+-- 
+1.8.3.1
+

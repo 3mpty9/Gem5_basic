@@ -1,0 +1,69 @@
+From fcbc9afcd6d7f28fd64ad757e3152d541a8a8b01 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 15 Mar 2022 16:59:38 -0500
+Subject: [PATCH 530/757] gpu-compute: Don't use emulated driver in full system
+
+The emulated driver is currently called in a few locations
+unconditionally. This changeset adds checks that we are not in full
+system before calling any emulated driver function. In full system the
+amdgpu driver running on the disk image handles these functions.
+
+Change-Id: Iea3546b574e29c649351c0fce9154530be89e9b1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57712
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/compute_unit.cc       | 11 ++++++++---
+ src/gpu-compute/gpu_compute_driver.cc |  1 +
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index 6af45fe..eefb4d128 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -1051,13 +1051,18 @@ ComputeUnit::sendRequest(GPUDynInstPtr gpuDynInst, PortID index, PacketPtr pkt)
+     // only do some things if actually accessing data
+     bool isDataAccess = pkt->isWrite() || pkt->isRead();
+ 
+-    // For dGPUs, real hardware will extract MTYPE from the PTE.  Our model
++    // For dGPUs, real hardware will extract MTYPE from the PTE. SE mode
+     // uses x86 pagetables which don't have fields to track GPU MTYPEs.
+     // Rather than hacking up the pagetable to add these bits in, we just
+     // keep a structure local to our GPUs that are populated in our
+     // emulated driver whenever memory is allocated.  Consult that structure
+     // here in case we need a memtype override.
+-    shader->gpuCmdProc.driver()->setMtype(pkt->req);
++    //
++    // In full system mode these can be extracted from the PTE and assigned
++    // after address translation takes place.
++    if (!FullSystem) {
++        shader->gpuCmdProc.driver()->setMtype(pkt->req);
++    }
+ 
+     // Check write before read for atomic operations
+     // since atomic operations should use BaseMMU::Write
+@@ -1075,7 +1080,7 @@ ComputeUnit::sendRequest(GPUDynInstPtr gpuDynInst, PortID index, PacketPtr pkt)
+     PortID tlbPort_index = perLaneTLB ? index : 0;
+ 
+     if (shader->timingSim) {
+-        if (debugSegFault) {
++        if (!FullSystem && debugSegFault) {
+             Process *p = shader->gpuTc->getProcessPtr();
+             Addr vaddr = pkt->req->getVaddr();
+             unsigned size = pkt->getSize();
+diff --git a/src/gpu-compute/gpu_compute_driver.cc b/src/gpu-compute/gpu_compute_driver.cc
+index ca870aa..203d087 100644
+--- a/src/gpu-compute/gpu_compute_driver.cc
++++ b/src/gpu-compute/gpu_compute_driver.cc
+@@ -1023,6 +1023,7 @@ GPUComputeDriver::setMtype(RequestPtr req)
+ {
+     // If we are a dGPU then set the MTYPE from our VMAs.
+     if (isdGPU) {
++        assert(!FullSystem);
+         AddrRange range = RangeSize(req->getVaddr(), req->getSize());
+         auto vma = gpuVmas.contains(range);
+         assert(vma != gpuVmas.end());
+-- 
+1.8.3.1
+

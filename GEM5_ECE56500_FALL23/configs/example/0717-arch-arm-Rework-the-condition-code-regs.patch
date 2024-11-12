@@ -1,0 +1,479 @@
+From 8f180369fd4feaeb4b60779b83bfe68228cc3ef8 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 28 Aug 2021 21:12:16 -0700
+Subject: [PATCH 717/757] arch-arm: Rework the condition code regs.
+
+Change-Id: I0cfaaecb4da27cecc3dc6464b094fe2cf03b407a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49765
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/fastmodel/CortexA76/thread_context.cc | 18 ++++++------
+ src/arch/arm/fastmodel/CortexR52/thread_context.cc | 18 ++++++------
+ src/arch/arm/faults.cc                             | 16 +++++------
+ src/arch/arm/freebsd/se_workload.hh                |  4 +--
+ src/arch/arm/insts/static_inst.cc                  |  2 +-
+ src/arch/arm/isa.cc                                | 20 +++++++------
+ src/arch/arm/isa/operands.isa                      | 18 ++++++------
+ src/arch/arm/kvm/armv8_cpu.cc                      | 16 +++++------
+ src/arch/arm/nativetrace.cc                        | 10 +++----
+ src/arch/arm/regs/cc.hh                            | 33 ++++++++++++++++------
+ src/arch/arm/tracers/tarmac_parser.cc              | 14 ++++-----
+ src/arch/arm/tracers/tarmac_record.cc              | 12 ++++----
+ 12 files changed, 99 insertions(+), 82 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexA76/thread_context.cc b/src/arch/arm/fastmodel/CortexA76/thread_context.cc
+index 82b45c0..672f3b7 100644
+--- a/src/arch/arm/fastmodel/CortexA76/thread_context.cc
++++ b/src/arch/arm/fastmodel/CortexA76/thread_context.cc
+@@ -142,10 +142,10 @@ CortexA76TC::readCCRegFlat(RegIndex idx) const
+ {
+     RegVal result = Iris::ThreadContext::readCCRegFlat(idx);
+     switch (idx) {
+-      case ArmISA::CCREG_NZ:
++      case ArmISA::cc_reg::Nz:
+         result = ((ArmISA::CPSR)result).nz;
+         break;
+-      case ArmISA::CCREG_FP:
++      case ArmISA::cc_reg::Fp:
+         result = bits(result, 31, 28);
+         break;
+       default:
+@@ -158,14 +158,14 @@ void
+ CortexA76TC::setCCRegFlat(RegIndex idx, RegVal val)
+ {
+     switch (idx) {
+-      case ArmISA::CCREG_NZ:
++      case ArmISA::cc_reg::Nz:
+         {
+             ArmISA::CPSR cpsr = readMiscRegNoEffect(ArmISA::MISCREG_CPSR);
+             cpsr.nz = val;
+             val = cpsr;
+         }
+         break;
+-      case ArmISA::CCREG_FP:
++      case ArmISA::cc_reg::Fp:
+         {
+             ArmISA::FPSCR fpscr = readMiscRegNoEffect(ArmISA::MISCREG_FPSCR);
+             val = insertBits(fpscr, 31, 28, val);
+@@ -928,11 +928,11 @@ Iris::ThreadContext::IdxNameMap CortexA76TC::flattenedIntIdxNameMap({
+ });
+ 
+ Iris::ThreadContext::IdxNameMap CortexA76TC::ccRegIdxNameMap({
+-        { ArmISA::CCREG_NZ, "CPSR" },
+-        { ArmISA::CCREG_C, "CPSR.C" },
+-        { ArmISA::CCREG_V, "CPSR.V" },
+-        { ArmISA::CCREG_GE, "CPSR.GE" },
+-        { ArmISA::CCREG_FP, "FPSCR" },
++        { ArmISA::cc_reg::Nz, "CPSR" },
++        { ArmISA::cc_reg::C, "CPSR.C" },
++        { ArmISA::cc_reg::V, "CPSR.V" },
++        { ArmISA::cc_reg::Ge, "CPSR.GE" },
++        { ArmISA::cc_reg::Fp, "FPSCR" },
+ });
+ 
+ Iris::ThreadContext::IdxNameMap CortexA76TC::vecRegIdxNameMap({
+diff --git a/src/arch/arm/fastmodel/CortexR52/thread_context.cc b/src/arch/arm/fastmodel/CortexR52/thread_context.cc
+index 6afd6f3..f3e1709 100644
+--- a/src/arch/arm/fastmodel/CortexR52/thread_context.cc
++++ b/src/arch/arm/fastmodel/CortexR52/thread_context.cc
+@@ -104,10 +104,10 @@ CortexR52TC::readCCRegFlat(RegIndex idx) const
+ {
+     RegVal result = Iris::ThreadContext::readCCRegFlat(idx);
+     switch (idx) {
+-      case ArmISA::CCREG_NZ:
++      case ArmISA::cc_reg::Nz:
+         result = ((ArmISA::CPSR)result).nz;
+         break;
+-      case ArmISA::CCREG_FP:
++      case ArmISA::cc_reg::Fp:
+         result = bits(result, 31, 28);
+         break;
+       default:
+@@ -120,14 +120,14 @@ void
+ CortexR52TC::setCCRegFlat(RegIndex idx, RegVal val)
+ {
+     switch (idx) {
+-      case ArmISA::CCREG_NZ:
++      case ArmISA::cc_reg::Nz:
+         {
+             ArmISA::CPSR cpsr = readMiscRegNoEffect(ArmISA::MISCREG_CPSR);
+             cpsr.nz = val;
+             val = cpsr;
+         }
+         break;
+-      case ArmISA::CCREG_FP:
++      case ArmISA::cc_reg::Fp:
+         {
+             ArmISA::FPSCR fpscr = readMiscRegNoEffect(ArmISA::MISCREG_FPSCR);
+             val = insertBits(fpscr, 31, 28, val);
+@@ -811,11 +811,11 @@ Iris::ThreadContext::IdxNameMap CortexR52TC::intReg32IdxNameMap({
+ });
+ 
+ Iris::ThreadContext::IdxNameMap CortexR52TC::ccRegIdxNameMap({
+-        { ArmISA::CCREG_NZ, "CPSR" },
+-        { ArmISA::CCREG_C, "CPSR.C" },
+-        { ArmISA::CCREG_V, "CPSR.V" },
+-        { ArmISA::CCREG_GE, "CPSR.GE" },
+-        { ArmISA::CCREG_FP, "FPSCR" },
++        { ArmISA::cc_reg::Nz, "CPSR" },
++        { ArmISA::cc_reg::C, "CPSR.C" },
++        { ArmISA::cc_reg::V, "CPSR.V" },
++        { ArmISA::cc_reg::Ge, "CPSR.GE" },
++        { ArmISA::cc_reg::Fp, "FPSCR" },
+ });
+ 
+ std::vector<iris::MemorySpaceId> CortexR52TC::bpSpaceIds;
+diff --git a/src/arch/arm/faults.cc b/src/arch/arm/faults.cc
+index 947efbe..1009738 100644
+--- a/src/arch/arm/faults.cc
++++ b/src/arch/arm/faults.cc
+@@ -516,10 +516,10 @@ ArmFault::invoke32(ThreadContext *tc, const StaticInstPtr &inst)
+     SCTLR sctlr = tc->readMiscReg(MISCREG_SCTLR);
+     SCR scr = tc->readMiscReg(MISCREG_SCR);
+     CPSR saved_cpsr = tc->readMiscReg(MISCREG_CPSR);
+-    saved_cpsr.nz = tc->readCCReg(CCREG_NZ);
+-    saved_cpsr.c = tc->readCCReg(CCREG_C);
+-    saved_cpsr.v = tc->readCCReg(CCREG_V);
+-    saved_cpsr.ge = tc->readCCReg(CCREG_GE);
++    saved_cpsr.nz = tc->getReg(cc_reg::Nz);
++    saved_cpsr.c = tc->getReg(cc_reg::C);
++    saved_cpsr.v = tc->getReg(cc_reg::V);
++    saved_cpsr.ge = tc->getReg(cc_reg::Ge);
+ 
+     [[maybe_unused]] Addr cur_pc = tc->pcState().as<PCState>().pc();
+     ITSTATE it = tc->pcState().as<PCState>().itstate();
+@@ -661,9 +661,9 @@ ArmFault::invoke64(ThreadContext *tc, const StaticInstPtr &inst)
+     // Save process state into SPSR_ELx
+     CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
+     CPSR spsr = cpsr;
+-    spsr.nz = tc->readCCReg(CCREG_NZ);
+-    spsr.c = tc->readCCReg(CCREG_C);
+-    spsr.v = tc->readCCReg(CCREG_V);
++    spsr.nz = tc->getReg(cc_reg::Nz);
++    spsr.c = tc->getReg(cc_reg::C);
++    spsr.v = tc->getReg(cc_reg::V);
+     spsr.ss = isResetSPSR() ? 0: cpsr.ss;
+     if (from64) {
+         // Force some bitfields to 0
+@@ -674,7 +674,7 @@ ArmFault::invoke64(ThreadContext *tc, const StaticInstPtr &inst)
+         spsr.it2 = 0;
+         spsr.t = 0;
+     } else {
+-        spsr.ge = tc->readCCReg(CCREG_GE);
++        spsr.ge = tc->getReg(cc_reg::Ge);
+         ITSTATE it = tc->pcState().as<PCState>().itstate();
+         spsr.it2 = it.top6;
+         spsr.it1 = it.bottom2;
+diff --git a/src/arch/arm/freebsd/se_workload.hh b/src/arch/arm/freebsd/se_workload.hh
+index 93af483..b944dbd 100644
+--- a/src/arch/arm/freebsd/se_workload.hh
++++ b/src/arch/arm/freebsd/se_workload.hh
+@@ -84,10 +84,10 @@ struct Result<ABI, SyscallReturn,
+     {
+         RegVal val;
+         if (ret.successful()) {
+-            tc->setCCReg(ArmISA::CCREG_C, 0);
++            tc->setReg(ArmISA::cc_reg::C, (RegVal)0);
+             val = ret.returnValue();
+         } else {
+-            tc->setCCReg(ArmISA::CCREG_C, 1);
++            tc->setReg(ArmISA::cc_reg::C, 1);
+             val = ret.encodedValue();
+         }
+         tc->setReg(ArmISA::ReturnValueReg, val);
+diff --git a/src/arch/arm/insts/static_inst.cc b/src/arch/arm/insts/static_inst.cc
+index c7b2e44..4367920 100644
+--- a/src/arch/arm/insts/static_inst.cc
++++ b/src/arch/arm/insts/static_inst.cc
+@@ -363,7 +363,7 @@ ArmStaticInst::printVecPredReg(std::ostream &os, RegIndex reg_idx) const
+ void
+ ArmStaticInst::printCCReg(std::ostream &os, RegIndex reg_idx) const
+ {
+-    ccprintf(os, "cc_%s", ArmISA::ccRegName[reg_idx]);
++    ccprintf(os, "cc_%s", ArmISA::cc_reg::RegName[reg_idx]);
+ }
+ 
+ void
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index ad7320d..2a829cb 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -100,7 +100,7 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+             vecRegElemClassOps, debug::VecRegs);
+     _regClasses.emplace_back(NumVecPredRegs, vecPredRegClassOps,
+             debug::VecPredRegs, sizeof(VecPredRegContainer));
+-    _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
++    _regClasses.emplace_back(cc_reg::NumRegs, debug::CCRegs);
+     _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps, debug::MiscRegs);
+ 
+     miscRegs[MISCREG_SCTLR_RST] = 0;
+@@ -568,8 +568,10 @@ ISA::copyRegsFrom(ThreadContext *src)
+         tc->setRegFlat(reg, src->getRegFlat(reg));
+     }
+ 
+-    for (int i = 0; i < NUM_CCREGS; i++)
+-        tc->setCCReg(i, src->readCCReg(i));
++    for (int i = 0; i < cc_reg::NumRegs; i++) {
++        RegId reg(CCRegClass, i);
++        tc->setReg(reg, src->getReg(reg));
++    }
+ 
+     for (int i = 0; i < NUM_MISCREGS; i++)
+         tc->setMiscRegNoEffect(i, src->readMiscRegNoEffect(i));
+@@ -936,9 +938,9 @@ ISA::readMiscReg(int misc_reg)
+       case MISCREG_NZCV:
+         {
+             CPSR cpsr = 0;
+-            cpsr.nz   = tc->readCCReg(CCREG_NZ);
+-            cpsr.c    = tc->readCCReg(CCREG_C);
+-            cpsr.v    = tc->readCCReg(CCREG_V);
++            cpsr.nz   = tc->getReg(cc_reg::Nz);
++            cpsr.c    = tc->getReg(cc_reg::C);
++            cpsr.v    = tc->getReg(cc_reg::V);
+             return cpsr;
+         }
+       case MISCREG_DAIF:
+@@ -1877,9 +1879,9 @@ ISA::setMiscReg(int misc_reg, RegVal val)
+             {
+                 CPSR cpsr = val;
+ 
+-                tc->setCCReg(CCREG_NZ, cpsr.nz);
+-                tc->setCCReg(CCREG_C,  cpsr.c);
+-                tc->setCCReg(CCREG_V,  cpsr.v);
++                tc->setReg(cc_reg::Nz, cpsr.nz);
++                tc->setReg(cc_reg::C,  cpsr.c);
++                tc->setReg(cc_reg::V,  cpsr.v);
+             }
+             break;
+           case MISCREG_DAIF:
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index 7993ed2..9c8deaf 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -328,30 +328,30 @@ def operands {{
+     'X5': IntRegX64('5'),
+ 
+     # Condition code registers
+-    'CondCodesNZ': CCReg('CCREG_NZ'),
+-    'CondCodesC': CCReg('CCREG_C'),
+-    'CondCodesV': CCReg('CCREG_V'),
+-    'CondCodesGE': CCReg('CCREG_GE'),
++    'CondCodesNZ': CCReg('cc_reg::Nz'),
++    'CondCodesC': CCReg('cc_reg::C'),
++    'CondCodesV': CCReg('cc_reg::V'),
++    'CondCodesGE': CCReg('cc_reg::Ge'),
+     'OptCondCodesNZ': CCReg(
+             '''((condCode == COND_AL || condCode == COND_UC ||
+                  condCode == COND_CC || condCode == COND_CS ||
+                  condCode == COND_VS || condCode == COND_VC) ?
+-                CCREG_ZERO : CCREG_NZ)'''),
++                cc_reg::Zero : cc_reg::Nz)'''),
+     'OptCondCodesC': CCReg(
+              '''((condCode == COND_HI || condCode == COND_LS ||
+                 condCode == COND_CS || condCode == COND_CC) ?
+-               CCREG_C : CCREG_ZERO)'''),
++               cc_reg::C : cc_reg::Zero)'''),
+     'OptShiftRmCondCodesC': CCReg(
+             '''((condCode == COND_HI || condCode == COND_LS ||
+                  condCode == COND_CS || condCode == COND_CC ||
+                  shiftType == ROR) ?
+-                CCREG_C : CCREG_ZERO)'''),
++                cc_reg::C : cc_reg::Zero)'''),
+     'OptCondCodesV': CCReg(
+             '''((condCode == COND_VS || condCode == COND_VC ||
+                  condCode == COND_GE || condCode == COND_LT ||
+                  condCode == COND_GT || condCode == COND_LE) ?
+-                CCREG_V : CCREG_ZERO)'''),
+-    'FpCondCodes': CCReg('CCREG_FP'),
++                cc_reg::V : cc_reg::Zero)'''),
++    'FpCondCodes': CCReg('cc_reg::Fp'),
+ 
+     #Abstracted floating point reg operands
+     'FpDest': VectorElem('dest'),
+diff --git a/src/arch/arm/kvm/armv8_cpu.cc b/src/arch/arm/kvm/armv8_cpu.cc
+index 328a39e..e5387be 100644
+--- a/src/arch/arm/kvm/armv8_cpu.cc
++++ b/src/arch/arm/kvm/armv8_cpu.cc
+@@ -225,11 +225,11 @@ ArmV8KvmCPU::updateKvmState()
+ 
+     // update pstate register state
+     CPSR cpsr(tc->readMiscReg(MISCREG_CPSR));
+-    cpsr.nz = tc->readCCReg(CCREG_NZ);
+-    cpsr.c = tc->readCCReg(CCREG_C);
+-    cpsr.v = tc->readCCReg(CCREG_V);
++    cpsr.nz = tc->getReg(cc_reg::Nz);
++    cpsr.c = tc->getReg(cc_reg::C);
++    cpsr.v = tc->getReg(cc_reg::V);
+     if (cpsr.width) {
+-        cpsr.ge = tc->readCCReg(CCREG_GE);
++        cpsr.ge = tc->getReg(cc_reg::Ge);
+     } else {
+         cpsr.ge = 0;
+     }
+@@ -295,11 +295,11 @@ ArmV8KvmCPU::updateThreadContext()
+     const CPSR cpsr(getOneRegU64(INT_REG(regs.pstate)));
+     DPRINTF(KvmContext, "  %s := 0x%x\n", "PSTATE", cpsr);
+     tc->setMiscRegNoEffect(MISCREG_CPSR, cpsr);
+-    tc->setCCReg(CCREG_NZ, cpsr.nz);
+-    tc->setCCReg(CCREG_C, cpsr.c);
+-    tc->setCCReg(CCREG_V, cpsr.v);
++    tc->setReg(cc_reg::Nz, cpsr.nz);
++    tc->setReg(cc_reg::C, cpsr.c);
++    tc->setReg(cc_reg::V, cpsr.v);
+     if (cpsr.width) {
+-        tc->setCCReg(CCREG_GE, cpsr.ge);
++        tc->setReg(cc_reg::Ge, cpsr.ge);
+     }
+ 
+     // Update core misc regs first as they
+diff --git a/src/arch/arm/nativetrace.cc b/src/arch/arm/nativetrace.cc
+index 11bd5d9..ee95023 100644
+--- a/src/arch/arm/nativetrace.cc
++++ b/src/arch/arm/nativetrace.cc
+@@ -119,10 +119,10 @@ Trace::ArmNativeTrace::ThreadState::update(ThreadContext *tc)
+ 
+     //CPSR
+     CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
+-    cpsr.nz = tc->readCCReg(CCREG_NZ);
+-    cpsr.c = tc->readCCReg(CCREG_C);
+-    cpsr.v = tc->readCCReg(CCREG_V);
+-    cpsr.ge = tc->readCCReg(CCREG_GE);
++    cpsr.nz = tc->getReg(cc_reg::Nz);
++    cpsr.c = tc->getReg(cc_reg::C);
++    cpsr.v = tc->getReg(cc_reg::V);
++    cpsr.ge = tc->getReg(cc_reg::Ge);
+ 
+     newState[STATE_CPSR] = cpsr;
+     changed[STATE_CPSR] = (newState[STATE_CPSR] != oldState[STATE_CPSR]);
+@@ -134,7 +134,7 @@ Trace::ArmNativeTrace::ThreadState::update(ThreadContext *tc)
+         newState[STATE_F0 + 2*i + 1] = arr[1];
+     }
+     newState[STATE_FPSCR] = tc->readMiscRegNoEffect(MISCREG_FPSCR) |
+-                            tc->readCCReg(CCREG_FP);
++                            tc->getReg(cc_reg::Fp);
+ }
+ 
+ void
+diff --git a/src/arch/arm/regs/cc.hh b/src/arch/arm/regs/cc.hh
+index 9f3aaa1..2aa55fa 100644
+--- a/src/arch/arm/regs/cc.hh
++++ b/src/arch/arm/regs/cc.hh
+@@ -38,24 +38,37 @@
+ #ifndef __ARCH_ARM_REGS_CC_HH__
+ #define __ARCH_ARM_REGS_CC_HH__
+ 
++#include "cpu/reg_class.hh"
++
+ namespace gem5
+ {
+ 
+ namespace ArmISA
+ {
+ 
+-enum ccRegIndex
++namespace cc_reg
++{
++
++enum : RegIndex
+ {
+-    CCREG_NZ,
+-    CCREG_C,
+-    CCREG_V,
+-    CCREG_GE,
+-    CCREG_FP,
+-    CCREG_ZERO,
+-    NUM_CCREGS
++    _NzIdx,
++    _CIdx,
++    _VIdx,
++    _GeIdx,
++    _FpIdx,
++    _ZeroIdx,
++    NumRegs
+ };
+ 
+-const char * const ccRegName[NUM_CCREGS] = {
++inline constexpr RegId
++    Nz(CCRegClass, _NzIdx),
++    C(CCRegClass, _CIdx),
++    V(CCRegClass, _VIdx),
++    Ge(CCRegClass, _GeIdx),
++    Fp(CCRegClass, _FpIdx),
++    Zero(CCRegClass, _ZeroIdx);
++
++const char * const RegName[NumRegs] = {
+     "nz",
+     "c",
+     "v",
+@@ -64,6 +77,8 @@ const char * const ccRegName[NUM_CCREGS] = {
+     "zero"
+ };
+ 
++} // namespace cc_reg
++
+ enum ConditionCode
+ {
+     COND_EQ  =   0,
+diff --git a/src/arch/arm/tracers/tarmac_parser.cc b/src/arch/arm/tracers/tarmac_parser.cc
+index f45df9c..d69dbde 100644
+--- a/src/arch/arm/tracers/tarmac_parser.cc
++++ b/src/arch/arm/tracers/tarmac_parser.cc
+@@ -832,16 +832,16 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+             if (it->index == MISCREG_CPSR) {
+                 // Read condition codes from aliased integer regs
+                 CPSR cpsr = thread->readMiscRegNoEffect(it->index);
+-                cpsr.nz = thread->readCCReg(CCREG_NZ);
+-                cpsr.c = thread->readCCReg(CCREG_C);
+-                cpsr.v = thread->readCCReg(CCREG_V);
+-                cpsr.ge = thread->readCCReg(CCREG_GE);
++                cpsr.nz = thread->getReg(cc_reg::Nz);
++                cpsr.c = thread->getReg(cc_reg::C);
++                cpsr.v = thread->getReg(cc_reg::V);
++                cpsr.ge = thread->getReg(cc_reg::Ge);
+                 values.push_back(cpsr);
+             } else if (it->index == MISCREG_NZCV) {
+                 CPSR cpsr = 0;
+-                cpsr.nz = thread->readCCReg(CCREG_NZ);
+-                cpsr.c = thread->readCCReg(CCREG_C);
+-                cpsr.v = thread->readCCReg(CCREG_V);
++                cpsr.nz = thread->getReg(cc_reg::Nz);
++                cpsr.c = thread->getReg(cc_reg::C);
++                cpsr.v = thread->getReg(cc_reg::V);
+                 values.push_back(cpsr);
+             } else if (it->index == MISCREG_FPCR) {
+                 // Read FPSCR and extract FPCR value
+diff --git a/src/arch/arm/tracers/tarmac_record.cc b/src/arch/arm/tracers/tarmac_record.cc
+index 05bb2e3..4ae379b 100644
+--- a/src/arch/arm/tracers/tarmac_record.cc
++++ b/src/arch/arm/tracers/tarmac_record.cc
+@@ -213,10 +213,10 @@ TarmacTracerRecord::TraceRegEntry::updateMisc(
+     // the CC flags on top of the value
+     if (regRelIdx == MISCREG_CPSR) {
+         CPSR cpsr = thread->readMiscRegNoEffect(MISCREG_CPSR);
+-        cpsr.nz = thread->readCCReg(CCREG_NZ);
+-        cpsr.c = thread->readCCReg(CCREG_C);
+-        cpsr.v = thread->readCCReg(CCREG_V);
+-        cpsr.ge = thread->readCCReg(CCREG_GE);
++        cpsr.nz = thread->getReg(cc_reg::Nz);
++        cpsr.c = thread->getReg(cc_reg::C);
++        cpsr.v = thread->getReg(cc_reg::V);
++        cpsr.ge = thread->getReg(cc_reg::Ge);
+ 
+         // update the entry value
+         values[Lo] = cpsr;
+@@ -232,8 +232,8 @@ TarmacTracerRecord::TraceRegEntry::updateCC(
+     auto thread = tarmCtx.thread;
+ 
+     regValid = true;
+-    regName = ccRegName[regRelIdx];
+-    values[Lo] = thread->readCCReg(regRelIdx);
++    regName = cc_reg::RegName[regRelIdx];
++    values[Lo] = thread->getReg(RegId(CCRegClass, regRelIdx));
+ }
+ 
+ void
+-- 
+1.8.3.1
+

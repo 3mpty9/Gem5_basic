@@ -1,0 +1,32 @@
+From 17d945b69819d1b80eae7e145bf3e880f09e94c0 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Tue, 12 Apr 2022 14:59:06 -0700
+Subject: [PATCH 564/757] configs: Fix the command in the comment of
+ arm-hello.py
+
+Change-Id: I5e020e066c0f6792077fbf2ef65b7f90bb9c37f9
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58830
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/arm-hello.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configs/example/gem5_library/arm-hello.py b/configs/example/gem5_library/arm-hello.py
+index 3faa3ed..264731f 100644
+--- a/configs/example/gem5_library/arm-hello.py
++++ b/configs/example/gem5_library/arm-hello.py
+@@ -37,7 +37,7 @@ Usage
+ 
+ ```
+ scons build/ARM/gem5.opt
+-./build/ARM/gem5.opt configs/gem5_library/arm-hello.py
++./build/ARM/gem5.opt configs/example/gem5_library/arm-hello.py
+ ```
+ """
+ 
+-- 
+1.8.3.1
+

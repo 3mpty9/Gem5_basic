@@ -1,0 +1,434 @@
+From fd250dbed31d2749e64056647b15a5bc260c0661 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 4 May 2022 14:46:18 +0100
+Subject: [PATCH 622/757] arch-arm: Consolidate Arm FEAT check into single
+ hasExtension
+
+There's no need to have a per extension helper function now
+that we rely on ArmExtension objects
+
+We are therefore removing:
+
+* HavePACExt
+* HaveLVA
+* HaveSecureEL2Ext
+* HaveVirtHostExt
+
+Change-Id: I2094c1eb6310506787e5628aa62d0b14e917ab5e
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59471
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/faults.cc            |  5 ++--
+ src/arch/arm/insts/static_inst.cc |  4 ++--
+ src/arch/arm/interrupts.hh        |  5 ++--
+ src/arch/arm/isa/insts/pauth.isa  |  4 ++--
+ src/arch/arm/mmu.cc               | 17 +++++++-------
+ src/arch/arm/self_debug.cc        | 26 ++++++++++++---------
+ src/arch/arm/table_walker.cc      |  7 +++---
+ src/arch/arm/utility.cc           | 49 +++++++++++++--------------------------
+ src/arch/arm/utility.hh           | 11 +++++----
+ 9 files changed, 60 insertions(+), 68 deletions(-)
+
+diff --git a/src/arch/arm/faults.cc b/src/arch/arm/faults.cc
+index e85a90b..8564147 100644
+--- a/src/arch/arm/faults.cc
++++ b/src/arch/arm/faults.cc
+@@ -453,8 +453,7 @@ ArmFault::update(ThreadContext *tc)
+         toEL = fromEL;
+ 
+     // Check for Set Priviledge Access Never, if PAN is supported
+-    if (auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-        isa->getRelease()->has(ArmExtension::FEAT_PAN)) {
++    if (HaveExt(tc, ArmExtension::FEAT_PAN)) {
+         if (toEL == EL1) {
+             const SCTLR sctlr = tc->readMiscReg(MISCREG_SCTLR_EL1);
+             span = !sctlr.span;
+@@ -1384,7 +1383,7 @@ DataAbort::routeToHyp(ThreadContext *tc) const
+ 
+     bool amo = hcr.amo;
+     if (hcr.tge == 1)
+-        amo =  (!HaveVirtHostExt(tc) || hcr.e2h == 0);
++        amo =  (!HaveExt(tc, ArmExtension::FEAT_VHE) || hcr.e2h == 0);
+ 
+     // if in Hyp mode then stay in Hyp mode
+     toHyp = fromEL == EL2 ||
+diff --git a/src/arch/arm/insts/static_inst.cc b/src/arch/arm/insts/static_inst.cc
+index f3d646d..4541240 100644
+--- a/src/arch/arm/insts/static_inst.cc
++++ b/src/arch/arm/insts/static_inst.cc
+@@ -678,7 +678,7 @@ ArmStaticInst::checkFPAdvSIMDTrap64(ThreadContext *tc, CPSR cpsr) const
+         bool trap_el2 = false;
+         CPTR cptr_en_check = tc->readMiscReg(MISCREG_CPTR_EL2);
+         HCR hcr = tc->readMiscReg(MISCREG_HCR_EL2);
+-        if (HaveVirtHostExt(tc) && hcr.e2h == 0x1) {
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && hcr.e2h == 0x1) {
+             switch (cptr_en_check.fpen) {
+               case 0:
+               case 2:
+@@ -1031,7 +1031,7 @@ ArmStaticInst::checkSveEnabled(ThreadContext *tc, CPSR cpsr, CPACR cpacr) const
+     if (el <= EL2 && EL2Enabled(tc)) {
+         CPTR cptr_en_check = tc->readMiscReg(MISCREG_CPTR_EL2);
+         HCR hcr = tc->readMiscReg(MISCREG_HCR_EL2);
+-        if (HaveVirtHostExt(tc) && hcr.e2h) {
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && hcr.e2h) {
+             if (((cptr_en_check.zen & 0x1) == 0x0) ||
+                 (cptr_en_check.zen == 0x1 && el == EL0 &&
+                  hcr.tge == 0x1)) {
+diff --git a/src/arch/arm/interrupts.hh b/src/arch/arm/interrupts.hh
+index 2f99d6e..a510d29 100644
+--- a/src/arch/arm/interrupts.hh
++++ b/src/arch/arm/interrupts.hh
+@@ -47,6 +47,7 @@
+ #include "arch/generic/interrupts.hh"
+ #include "cpu/thread_context.hh"
+ #include "debug/Interrupt.hh"
++#include "enums/ArmExtension.hh"
+ #include "params/ArmInterrupts.hh"
+ 
+ namespace gem5
+@@ -139,7 +140,7 @@ class Interrupts : public BaseInterrupts
+ 
+         CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
+ 
+-        bool no_vhe = !HaveVirtHostExt(tc);
++        bool no_vhe = !HaveExt(tc, ArmExtension::FEAT_VHE);
+         bool amo, fmo, imo;
+         if (hcr.tge == 1){
+             amo =  (no_vhe || hcr.e2h == 0);
+@@ -238,7 +239,7 @@ class Interrupts : public BaseInterrupts
+         HCR  hcr  = tc->readMiscReg(MISCREG_HCR);
+         CPSR cpsr = tc->readMiscReg(MISCREG_CPSR);
+ 
+-        bool no_vhe = !HaveVirtHostExt(tc);
++        bool no_vhe = !HaveExt(tc, ArmExtension::FEAT_VHE);
+         bool amo, fmo, imo;
+         if (hcr.tge == 1){
+             amo =  (no_vhe || hcr.e2h == 0);
+diff --git a/src/arch/arm/isa/insts/pauth.isa b/src/arch/arm/isa/insts/pauth.isa
+index e3c48a0..ea16ab9 100644
+--- a/src/arch/arm/isa/insts/pauth.isa
++++ b/src/arch/arm/isa/insts/pauth.isa
+@@ -45,13 +45,13 @@ let {{
+     def pacEnabledCode(hint):
+         if hint:
+             code = """
+-                if (!HavePACExt(xc->tcBase())) {
++                if (!HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
+                     return NoFault;
+                 }
+                 """
+         else:
+             code = """
+-                if (!HavePACExt(xc->tcBase())) {
++                if (!HaveExt(xc->tcBase(), ArmExtension::FEAT_PAuth)) {
+                     return std::make_shared<UndefinedInstruction>(
+                         machInst, true);
+                 }
+diff --git a/src/arch/arm/mmu.cc b/src/arch/arm/mmu.cc
+index 8d07273..ff55c3c 100644
+--- a/src/arch/arm/mmu.cc
++++ b/src/arch/arm/mmu.cc
+@@ -774,9 +774,7 @@ MMU::checkPAN(ThreadContext *tc, uint8_t ap, const RequestPtr &req, Mode mode,
+     // gem5)
+     // 4) Instructions to be treated as unprivileged, unless
+     // HCR_EL2.{E2H, TGE} == {1, 0}
+-    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-    const bool has_pan = isa->getRelease()->has(ArmExtension::FEAT_PAN);
+-    if (has_pan && state.cpsr.pan && (ap & 0x1) &&
++    if (HaveExt(tc, ArmExtension::FEAT_PAN) && state.cpsr.pan && (ap & 0x1) &&
+         mode != BaseMMU::Execute) {
+ 
+         if (req->isCacheMaintenance() &&
+@@ -851,8 +849,8 @@ MMU::translateMmuOff(ThreadContext *tc, const RequestPtr &req, Mode mode,
+     // Set memory attributes
+     TlbEntry temp_te;
+     temp_te.ns = !state.isSecure;
+-    bool dc = (HaveVirtHostExt(tc)
+-               && state.hcr.e2h == 1 && state.hcr.tge == 1) ? 0: state.hcr.dc;
++    bool dc = (HaveExt(tc, ArmExtension::FEAT_VHE) &&
++               state.hcr.e2h == 1 && state.hcr.tge == 1) ? 0: state.hcr.dc;
+     bool i_cacheability = state.sctlr.i && !state.sctlr.m;
+     if (state.isStage2 || !dc || state.isSecure ||
+        (state.isHyp && !(tran_type & S1CTran))) {
+@@ -1009,7 +1007,8 @@ MMU::translateFs(const RequestPtr &req, ThreadContext *tc, Mode mode,
+     }
+ 
+     bool vm = state.hcr.vm;
+-    if (HaveVirtHostExt(tc) && state.hcr.e2h == 1 && state.hcr.tge ==1)
++    if (HaveExt(tc, ArmExtension::FEAT_VHE) &&
++        state.hcr.e2h == 1 && state.hcr.tge == 1)
+         vm = 0;
+     else if (state.hcr.dc == 1)
+         vm = 1;
+@@ -1234,7 +1233,8 @@ MMU::CachedState::updateMiscReg(ThreadContext *tc,
+         // determine EL we need to translate in
+         switch (aarch64EL) {
+           case EL0:
+-            if (HaveVirtHostExt(tc) && hcr.tge == 1 && hcr.e2h == 1) {
++            if (HaveExt(tc, ArmExtension::FEAT_VHE) &&
++                hcr.tge == 1 && hcr.e2h == 1) {
+                 // VHE code for EL2&0 regime
+                 sctlr = tc->readMiscReg(MISCREG_SCTLR_EL2);
+                 ttbcr = tc->readMiscReg(MISCREG_TCR_EL2);
+@@ -1296,7 +1296,8 @@ MMU::CachedState::updateMiscReg(ThreadContext *tc,
+             isHyp &= (tran_type & S1S2NsTran) == 0;
+             isHyp &= (tran_type & S1CTran)    == 0;
+             bool vm = hcr.vm;
+-            if (HaveVirtHostExt(tc) && hcr.e2h == 1 && hcr.tge ==1) {
++            if (HaveExt(tc, ArmExtension::FEAT_VHE) &&
++                hcr.e2h == 1 && hcr.tge ==1) {
+                 vm = 0;
+             }
+ 
+diff --git a/src/arch/arm/self_debug.cc b/src/arch/arm/self_debug.cc
+index 2029bdc..86da693 100644
+--- a/src/arch/arm/self_debug.cc
++++ b/src/arch/arm/self_debug.cc
+@@ -165,8 +165,9 @@ bool
+ SelfDebug::isDebugEnabledForEL64(ThreadContext *tc, ExceptionLevel el,
+                          bool secure, bool mask)
+ {
+-    bool route_to_el2 =  ArmSystem::haveEL(tc, EL2) &&
+-                         (!secure || HaveSecureEL2Ext(tc)) && enableTdeTge;
++    bool route_to_el2 = ArmSystem::haveEL(tc, EL2) &&
++                        (!secure || HaveExt(tc, ArmExtension::FEAT_SEL2)) &&
++                        enableTdeTge;
+ 
+     ExceptionLevel target_el = route_to_el2 ? EL2 : EL1;
+     if (oslk || (sdd && secure && ArmSystem::haveEL(tc, EL3))) {
+@@ -256,12 +257,13 @@ BrkPoint::test(ThreadContext *tc, Addr pc, ExceptionLevel el, DBGBCR ctr,
+         break;
+ 
+       case 0x6:
+-        if (HaveVirtHostExt(tc) && !ELIsInHost(tc, el))
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && !ELIsInHost(tc, el))
+              v = testContextMatch(tc, true);
+         break;
+ 
+       case 0x7:
+-        if (HaveVirtHostExt(tc) && !ELIsInHost(tc, el) && from_link)
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && !ELIsInHost(tc, el) &&
++            from_link)
+             v = testContextMatch(tc, true);
+         break;
+ 
+@@ -292,27 +294,29 @@ BrkPoint::test(ThreadContext *tc, Addr pc, ExceptionLevel el, DBGBCR ctr,
+         break;
+ 
+       case 0xc:
+-        if (HaveVirtHostExt(tc) && (!isSecure(tc)|| HaveSecureEL2Ext(tc)))
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) &&
++            (!isSecure(tc)|| HaveExt(tc, ArmExtension::FEAT_SEL2)))
+             v = testContextMatch(tc, false);
+         break;
+ 
+       case 0xd:
+-        if (HaveVirtHostExt(tc) && from_link &&
+-            (!isSecure(tc)|| HaveSecureEL2Ext(tc))) {
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && from_link &&
++            (!isSecure(tc)|| HaveExt(tc, ArmExtension::FEAT_SEL2))) {
+              v = testContextMatch(tc, false);
+         }
+         break;
+ 
+       case 0xe:
+-        if (HaveVirtHostExt(tc) && !ELIsInHost(tc, el) &&
+-            (!isSecure(tc)|| HaveSecureEL2Ext(tc))) {
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && !ELIsInHost(tc, el) &&
++            (!isSecure(tc)|| HaveExt(tc, ArmExtension::FEAT_SEL2))) {
+             v = testContextMatch(tc, true); // CONTEXTIDR_EL1
+             v = v && testContextMatch(tc, false); // CONTEXTIDR_EL2
+         }
+         break;
+       case 0xf:
+-        if (HaveVirtHostExt(tc) && !ELIsInHost(tc, el) && from_link &&
+-            (!isSecure(tc)|| HaveSecureEL2Ext(tc))) {
++        if (HaveExt(tc, ArmExtension::FEAT_VHE) && !ELIsInHost(tc, el) &&
++            from_link &&
++            (!isSecure(tc)|| HaveExt(tc, ArmExtension::FEAT_SEL2))) {
+             v = testContextMatch(tc, true); // CONTEXTIDR_EL1
+             v = v && testContextMatch(tc, false); // CONTEXTIDR_EL2
+         }
+diff --git a/src/arch/arm/table_walker.cc b/src/arch/arm/table_walker.cc
+index c7b8c3c..96d5036 100644
+--- a/src/arch/arm/table_walker.cc
++++ b/src/arch/arm/table_walker.cc
+@@ -383,7 +383,7 @@ TableWalker::walk(const RequestPtr &_req, ThreadContext *_tc, uint16_t _asid,
+             }
+         } else switch (currState->el) {
+           case EL0:
+-            if (HaveVirtHostExt(currState->tc) &&
++            if (HaveExt(currState->tc, ArmExtension::FEAT_VHE) &&
+                   currState->hcr.tge == 1 && currState->hcr.e2h ==1) {
+               currState->sctlr = currState->tc->readMiscReg(MISCREG_SCTLR_EL2);
+               currState->tcr = currState->tc->readMiscReg(MISCREG_TCR_EL2);
+@@ -870,7 +870,8 @@ TableWalker::checkVAddrSizeFaultAArch64(Addr addr, int top_bit,
+     // 16KB in size. When ARMv8.2-LVA is supported, for the 64KB
+     // translation granule size only, the effective minimum value of
+     // 52.
+-    int in_max = (HaveLVA(currState->tc) && tg == Grain64KB) ? 52 : 48;
++    const bool have_lva = HaveExt(currState->tc, ArmExtension::FEAT_LVA);
++    int in_max = (have_lva && tg == Grain64KB) ? 52 : 48;
+     int in_min = 64 - (tg == Grain64KB ? 47 : 48);
+ 
+     return tsz > in_max || tsz < in_min || (low_range ?
+@@ -913,7 +914,7 @@ TableWalker::processWalkAArch64()
+         {
+             Addr ttbr0;
+             Addr ttbr1;
+-            if (HaveVirtHostExt(currState->tc) &&
++            if (HaveExt(currState->tc, ArmExtension::FEAT_VHE) &&
+                     currState->hcr.tge==1 && currState->hcr.e2h == 1) {
+                 // VHE code for EL2&0 regime
+                 ttbr0 = currState->tc->readMiscReg(MISCREG_TTBR0_EL2);
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index 0335a89..34e777c 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -92,7 +92,8 @@ ExceptionLevel
+ debugTargetFrom(ThreadContext *tc, bool secure)
+ {
+     bool route_to_el2;
+-    if (ArmSystem::haveEL(tc, EL2) && (!secure || HaveSecureEL2Ext(tc))) {
++    if (ArmSystem::haveEL(tc, EL2) &&
++        (!secure || HaveExt(tc, ArmExtension::FEAT_SEL2))) {
+         if (ELIs32(tc, EL2)) {
+             const HCR hcr = tc->readMiscReg(MISCREG_HCR);
+             const HDCR hdcr = tc->readMiscRegNoEffect(MISCREG_HDCR);
+@@ -225,24 +226,10 @@ getAffinity(ArmSystem *arm_sys, ThreadContext *tc)
+ }
+ 
+ bool
+-HavePACExt(ThreadContext *tc)
++HaveExt(ThreadContext* tc, ArmExtension ext)
+ {
+     auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-    return isa->getRelease()->has(ArmExtension::FEAT_PAuth);
+-}
+-
+-bool
+-HaveVirtHostExt(ThreadContext *tc)
+-{
+-    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-    return isa->getRelease()->has(ArmExtension::FEAT_VHE);
+-}
+-
+-bool
+-HaveLVA(ThreadContext *tc)
+-{
+-    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-    return isa->getRelease()->has(ArmExtension::FEAT_LVA);
++    return isa->getRelease()->has(ext);
+ }
+ 
+ ExceptionLevel
+@@ -253,23 +240,16 @@ s1TranslationRegime(ThreadContext* tc, ExceptionLevel el)
+     else if (ArmSystem::haveEL(tc, EL3) && ELIs32(tc, EL3) &&
+              static_cast<SCR>(tc->readMiscRegNoEffect(MISCREG_SCR)).ns == 0)
+         return EL3;
+-    else if (HaveVirtHostExt(tc) && ELIsInHost(tc, el))
++    else if (HaveExt(tc, ArmExtension::FEAT_VHE) && ELIsInHost(tc, el))
+         return EL2;
+     else
+         return EL1;
+ }
+ 
+ bool
+-HaveSecureEL2Ext(ThreadContext *tc)
+-{
+-    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
+-    return isa->getRelease()->has(ArmExtension::FEAT_SEL2);
+-}
+-
+-bool
+ IsSecureEL2Enabled(ThreadContext *tc)
+ {
+-    if (ArmSystem::haveEL(tc, EL2) && HaveSecureEL2Ext(tc) &&
++    if (ArmSystem::haveEL(tc, EL2) && HaveExt(tc, ArmExtension::FEAT_SEL2) &&
+         !ELIs32(tc, EL2)) {
+         if (ArmSystem::haveEL(tc, EL3))
+             return !ELIs32(tc, EL3) && static_cast<SCR>(
+@@ -309,7 +289,8 @@ ELIsInHost(ThreadContext *tc, ExceptionLevel el)
+     const HCR hcr = tc->readMiscReg(MISCREG_HCR_EL2);
+     return (ArmSystem::haveEL(tc, EL2) &&
+             (IsSecureEL2Enabled(tc) || !isSecureBelowEL3(tc)) &&
+-            HaveVirtHostExt(tc) && !ELIs32(tc, EL2) && hcr.e2h == 1 &&
++            HaveExt(tc, ArmExtension::FEAT_VHE) &&
++            !ELIs32(tc, EL2) && hcr.e2h == 1 &&
+             (el == EL2 || (el == EL0 && hcr.tge == 1)));
+ }
+ 
+@@ -360,14 +341,15 @@ ELStateUsingAArch32K(ThreadContext *tc, ExceptionLevel el, bool secure)
+     } else {
+         SCR scr = tc->readMiscReg(MISCREG_SCR_EL3);
+         bool aarch32_below_el3 = have_el3 && scr.rw == 0 &&
+-                            (!secure || !HaveSecureEL2Ext(tc) || !scr.eel2);
++            (!secure || !HaveExt(tc, ArmExtension::FEAT_SEL2) || !scr.eel2);
+ 
+         HCR hcr = tc->readMiscReg(MISCREG_HCR_EL2);
+-        bool sec_el2 = HaveSecureEL2Ext(tc) && scr.eel2;
++        bool sec_el2 = HaveExt(tc, ArmExtension::FEAT_SEL2) && scr.eel2;
+         bool aarch32_at_el1 = (aarch32_below_el3 ||
+                                (have_el2 && (sec_el2 || !secure) &&
+-                                hcr.rw == 0 && !(hcr.e2h && hcr.tge &&
+-                                                 HaveVirtHostExt(tc))));
++                                hcr.rw == 0 &&
++                                !(hcr.e2h && hcr.tge &&
++                                 HaveExt(tc, ArmExtension::FEAT_VHE))));
+ 
+         // Only know if EL0 using AArch32 from PSTATE
+         if (el == EL0 && !aarch32_at_el1) {
+@@ -444,7 +426,7 @@ computeAddrTop(ThreadContext *tc, bool selbit, bool is_instr,
+           case EL2:
+           {
+             TCR tcr = tc->readMiscReg(MISCREG_TCR_EL2);
+-            if (HaveVirtHostExt(tc) && ELIsInHost(tc, el)) {
++            if (HaveExt(tc, ArmExtension::FEAT_VHE) && ELIsInHost(tc, el)) {
+                 tbi = selbit? tcr.tbi1 : tcr.tbi0;
+                 tbid = selbit? tcr.tbid1 : tcr.tbid0;
+             } else {
+@@ -1276,7 +1258,8 @@ isUnpriviledgeAccess(ThreadContext *tc)
+     bool unpriv_el1 = currEL(tc) == EL1 &&
+         !(ArmSystem::haveEL(tc, EL2) &&
+             have_nv_ext && hcr.nv == 1 && hcr.nv1 == 1);
+-    bool unpriv_el2 = ArmSystem::haveEL(tc, EL2) && HaveVirtHostExt(tc) &&
++    bool unpriv_el2 = ArmSystem::haveEL(tc, EL2) &&
++                      HaveExt(tc, ArmExtension::FEAT_VHE) &&
+                       currEL(tc) == EL2 && hcr.e2h == 1 && hcr.tge == 1;
+ 
+     return (unpriv_el1 || unpriv_el2) && !cpsr.uao;
+diff --git a/src/arch/arm/utility.hh b/src/arch/arm/utility.hh
+index 523061b..2b377a3 100644
+--- a/src/arch/arm/utility.hh
++++ b/src/arch/arm/utility.hh
+@@ -51,6 +51,7 @@
+ #include "base/types.hh"
+ #include "cpu/static_inst.hh"
+ #include "cpu/thread_context.hh"
++#include "enums/ArmExtension.hh"
+ 
+ namespace gem5
+ {
+@@ -120,10 +121,12 @@ currEL(CPSR cpsr)
+     return opModeToEL((OperatingMode) (uint8_t)cpsr.mode);
+ }
+ 
+-bool HavePACExt(ThreadContext *tc);
+-bool HaveVirtHostExt(ThreadContext *tc);
+-bool HaveLVA(ThreadContext *tc);
+-bool HaveSecureEL2Ext(ThreadContext *tc);
++/**
++ * Returns true if the provided ThreadContext supports the ArmExtension
++ * passed as a second argument.
++ */
++bool HaveExt(ThreadContext *tc, ArmExtension ext);
++
+ bool IsSecureEL2Enabled(ThreadContext *tc);
+ bool EL2Enabled(ThreadContext *tc);
+ 
+-- 
+1.8.3.1
+

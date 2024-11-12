@@ -1,0 +1,35 @@
+From e1af2b71d42e70b75f89d2e11710465162ae7e9c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 28 Jan 2022 11:49:23 -0800
+Subject: [PATCH 180/757] tests: Fix gem5 stdlib NPB example test
+
+'--maxinst' was replaced with '--ticks' for the
+'configs/example/gem5_library/x86-npb-benchmarks.py' script. This test
+was never updated and resulted in failure. This patch fixes the issue.
+
+Change-Id: I5491d48e3d42c37f703600a3dea323146e5ff6d7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56223
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+index 2aca184..6f3300d 100644
+--- a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
++++ b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+@@ -128,7 +128,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+             "bt",
+             "--size",
+             "A",
+-            "--maxinsts",
++            "--ticks",
+             "5000000000"
+         ],
+         valid_isas=(constants.x86_tag,),
+-- 
+1.8.3.1
+

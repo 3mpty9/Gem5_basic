@@ -1,0 +1,215 @@
+From 2643f3c4ee8c46ad4ad5f906498da59af51f21fd Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 17 May 2022 16:00:49 -0700
+Subject: [PATCH 648/757] tests,stdlib: Add test to check gem5-resources
+ downloading
+
+This test ensures all the resources in resources.json can be downloaded
+and that their md5 values are valid. This has been set as a
+very-long/weekly test as downloading all the resources is costly.
+
+Change-Id: Ia574d0a9610849af3653fc742acb214ea7496767
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59771
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/resources/md5_utils.py             |  15 +++
+ tests/gem5/configs/download_check.py               | 105 +++++++++++++++++++++
+ .../gem5/gem5-resources/test_download_resources.py |  46 +++++++++
+ 3 files changed, 166 insertions(+)
+ create mode 100644 tests/gem5/configs/download_check.py
+ create mode 100644 tests/gem5/gem5-resources/test_download_resources.py
+
+diff --git a/src/python/gem5/resources/md5_utils.py b/src/python/gem5/resources/md5_utils.py
+index cafaf34..b98a81e 100644
+--- a/src/python/gem5/resources/md5_utils.py
++++ b/src/python/gem5/resources/md5_utils.py
+@@ -45,6 +45,21 @@ def _md5_update_from_dir(directory:  Path, hash: Hash) -> Hash:
+             hash = _md5_update_from_dir(path, hash)
+     return hash
+ 
++def md5(path: Path) -> str:
++    """
++    Gets the md5 value of a file or directory. `md5_file` is used if the path
++    is a file and `md5_dir` is used if the path is a directory. An exception
++    is returned if the path is not a valid file or directory.
++
++    :param path: The path to get the md5 of.
++    """
++    if path.is_file():
++        return md5_file(Path(path))
++    elif path.is_dir():
++        return md5_dir(Path(path))
++    else:
++        raise Exception(f"Path '{path}' is not a valid file or directory.")
++
+ def md5_file(filename:  Path) -> str:
+     """
+     Gives the md5 hash of a file
+diff --git a/tests/gem5/configs/download_check.py b/tests/gem5/configs/download_check.py
+new file mode 100644
+index 0000000..f13ba70
+--- /dev/null
++++ b/tests/gem5/configs/download_check.py
+@@ -0,0 +1,105 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from gem5.resources.downloader import (
++    list_resources,
++    get_resources_json_obj,
++    get_resource,
++)
++
++from gem5.resources.md5_utils import md5
++
++import os
++import shutil
++import argparse
++from pathlib import Path
++
++parser = argparse.ArgumentParser(
++    description="A script that will checks that input resource IDs will "
++    "download a resource and that resources md5 value is correct. "
++    "If no resource IDs are specified, all will be checked."
++)
++
++parser.add_argument(
++    "ids",
++    nargs="*",  # Accepts 0 or more arguments.
++    type=str,
++    help="The resource IDs to check. If not set, all resources will be "
++    "checked",
++)
++
++parser.add_argument(
++    "--download-directory",
++    type=str,
++    required=True,
++    help="The directory to download the resources as part of these test. The "
++    "contents of this directory will be wiped after running the tests.",
++)
++
++args = parser.parse_args()
++
++# If the directory doesn't exist, create it.
++if not Path(args.download_dir).exists():
++    os.makedirs(args.download_dir)
++
++
++ids = args.ids
++if len(ids) == 0:
++    ids = list_resources()
++
++# We log all the errors as they occur then dump them at the end. This means we
++# can be aware of all download errors in a single failure.
++errors = str()
++
++for id in ids:
++    if id not in list_resources():
++        errors += (
++            f"Resource with ID '{id}' not found in "
++            + f"`list_resources()`.{os.linesep}"
++        )
++        continue
++
++    resource_json = get_resources_json_obj(id)
++    download_path = os.path.join(args.download_dir, id)
++    try:
++        get_resource(resource_name=id, to_path=download_path)
++    except Exception:
++        errors += f"Failure to download resource '{id}'.{os.linesep}"
++        continue
++
++    if md5(Path(download_path)) != resource_json["md5sum"]:
++        errors += (
++            f"Downloaded resource '{id}' md5 "
++            + f"({md5(Path(download_path))}) differs to that in the "
++            + f"JSON ({resource_json['md5sum']}).{os.linesep}"
++        )
++
++    # Remove the downloaded resource.
++    shutil.rmtree(download_path, ignore_errors=True)
++
++# If errors exist, raise an exception highlighting them.
++if errors:
++    raise Exception(errors)
+diff --git a/tests/gem5/gem5-resources/test_download_resources.py b/tests/gem5/gem5-resources/test_download_resources.py
+new file mode 100644
+index 0000000..acc72d7
+--- /dev/null
++++ b/tests/gem5/gem5-resources/test_download_resources.py
+@@ -0,0 +1,46 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from testlib import *
++
++if config.bin_path:
++    resource_path = joinpath(config.bin_path, "resource-downloading-test")
++else:
++    resource_path = joinpath(
++        absdirpath(__file__), "..", "resources", "resource_downloading-test"
++    )
++
++gem5_verify_config(
++    name="test-resource-downloading",
++    fixtures=(),
++    verifiers=(),
++    config=joinpath(
++        config.base_dir, "tests", "gem5", "configs", "download_check.py"
++    ),
++    config_args=["--resource-directory", resource_path],
++    valid_isas=(constants.null_tag,),
++    length=constants.very_long_tag,
++)
+-- 
+1.8.3.1
+

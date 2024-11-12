@@ -1,0 +1,44 @@
+From a10073119ecdb95961d92f734cc0f5fd7c49adba Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Sat, 18 Jun 2022 03:36:27 -0700
+Subject: [PATCH 738/757] misc: Add v22.0.0.1 hotfix
+
+This hotfix fixes a bad import in
+src/python/gem5/components/processors/simple_core.py
+---
+ RELEASE-NOTES.md                                     | 8 ++++++++
+ src/python/gem5/components/processors/simple_core.py | 2 +-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/RELEASE-NOTES.md b/RELEASE-NOTES.md
+index d199fed..881285f 100644
+--- a/RELEASE-NOTES.md
++++ b/RELEASE-NOTES.md
+@@ -1,3 +1,11 @@
++# Version 22.0.0.1
++
++**[HOTFIX]** Fixes relative import in "src/python/gem5/components/processors/simple_core.py".
++
++The import `from python.gem5.utils.requires import requires` in v22.0.0.0 of gem5 is incorrect as it causes problems when executing gem5 binaries  in certain directories (`python` isn't necessary included).
++To resolve this, this import has been changed to `from ...utils.requires imports requires`.
++This should work in all supported use-cases.
++
+ # Version 22.0.0.0
+ 
+ gem5 version 22.0 has been slightly delayed, but we a have a very strong release!
+diff --git a/src/python/gem5/components/processors/simple_core.py b/src/python/gem5/components/processors/simple_core.py
+index 92290a3..1fa2f68 100644
+--- a/src/python/gem5/components/processors/simple_core.py
++++ b/src/python/gem5/components/processors/simple_core.py
+@@ -25,7 +25,7 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from typing import Optional
+-from python.gem5.utils.requires import requires
++from ...utils.requires import requires
+ from ..processors.abstract_core import AbstractCore
+ 
+ from .cpu_types import CPUTypes
+-- 
+1.8.3.1
+

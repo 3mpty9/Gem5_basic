@@ -1,0 +1,44 @@
+From 0ae1a9d109154523e363f7f9beeae89105c0d1e7 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 9 Dec 2021 12:27:51 -0600
+Subject: [PATCH 025/757] arch-vega: Implement S_SLEEP
+
+This is merely copied from arch-gcn3.
+
+Change-Id: Ibd2bda37fe9adc083a35efab0f59617d386019b9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53883
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/insts/instructions.cc | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index d12709a..28473d7 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -4608,6 +4608,8 @@ namespace VegaISA
+     Inst_SOPP__S_SLEEP::Inst_SOPP__S_SLEEP(InFmt_SOPP *iFmt)
+         : Inst_SOPP(iFmt, "s_sleep")
+     {
++        setFlag(ALU);
++        setFlag(Sleep);
+     } // Inst_SOPP__S_SLEEP
+ 
+     Inst_SOPP__S_SLEEP::~Inst_SOPP__S_SLEEP()
+@@ -4620,7 +4622,10 @@ namespace VegaISA
+     void
+     Inst_SOPP__S_SLEEP::execute(GPUDynInstPtr gpuDynInst)
+     {
+-        panicUnimplemented();
++        ScalarRegI32 simm16 = (ScalarRegI32)instData.SIMM16;
++        gpuDynInst->wavefront()->setStatus(Wavefront::S_STALLED_SLEEP);
++        // sleep duration is specified in multiples of 64 cycles
++        gpuDynInst->wavefront()->setSleepTime(64 * simm16);
+     } // execute
+     // --- Inst_SOPP__S_SETPRIO class methods ---
+ 
+-- 
+1.8.3.1
+

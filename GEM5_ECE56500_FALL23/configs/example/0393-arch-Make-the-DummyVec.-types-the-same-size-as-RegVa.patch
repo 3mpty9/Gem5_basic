@@ -1,0 +1,105 @@
+From f847b4a5e975bd8e6541c7e30949d1bd919fe10f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 17 Feb 2022 23:12:31 -0800
+Subject: [PATCH 393/757] arch: Make the DummyVec... types the same size as
+ RegVal.
+
+This makes RegClass-es which don't specify a size work with the Dummy
+types of VecRegContainer and VecPredRegContainer, and avoids having to
+set up extra plumbing in ISAs that don't need it.
+
+Change-Id: I059306a54b2a9cf7a22258a01e0821e370f0590a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56929
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/generic/vec_pred_reg.hh | 23 ++++++++++++++++++++++-
+ src/arch/generic/vec_reg.hh      | 23 ++++++++++++++++++++++-
+ 2 files changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/generic/vec_pred_reg.hh b/src/arch/generic/vec_pred_reg.hh
+index ad6bcce..9495911 100644
+--- a/src/arch/generic/vec_pred_reg.hh
++++ b/src/arch/generic/vec_pred_reg.hh
+@@ -44,6 +44,7 @@
+ #include <vector>
+ 
+ #include "base/cprintf.hh"
++#include "base/types.hh"
+ #include "sim/serialize_handlers.hh"
+ 
+ namespace gem5
+@@ -394,7 +395,27 @@ struct ShowParam<VecPredRegContainer<NumBits, Packed>>
+ /// Dummy type aliases and constants for architectures that do not implement
+ /// vector predicate registers.
+ /// @{
+-using DummyVecPredRegContainer = VecPredRegContainer<8, false>;
++struct DummyVecPredRegContainer
++{
++    RegVal filler = 0;
++    bool operator == (const DummyVecPredRegContainer &d) const { return true; }
++    bool operator != (const DummyVecPredRegContainer &d) const { return true; }
++};
++template <>
++struct ParseParam<DummyVecPredRegContainer>
++{
++    static bool
++    parse(const std::string &s, DummyVecPredRegContainer &value)
++    {
++        return false;
++    }
++};
++static_assert(sizeof(DummyVecPredRegContainer) == sizeof(RegVal));
++static inline std::ostream &
++operator<<(std::ostream &os, const DummyVecPredRegContainer &d)
++{
++    return os;
++}
+ /// @}
+ 
+ } // namespace gem5
+diff --git a/src/arch/generic/vec_reg.hh b/src/arch/generic/vec_reg.hh
+index f32f581..c818b1c 100644
+--- a/src/arch/generic/vec_reg.hh
++++ b/src/arch/generic/vec_reg.hh
+@@ -104,6 +104,7 @@
+ 
+ #include "base/cprintf.hh"
+ #include "base/logging.hh"
++#include "base/types.hh"
+ #include "sim/serialize_handlers.hh"
+ 
+ namespace gem5
+@@ -264,7 +265,27 @@ struct ShowParam<VecRegContainer<Sz>>
+  * vector registers.
+  */
+ /** @{ */
+-using DummyVecRegContainer = VecRegContainer<8>;
++struct DummyVecRegContainer
++{
++    RegVal filler = 0;
++    bool operator == (const DummyVecRegContainer &d) const { return true; }
++    bool operator != (const DummyVecRegContainer &d) const { return true; }
++};
++template <>
++struct ParseParam<DummyVecRegContainer>
++{
++    static bool
++    parse(const std::string &s, DummyVecRegContainer &value)
++    {
++        return false;
++    }
++};
++static_assert(sizeof(DummyVecRegContainer) == sizeof(RegVal));
++static inline std::ostream &
++operator<<(std::ostream &os, const DummyVecRegContainer &d)
++{
++    return os;
++}
+ /** @} */
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

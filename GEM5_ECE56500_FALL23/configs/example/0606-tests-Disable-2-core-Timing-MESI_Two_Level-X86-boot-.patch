@@ -1,0 +1,36 @@
+From 6209641d33aa4405f2fe00386855251c78bfe9fc Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 3 May 2022 15:24:12 -0700
+Subject: [PATCH 606/757] tests: Disable 2 core Timing MESI_Two_Level X86 boot
+ test
+
+This is due to this error: https://gem5.atlassian.net/browse/GEM5-1219.
+After several weeks of failing Weekly tests, this test will be disabled
+until it can be fixed.
+
+Change-Id: If7510426c33f3412a559681f653e955409fcdce4
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59329
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/x86-boot-tests/test_linux_boot.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tests/gem5/x86-boot-tests/test_linux_boot.py b/tests/gem5/x86-boot-tests/test_linux_boot.py
+index 1cea4d8..8b517be 100644
+--- a/tests/gem5/x86-boot-tests/test_linux_boot.py
++++ b/tests/gem5/x86-boot-tests/test_linux_boot.py
+@@ -282,7 +282,8 @@ run_map = {
+         },
+         "timing": {
+             1: True,
+-            2: True,
++            2: False,  # Disabled due to
++                       # https://gem5.atlassian.net/browse/GEM5-1219.
+             4: True,
+             8: True,
+         },
+-- 
+1.8.3.1
+

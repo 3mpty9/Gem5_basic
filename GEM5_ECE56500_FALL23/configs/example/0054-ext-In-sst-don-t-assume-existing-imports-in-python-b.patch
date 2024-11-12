@@ -1,0 +1,54 @@
+From 539aaa4bc3d46ddafc845bfb5cc96dea8f9c3244 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 15 Dec 2021 21:19:26 -0800
+Subject: [PATCH 054/757] ext: In sst, don't assume existing imports in python
+ blobs.
+
+When executing blobs of python code in the gem5 sst integration, don't
+assume previous blobs have already imported modules. Import them
+explicitly instead.
+
+Change-Id: I3aa008ffa092cf8ad82ad057eb73bc9de4bf77c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54308
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/gem5.cc | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/ext/sst/gem5.cc b/ext/sst/gem5.cc
+index 286f519..01ea3eb 100644
+--- a/ext/sst/gem5.cc
++++ b/ext/sst/gem5.cc
+@@ -194,6 +194,7 @@ gem5Component::init(unsigned phase)
+         initPython(args.size(), &args[0]);
+ 
+         const std::vector<std::string> m5_instantiate_commands = {
++            "import m5",
+             "m5.instantiate()"
+         };
+         execPythonCommands(m5_instantiate_commands);
+@@ -201,7 +202,10 @@ gem5Component::init(unsigned phase)
+         // calling SimObject.startup()
+         const std::vector<std::string> simobject_setup_commands = {
+             "import atexit",
+-            "import _m5",
++            "import _m5.core",
++            "import m5",
++            "import m5.stats",
++            "import m5.objects.Root",
+             "root = m5.objects.Root.getInstance()",
+             "for obj in root.descendants(): obj.startup()",
+             "atexit.register(m5.stats.dump)",
+@@ -258,6 +262,7 @@ gem5Component::clockTick(SST::Cycle_t currentCycle)
+         );
+         // output gem5 stats
+         const std::vector<std::string> output_stats_commands = {
++            "import m5.stats"
+             "m5.stats.dump()"
+         };
+         execPythonCommands(output_stats_commands);
+-- 
+1.8.3.1
+

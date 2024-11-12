@@ -1,0 +1,41 @@
+From 742e661ba76d258d183d35d2b07ba79bea2a56fa Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 16:43:54 -0700
+Subject: [PATCH 733/757] tests: Update Weekly tests to use correct resources
+ version
+
+Change-Id: I129a8b69ae7c6bc7ad6a5f13712471c8bf9f8d4c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60551
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/weekly.sh | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index 8b16907..febfae4 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -100,12 +100,12 @@ git clone https://gem5.googlesource.com/public/gem5-resources \
+ 
+ cd "${gem5_root}/gem5-resources"
+ git checkout develop
+-#version_tag=$(git tag | grep "v21.2")
+-#
+-#if [[ ${version_tag} != "" ]]; then
+-#       git checkout "${version_tag}"
+-#fi
+-#
++version_tag=$(git tag | grep "v22.0")
++
++if [[ ${version_tag} != "" ]]; then
++       git checkout "${version_tag}"
++fi
++
+ cd "${gem5_root}"
+ 
+ # For the GPU tests we compile and run the GPU ISA inside a gcn-gpu container.
+-- 
+1.8.3.1
+

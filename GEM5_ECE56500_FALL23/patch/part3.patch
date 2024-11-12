@@ -1,0 +1,269 @@
+diff --git a/src/cpu/minor/BaseMinorCPU.py b/src/cpu/minor/BaseMinorCPU.py
+index ac26743..e587c4f 100644
+--- a/src/cpu/minor/BaseMinorCPU.py
++++ b/src/cpu/minor/BaseMinorCPU.py
+@@ -229,14 +229,28 @@ class BaseMinorCPU(BaseCPU):
+         "Size of input buffer to Decode in cycles-worth of insts.")
+     decodeToExecuteForwardDelay = Param.Cycles(1,
+         "Forward cycle delay from Decode to Execute (1 means next cycle)")
+-    decodeInputWidth = Param.Unsigned(2,
++    decodeInputWidth = Param.Unsigned(1,
+         "Width (in instructions) of input to Decode (and implicitly"
+         " Decode's own width)")
+     decodeCycleInput = Param.Bool(True,
+         "Allow Decode to pack instructions from more than one input cycle"
+         " to fill its output each cycle")
+ 
+-    executeInputWidth = Param.Unsigned(2,
++    dummyexecuteInputBufferSize = Param.Unsigned(3,
++        "Size of input buffer to Dummy in cycles-worth of insts.")
++    decodeToDummyExecuteForwardDelay = Param.Cycles(1,
++        "Forward cycle delay from Decode to DummyExecute (1 means next cycle)")
++    dummyexecuteToExecuteForwardDelay = Param.Cycles(1,
++        "Forward cycle delay from Decode to DummyExecute (1 means next cycle)")
++    dummyexecuteInputWidth = Param.Unsigned(1,
++        "Width (in instructions) of input to DummyExecute (and implicitly"
++        " DummyExecute's own width)")
++    dummyexecuteCycleInput = Param.Bool(True,
++        "Allow Dummy to pack instructions from more than one input cycle"
++        " to fill its output each cycle")
++
++
++    executeInputWidth = Param.Unsigned(1,
+         "Width (in instructions) of input to Execute")
+     executeCycleInput = Param.Bool(True,
+         "Allow Execute to use instructions from more than one input cycle"
+diff --git a/src/cpu/minor/SConscript b/src/cpu/minor/SConscript
+index cd1b8e3..e1f9b34 100644
+--- a/src/cpu/minor/SConscript
++++ b/src/cpu/minor/SConscript
+@@ -50,6 +50,7 @@ if env['CONF']['TARGET_ISA'] != 'null':
+     Source('cpu.cc')
+     Source('decode.cc')
+     Source('dyn_inst.cc')
++    Source('dummyexecute.cc')
+     Source('execute.cc')
+     Source('fetch1.cc')
+     Source('fetch2.cc')
+diff --git a/src/cpu/minor/decode.cc b/src/cpu/minor/decode.cc
+index 53c02f3..ffd3c2a 100644
+--- a/src/cpu/minor/decode.cc
++++ b/src/cpu/minor/decode.cc
+@@ -49,6 +49,7 @@ GEM5_DEPRECATED_NAMESPACE(Minor, minor);
+ namespace minor
+ {
+ 
++/***
+ Decode::Decode(const std::string &name,
+     MinorCPU &cpu_,
+     const BaseMinorCPUParams &params,
+@@ -72,6 +73,32 @@ Decode::Decode(const std::string &name,
+         fatal("%s: decodeInputBufferSize must be >= 1 (%d)\n", name,
+         params.decodeInputBufferSize);
+     }
++*/
++
++Decode::Decode(const std::string &name,
++    MinorCPU &cpu_,
++    const BaseMinorCPUParams &params,
++    Latch<ForwardInstData>::Output inp_,
++    Latch<ForwardInstData>::Input out_,
++    std::vector<InputBuffer<ForwardInstData>> &next_stage_input_buffer) :
++    Named(name),
++    cpu(cpu_),
++    inp(inp_),
++    out(out_),
++    nextStageReserve(next_stage_input_buffer),
++    outputWidth(params.dummyexecuteInputWidth),
++    processMoreThanOneInput(params.decodeCycleInput),
++    decodeInfo(params.numThreads),
++    threadPriority(0)
++{
++    if (outputWidth < 1)
++        fatal("%s: dummyexecuteInputWidth must be >= 1 (%d)\n", name, outputWidth);
++
++    if (params.decodeInputBufferSize < 1) {
++        fatal("%s: decodeInputBufferSize must be >= 1 (%d)\n", name,
++        params.decodeInputBufferSize);
++    }
++
+ 
+     /* Per-thread input buffers */
+     for (ThreadID tid = 0; tid < params.numThreads; tid++) { 
+diff --git a/src/cpu/minor/pipeline.cc b/src/cpu/minor/pipeline.cc
+index e94181f..b9d963a 100644
+--- a/src/cpu/minor/pipeline.cc
++++ b/src/cpu/minor/pipeline.cc
+@@ -40,6 +40,7 @@
+ #include <algorithm>
+ 
+ #include "cpu/minor/decode.hh"
++#include "cpu/minor/dummyexecute.hh"
+ #include "cpu/minor/execute.hh"
+ #include "cpu/minor/fetch1.hh"
+ #include "cpu/minor/fetch2.hh"
+@@ -65,14 +66,20 @@ Pipeline::Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params) :
+         params.fetch1ToFetch2BackwardDelay, true),
+     f2ToD(cpu.name() + ".f2ToD", "insts",
+         params.fetch2ToDecodeForwardDelay),
+-    dToE(cpu.name() + ".dToE", "insts",
+-        params.decodeToExecuteForwardDelay),
++    //dToE(cpu.name() + ".dToE", "insts",
++    //    params.decodeToExecuteForwardDelay),
++    dToM(cpu.name() + ".dToM", "insts",
++        params.decodeToDummyExecuteForwardDelay),
++    mToE(cpu.name() + ".dToM", "insts",
++        params.dummyexecuteToExecuteForwardDelay),    
+     eToF1(cpu.name() + ".eToF1", "branch",
+         params.executeBranchDelay),
+     execute(cpu.name() + ".execute", cpu, params,
+-        dToE.output(), eToF1.input()),
++        mToE.output(), eToF1.input()),
++    dummyexecute(cpu.name() + ".dummyexecute", cpu, params,
++        dToM.output(), mToE.input(), execute.inputBuffer),    
+     decode(cpu.name() + ".decode", cpu, params,
+-        f2ToD.output(), dToE.input(), execute.inputBuffer),
++        f2ToD.output(), dToM.input(), dummyexecute.inputBuffer),
+     fetch2(cpu.name() + ".fetch2", cpu, params,
+         f1ToF2.output(), eToF1.output(), f2ToF1.input(), f2ToD.input(),
+         decode.inputBuffer),
+@@ -82,8 +89,9 @@ Pipeline::Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params) :
+         /* The max depth of inter-stage FIFOs */
+         std::max(params.fetch1ToFetch2ForwardDelay,
+         std::max(params.fetch2ToDecodeForwardDelay,
+-        std::max(params.decodeToExecuteForwardDelay,
+-        params.executeBranchDelay)))),
++        std::max(params.decodeToDummyExecuteForwardDelay,
++        std::max(params.dummyexecuteToExecuteForwardDelay,
++        params.executeBranchDelay))))),
+     needToSignalDrained(false)
+ {
+     if (params.fetch1ToFetch2ForwardDelay < 1) {
+@@ -96,9 +104,14 @@ Pipeline::Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params) :
+             cpu.name(), params.fetch2ToDecodeForwardDelay);
+     }
+ 
+-    if (params.decodeToExecuteForwardDelay < 1) {
+-        fatal("%s: decodeToExecuteForwardDelay must be >= 1 (%d)\n",
+-            cpu.name(), params.decodeToExecuteForwardDelay);
++    if (params.decodeToDummyExecuteForwardDelay < 1) {
++        fatal("%s: decodeToDummyExecuteForwardDelay must be >= 1 (%d)\n",
++            cpu.name(), params.decodeToDummyExecuteForwardDelay);
++    }
++
++    if (params.dummyexecuteToExecuteForwardDelay < 1) {
++        fatal("%s: dummyexecuteToExecuteForwardDelay must be >= 1 (%d)\n",
++            cpu.name(), params.dummyexecuteToExecuteForwardDelay);
+     }
+ 
+     if (params.executeBranchDelay < 1) {
+@@ -116,7 +129,9 @@ Pipeline::minorTrace() const
+     fetch2.minorTrace();
+     f2ToD.minorTrace();
+     decode.minorTrace();
+-    dToE.minorTrace();
++    dToM.minorTrace();
++    dummyexecute.minorTrace();
++    mToE.minorTrace();
+     execute.minorTrace();
+     eToF1.minorTrace();
+     activityRecorder.minorTrace();
+@@ -132,6 +147,7 @@ Pipeline::evaluate()
+      *  'immediate', 0-time-offset TimeBuffer activity to be visible from
+      *  later stages to earlier ones in the same cycle */
+     execute.evaluate();
++    dummyexecute.evaluate();
+     decode.evaluate();
+     fetch2.evaluate();
+     fetch1.evaluate();
+@@ -143,7 +159,8 @@ Pipeline::evaluate()
+     f1ToF2.evaluate();
+     f2ToF1.evaluate();
+     f2ToD.evaluate();
+-    dToE.evaluate();
++    dToM.evaluate();
++    mToE.evaluate();
+     eToF1.evaluate();
+ 
+     /* The activity recorder must be be called after all the stages and
+@@ -165,6 +182,7 @@ Pipeline::evaluate()
+         activityRecorder.deactivateStage(Pipeline::Fetch1StageId);
+         activityRecorder.deactivateStage(Pipeline::Fetch2StageId);
+         activityRecorder.deactivateStage(Pipeline::DecodeStageId);
++        activityRecorder.deactivateStage(Pipeline::DummyExecuteStageId);
+         activityRecorder.deactivateStage(Pipeline::ExecuteStageId);
+     }
+ 
+@@ -232,27 +250,32 @@ Pipeline::isDrained()
+     bool fetch1_drained = fetch1.isDrained();
+     bool fetch2_drained = fetch2.isDrained();
+     bool decode_drained = decode.isDrained();
++    bool dummyexecute_drained = dummyexecute.isDrained();
+     bool execute_drained = execute.isDrained();
+ 
+     bool f1_to_f2_drained = f1ToF2.empty();
+     bool f2_to_f1_drained = f2ToF1.empty();
+     bool f2_to_d_drained = f2ToD.empty();
+-    bool d_to_e_drained = dToE.empty();
++    bool d_to_m_drained = dToM.empty();
++    bool m_to_e_drained = mToE.empty();
+ 
+     bool ret = fetch1_drained && fetch2_drained &&
+-        decode_drained && execute_drained &&
+-        f1_to_f2_drained && f2_to_f1_drained &&
+-        f2_to_d_drained && d_to_e_drained;
++        decode_drained && dummyexecute_drained && 
++        execute_drained && f1_to_f2_drained && 
++        f2_to_f1_drained && f2_to_d_drained && 
++        d_to_m_drained && m_to_e_drained;
+ 
+     DPRINTF(MinorCPU, "Pipeline undrained stages state:%s%s%s%s%s%s%s%s\n",
+         (fetch1_drained ? "" : " Fetch1"),
+         (fetch2_drained ? "" : " Fetch2"),
+         (decode_drained ? "" : " Decode"),
++        (dummyexecute_drained ? "" : " DummyExecute"),
+         (execute_drained ? "" : " Execute"),
+         (f1_to_f2_drained ? "" : " F1->F2"),
+         (f2_to_f1_drained ? "" : " F2->F1"),
+         (f2_to_d_drained ? "" : " F2->D"),
+-        (d_to_e_drained ? "" : " D->E")
++        (d_to_m_drained ? "" : " D->M"),
++        (m_to_e_drained ? "" : " M->E")
+         );
+ 
+     return ret;
+diff --git a/src/cpu/minor/pipeline.hh b/src/cpu/minor/pipeline.hh
+index ce0ae07..d77c283 100644
+--- a/src/cpu/minor/pipeline.hh
++++ b/src/cpu/minor/pipeline.hh
+@@ -48,6 +48,7 @@
+ #include "cpu/minor/activity.hh"
+ #include "cpu/minor/cpu.hh"
+ #include "cpu/minor/decode.hh"
++#include "cpu/minor/dummyexecute.hh"
+ #include "cpu/minor/execute.hh"
+ #include "cpu/minor/fetch1.hh"
+ #include "cpu/minor/fetch2.hh"
+@@ -81,10 +82,12 @@ class Pipeline : public Ticked
+     Latch<ForwardLineData> f1ToF2;
+     Latch<BranchData> f2ToF1;
+     Latch<ForwardInstData> f2ToD;
+-    Latch<ForwardInstData> dToE;
++    Latch<ForwardInstData> dToM;
++    Latch<ForwardInstData> mToE;
+     Latch<BranchData> eToF1;
+ 
+     Execute execute;
++    DummyExecute dummyexecute;
+     Decode decode;
+     Fetch2 fetch2;
+     Fetch1 fetch1;
+@@ -101,7 +104,7 @@ class Pipeline : public Ticked
+         /* A stage representing wakeup of the whole processor */
+         CPUStageId = 0,
+         /* Real pipeline stages */
+-        Fetch1StageId, Fetch2StageId, DecodeStageId, ExecuteStageId,
++        Fetch1StageId, Fetch2StageId, DecodeStageId, DummyExecuteStageId, ExecuteStageId,
+         Num_StageId /* Stage count */
+     };
+ 

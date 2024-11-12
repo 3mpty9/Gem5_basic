@@ -1,0 +1,47 @@
+From 8ad21f7039494edd7a14f691642c5bda3babac0c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Sun, 5 Jun 2022 22:58:57 -0700
+Subject: [PATCH 680/757] tests: Fix downloader check
+
+This test was failing due to references to a "downloader_dir" variable.
+It should be "downloader_directory".
+
+This is responsible for the Weekly test failing:
+https://jenkins.gem5.org/job/weekly/55
+
+Change-Id: Ia898726b75be1bfc2b6f49383be750a250c24af0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60349
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/configs/download_check.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/tests/gem5/configs/download_check.py b/tests/gem5/configs/download_check.py
+index f13ba70..613a1c4 100644
+--- a/tests/gem5/configs/download_check.py
++++ b/tests/gem5/configs/download_check.py
+@@ -62,8 +62,8 @@ parser.add_argument(
+ args = parser.parse_args()
+ 
+ # If the directory doesn't exist, create it.
+-if not Path(args.download_dir).exists():
+-    os.makedirs(args.download_dir)
++if not Path(args.download_directory).exists():
++    os.makedirs(args.download_directory)
+ 
+ 
+ ids = args.ids
+@@ -83,7 +83,7 @@ for id in ids:
+         continue
+ 
+     resource_json = get_resources_json_obj(id)
+-    download_path = os.path.join(args.download_dir, id)
++    download_path = os.path.join(args.download_directory, id)
+     try:
+         get_resource(resource_name=id, to_path=download_path)
+     except Exception:
+-- 
+1.8.3.1
+

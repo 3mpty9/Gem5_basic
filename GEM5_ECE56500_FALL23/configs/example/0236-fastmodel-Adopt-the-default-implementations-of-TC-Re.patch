@@ -1,0 +1,248 @@
+From 65f5f61ca8cf1dfedcb0835c5e1ecf0d78df8177 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 04:46:05 -0700
+Subject: [PATCH 236/757] fastmodel: Adopt the default implementations of TC
+ *Reg funcs.
+
+The ThreadContext methods for the fast model are not on the critical
+path and so aren't performance sensitive, and this will avoid having to
+reorganize the readIntReg, etc, functions to use the new scheme. That
+can be done down the line.
+
+Change-Id: Icb9196815ce5a07edae333f19d2ea120015aaf1a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49112
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/fastmodel/iris/thread_context.cc | 181 ++++++++++++++++++++++++++
+ src/arch/arm/fastmodel/iris/thread_context.hh |  14 ++
+ 2 files changed, 195 insertions(+)
+
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.cc b/src/arch/arm/fastmodel/iris/thread_context.cc
+index 4a9c2db..7be65f8 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.cc
++++ b/src/arch/arm/fastmodel/iris/thread_context.cc
+@@ -606,6 +606,187 @@ ThreadContext::setMiscRegNoEffect(RegIndex misc_reg, const RegVal val)
+ }
+ 
+ RegVal
++ThreadContext::getReg(const RegId &reg) const
++{
++    RegVal val;
++    getReg(reg, &val);
++    return val;
++}
++
++void
++ThreadContext::setReg(const RegId &reg, RegVal val)
++{
++    setReg(reg, &val);
++}
++
++void
++ThreadContext::getReg(const RegId &reg, void *val) const
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        *(RegVal *)val = readIntReg(idx);
++        break;
++      case FloatRegClass:
++        *(RegVal *)val = readFloatReg(idx);
++        break;
++      case VecRegClass:
++        *(ArmISA::VecRegContainer *)val = readVecReg(reg);
++        break;
++      case VecElemClass:
++        *(RegVal *)val = readVecElem(reg);
++        break;
++      case VecPredRegClass:
++        *(ArmISA::VecPredRegContainer *)val = readVecPredReg(reg);
++        break;
++      case CCRegClass:
++        *(RegVal *)val = readCCReg(idx);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void
++ThreadContext::setReg(const RegId &reg, const void *val)
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        setIntReg(idx, *(RegVal *)val);
++        break;
++      case FloatRegClass:
++        setFloatReg(idx, *(RegVal *)val);
++        break;
++      case VecRegClass:
++        setVecReg(reg, *(ArmISA::VecRegContainer *)val);
++        break;
++      case VecElemClass:
++        setVecElem(reg, *(RegVal *)val);
++        break;
++      case VecPredRegClass:
++        setVecPredReg(reg, *(ArmISA::VecPredRegContainer *)val);
++        break;
++      case CCRegClass:
++        setCCReg(idx, *(RegVal *)val);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void *
++ThreadContext::getWritableReg(const RegId &reg)
++{
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case VecRegClass:
++        return &getWritableVecReg(reg);
++      case VecPredRegClass:
++        return &getWritableVecPredReg(reg);
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++RegVal
++ThreadContext::getRegFlat(const RegId &reg) const
++{
++    RegVal val;
++    getRegFlat(reg, &val);
++    return val;
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, RegVal val)
++{
++    setRegFlat(reg, &val);
++}
++
++void
++ThreadContext::getRegFlat(const RegId &reg, void *val) const
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        *(RegVal *)val = readIntRegFlat(idx);
++        break;
++      case FloatRegClass:
++        *(RegVal *)val = readFloatRegFlat(idx);
++        break;
++      case VecRegClass:
++        *(ArmISA::VecRegContainer *)val = readVecRegFlat(idx);
++        break;
++      case VecElemClass:
++        *(RegVal *)val = readVecElemFlat(idx);
++        break;
++      case VecPredRegClass:
++        *(ArmISA::VecPredRegContainer *)val = readVecPredRegFlat(idx);
++        break;
++      case CCRegClass:
++        *(RegVal *)val = readCCRegFlat(idx);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, const void *val)
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        setIntRegFlat(idx, *(RegVal *)val);
++        break;
++      case FloatRegClass:
++        setFloatRegFlat(idx, *(RegVal *)val);
++        break;
++      case VecRegClass:
++        setVecRegFlat(idx, *(ArmISA::VecRegContainer *)val);
++        break;
++      case VecElemClass:
++        setVecElemFlat(idx, *(RegVal *)val);
++        break;
++      case VecPredRegClass:
++        setVecPredRegFlat(idx, *(ArmISA::VecPredRegContainer *)val);
++        break;
++      case CCRegClass:
++        setCCRegFlat(idx, *(RegVal *)val);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void *
++ThreadContext::getWritableRegFlat(const RegId &reg)
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case VecRegClass:
++        return &getWritableVecRegFlat(idx);
++      case VecPredRegClass:
++        return &getWritableVecPredRegFlat(idx);
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++RegVal
+ ThreadContext::readIntReg(RegIndex reg_idx) const
+ {
+     ArmISA::CPSR cpsr = readMiscRegNoEffect(ArmISA::MISCREG_CPSR);
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.hh b/src/arch/arm/fastmodel/iris/thread_context.hh
+index dcf9a4a..ccc6a4a 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.hh
++++ b/src/arch/arm/fastmodel/iris/thread_context.hh
+@@ -279,6 +279,13 @@ class ThreadContext : public gem5::ThreadContext
+     //
+     // New accessors for new decoder.
+     //
++    RegVal getReg(const RegId &reg) const override;
++    void getReg(const RegId &reg, void *val) const override;
++    void *getWritableReg(const RegId &reg) override;
++
++    void setReg(const RegId &reg, RegVal val) override;
++    void setReg(const RegId &reg, const void *val) override;
++
+     RegVal readIntReg(RegIndex reg_idx) const override;
+ 
+     RegVal
+@@ -398,6 +405,13 @@ class ThreadContext : public gem5::ThreadContext
+      * serialization code to access all registers.
+      */
+ 
++    RegVal getRegFlat(const RegId &reg) const override;
++    void getRegFlat(const RegId &reg, void *val) const override;
++    void *getWritableRegFlat(const RegId &reg) override;
++
++    void setRegFlat(const RegId &reg, RegVal val) override;
++    void setRegFlat(const RegId &reg, const void *val) override;
++
+     RegVal readIntRegFlat(RegIndex idx) const override;
+     void setIntRegFlat(RegIndex idx, uint64_t val) override;
+ 
+-- 
+1.8.3.1
+

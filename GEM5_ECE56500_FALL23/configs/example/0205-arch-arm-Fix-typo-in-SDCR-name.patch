@@ -1,0 +1,34 @@
+From 886339e927a4dbe50ef2f0d6a1a6512bdab1be3c Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 2 Feb 2022 21:08:51 +0000
+Subject: [PATCH 205/757] arch-arm: Fix typo in SDCR name
+
+SDRC -> SDCR
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Ib7fce528dbfcb7de2cac73b134cf05e78a186762
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56427
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.hh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/regs/misc.hh b/src/arch/arm/regs/misc.hh
+index b70e3fe..0966a93 100644
+--- a/src/arch/arm/regs/misc.hh
++++ b/src/arch/arm/regs/misc.hh
+@@ -1392,7 +1392,7 @@ namespace ArmISA
+         "actlr_ns",
+         "actlr_s",
+         "cpacr",
+-        "sdrc",
++        "sdcr",
+         "scr",
+         "sder",
+         "nsacr",
+-- 
+1.8.3.1
+

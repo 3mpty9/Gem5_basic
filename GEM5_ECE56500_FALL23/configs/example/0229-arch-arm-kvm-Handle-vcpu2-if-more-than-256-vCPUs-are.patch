@@ -1,0 +1,72 @@
+From 6cf0e0bcc263f9691ea2d68e087344bab47b9eb4 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 25 Jan 2022 16:17:41 +0000
+Subject: [PATCH 229/757] arch-arm, kvm: Handle vcpu2 if more than 256 vCPUs
+ are in use
+
+According to KVM Docs [1]:
+
+"When KVM_CAP_ARM_IRQ_LINE_LAYOUT_2 is supported, the target vcpu is
+identified as (256 * vcpu2_index + vcpu_index). Otherwise, vcpu2_index
+must be zero."
+
+The vcpu parameter from the setIntState method is populated with
+the gem5 context identifier (ContextID) of a specific PE.
+It is not contrained by the 256 vcpu limit, so it can already specify
+more than 256 vcpus. We therefore just need to translate/unpack the
+value in two indices (vcpu and vcpu2) which will be forwarded to KVM
+when raising an IRQ from userspace.
+
+We guard the vcpu2 retrieval with a hash define as this is a late
+addition and some older kernels do not define this capability (4.15 as
+an example).
+
+[1]: https://www.kernel.org/doc/html/latest/virt/kvm/api.html
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: If0c475dc4a573337edd053020920e9b109d13991
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55964
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index 8d60255..f5e5b4e 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -91,12 +91,27 @@ void
+ KvmKernelGic::setIntState(unsigned type, unsigned vcpu, unsigned irq,
+                           bool high)
+ {
++    const unsigned vcpu_index = vcpu & 0xff;
++    const unsigned vcpu2_index = (vcpu >> 8) & 0xff;
++
++#if defined(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2) && defined(KVM_ARM_IRQ_VCPU2_SHIFT)
++    static const bool vcpu2_enabled = vm.checkExtension(
++        KVM_CAP_ARM_IRQ_LINE_LAYOUT_2);
++    uint32_t kvm_vcpu = (vcpu2_index << KVM_ARM_IRQ_VCPU2_SHIFT) |
++                        (vcpu_index << KVM_ARM_IRQ_VCPU_SHIFT);
++#else
++    static const bool vcpu2_enabled = false;
++    uint32_t kvm_vcpu = (vcpu_index << KVM_ARM_IRQ_VCPU_SHIFT);
++#endif
++
++    panic_if((!vcpu2_enabled && vcpu2_index) || kvm_vcpu > 0xffff,
++              "VCPU out of range");
++
+     assert(type <= KVM_ARM_IRQ_TYPE_MASK);
+-    assert(vcpu <= KVM_ARM_IRQ_VCPU_MASK);
+     assert(irq <= KVM_ARM_IRQ_NUM_MASK);
+     const uint32_t line(
++        kvm_vcpu |
+         (type << KVM_ARM_IRQ_TYPE_SHIFT) |
+-        (vcpu << KVM_ARM_IRQ_VCPU_SHIFT) |
+         (irq << KVM_ARM_IRQ_NUM_SHIFT));
+ 
+     vm.setIRQLine(line, high);
+-- 
+1.8.3.1
+

@@ -1,0 +1,38 @@
+From 8d11bc31b5fa6e59eba5fcbd2c3727086bd088b9 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 6 Jun 2022 15:57:37 -0700
+Subject: [PATCH 694/757] arch-arm: Fix dangling pointer to unnamed temporary
+ in nativetrace.cc.
+
+Name the temporary.
+
+Change-Id: I51d0eaa4a6759c3f288b4215db880af6135e9107
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60409
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/nativetrace.cc | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/arm/nativetrace.cc b/src/arch/arm/nativetrace.cc
+index 8d0313a..ca3f0c4 100644
+--- a/src/arch/arm/nativetrace.cc
++++ b/src/arch/arm/nativetrace.cc
+@@ -128,9 +128,10 @@ Trace::ArmNativeTrace::ThreadState::update(ThreadContext *tc)
+     changed[STATE_CPSR] = (newState[STATE_CPSR] != oldState[STATE_CPSR]);
+ 
+     for (int i = 0; i < NumVecV7ArchRegs; i++) {
+-        auto *vec = tc->readVecReg(RegId(VecRegClass,i)).as<uint64_t>();
+-        newState[STATE_F0 + 2*i] = vec[0];
+-        newState[STATE_F0 + 2*i + 1] = vec[1];
++        auto vec = tc->readVecReg(RegId(VecRegClass,i));
++        auto *arr = vec.as<uint64_t>();
++        newState[STATE_F0 + 2*i] = arr[0];
++        newState[STATE_F0 + 2*i + 1] = arr[1];
+     }
+     newState[STATE_FPSCR] = tc->readMiscRegNoEffect(MISCREG_FPSCR) |
+                             tc->readCCReg(CCREG_FP);
+-- 
+1.8.3.1
+

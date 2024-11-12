@@ -1,0 +1,35 @@
+From 2a424850d5a1285d873794cc2a391382fe1b5c98 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 17 Jan 2022 00:27:52 -0800
+Subject: [PATCH 293/757] arch-x86: Don't load past the end of the far pointer
+ in real mode jmp.
+
+When loading the segment selector from the far pointer, only load two
+bytes to avoid unnecessarily going beyond a boundary where accesses may
+not be allowed.
+
+Change-Id: I4fc31e3f87815a19232390966c25d156be6a7e92
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55624
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+index c747c96..77c6968 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+@@ -151,7 +151,7 @@ def macroop JMP_FAR_REAL_M
+     .control_indirect
+ 
+     lea t1, seg, sib, disp, dataSize=asz
+-    ld t2, seg, [1, t0, t1], dsz
++    ld t2, seg, [1, t0, t1], dsz, dataSize=2
+     ld t1, seg, [1, t0, t1]
+     zexti t3, t2, 15, dataSize=8
+     slli t3, t3, 4, dataSize=8
+-- 
+1.8.3.1
+

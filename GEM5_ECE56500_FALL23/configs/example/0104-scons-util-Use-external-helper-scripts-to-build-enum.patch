@@ -1,0 +1,221 @@
+From a8d7a41f9f65c3fb7cdd1500d8feebec5414d788 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 18 Aug 2021 02:27:04 -0700
+Subject: [PATCH 104/757] scons,util: Use external helper scripts to build enum
+ hhs and ccs.
+
+Change-Id: Id5cfca9ca7848394baff39c76a4ed0edbec61573
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49426
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/enum_cc.py | 54 +++++++++++++++++++++++++++++++++++++++++
+ build_tools/enum_hh.py | 50 ++++++++++++++++++++++++++++++++++++++
+ src/SConscript         | 65 ++++++++++++++++++++------------------------------
+ 3 files changed, 130 insertions(+), 39 deletions(-)
+ create mode 100644 build_tools/enum_cc.py
+ create mode 100644 build_tools/enum_hh.py
+
+diff --git a/build_tools/enum_cc.py b/build_tools/enum_cc.py
+new file mode 100644
+index 0000000..4a6cda0
+--- /dev/null
++++ b/build_tools/enum_cc.py
+@@ -0,0 +1,54 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import argparse
++import importlib
++import os.path
++import sys
++
++import importer
++
++from code_formatter import code_formatter
++
++parser = argparse.ArgumentParser()
++parser.add_argument('modpath', help='module the enum belongs to')
++parser.add_argument('enum_cc', help='enum cc file to generate')
++parser.add_argument('--use-python', action="store_true",
++        help='python is enabled in gem5')
++
++args = parser.parse_args()
++
++basename = os.path.basename(args.enum_cc)
++enum_name = os.path.splitext(basename)[0]
++
++importer.install()
++module = importlib.import_module(args.modpath)
++enum = getattr(module, enum_name)
++
++code = code_formatter()
++enum.cxx_def(code)
++if args.use_python:
++    enum.pybind_def(code)
++code.write(args.enum_cc)
+diff --git a/build_tools/enum_hh.py b/build_tools/enum_hh.py
+new file mode 100644
+index 0000000..53eaf85
+--- /dev/null
++++ b/build_tools/enum_hh.py
+@@ -0,0 +1,50 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import argparse
++import importlib
++import os.path
++import sys
++
++import importer
++
++from code_formatter import code_formatter
++
++parser = argparse.ArgumentParser()
++parser.add_argument('modpath', help='module the enum belongs to')
++parser.add_argument('enum_hh', help='enum header file to generate')
++
++args = parser.parse_args()
++
++basename = os.path.basename(args.enum_hh)
++enum_name = os.path.splitext(basename)[0]
++
++importer.install()
++module = importlib.import_module(args.modpath)
++enum = getattr(module, enum_name)
++
++code = code_formatter()
++enum.cxx_decl(code)
++code.write(args.enum_hh)
+diff --git a/src/SConscript b/src/SConscript
+index e40262a..bd4d630 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -731,7 +731,7 @@ if GetOption('with_cxx_config'):
+                     Transform("CXXCPRCC")))
+         env.Depends(cxx_config_hh_file, depends + extra_deps)
+         env.Depends(cxx_config_cc_file, depends + extra_deps)
+-        Source(cxx_config_cc_file)
++        Source(cxx_config_cc_file, add_tags='python')
+ 
+     cxx_config_init_cc_file = File('cxx_config/init.cc')
+ 
+@@ -766,44 +766,31 @@ if GetOption('with_cxx_config'):
+         MakeAction(createCxxConfigInitCC, Transform("CXXCINIT")))
+     Source(cxx_config_init_cc_file)
+ 
+-# Generate all enum header files
+-def createEnumStrings(target, source, env):
+-    assert len(target) == 1 and len(source) == 2
+-
+-    name = source[0].get_text_contents()
+-    use_python = source[1].read()
+-    obj = all_enums[name]
+-
+-    code = code_formatter()
+-    obj.cxx_def(code)
+-    if use_python:
+-        obj.pybind_def(code)
+-    code.write(target[0].abspath)
+-
+-def createEnumDecls(target, source, env):
+-    assert len(target) == 1 and len(source) == 1
+-
+-    name = source[0].get_text_contents()
+-    obj = all_enums[name]
+-
+-    code = code_formatter()
+-    obj.cxx_decl(code)
+-    code.write(target[0].abspath)
+-
+-for name,enum in sorted(all_enums.items()):
+-    py_source = PySource.modules[enum.__module__]
+-    extra_deps = [ py_source.tnode ]
+-
+-    cc_file = File('enums/%s.cc' % name)
+-    env.Command(cc_file, [Value(name), Value(env['USE_PYTHON'])],
+-                MakeAction(createEnumStrings, Transform("ENUM STR")))
+-    env.Depends(cc_file, depends + extra_deps)
+-    Source(cc_file)
+-
+-    hh_file = File('enums/%s.hh' % name)
+-    env.Command(hh_file, Value(name),
+-                MakeAction(createEnumDecls, Transform("ENUMDECL")))
+-    env.Depends(hh_file, depends + extra_deps)
++# C++ versions of enum params.
++for module, enums in sorted(SimObject.enums.items()):
++    tags = SimObject.tags[module]
++    for enum in enums:
++        gem5py_env.Command([ "${ENUM_HH}" ],
++                [ Value(module), Value(enum), "${GEM5PY_M5}", "${ENUMHH_PY}" ],
++                MakeAction('"${GEM5PY_M5}" "${ENUMHH_PY}" "${MODULE}" ' \
++                        '"${ENUM_HH}"',
++                    Transform("ENUMDECL", 2)),
++                MODULE=module,
++                ENUM=enum,
++                ENUM_HH=File(f'enums/{enum}.hh'),
++                ENUMHH_PY=build_tools.File('enum_hh.py'))
++        cc_file = File(f'enums/{enum}.cc')
++        gem5py_env.Command([ "${ENUM_CC}" ],
++                [ Value(module), Value(enum), "${GEM5PY_M5}", "${ENUMCC_PY}" ],
++                MakeAction('"${GEM5PY_M5}" "${ENUMCC_PY}" "${MODULE}" ' \
++                        '"${ENUM_CC}" "${USE_PYTHON}"',
++                    Transform("ENUM STR", 2)),
++                MODULE=module,
++                ENUM=enum,
++                ENUM_CC=cc_file,
++                ENUMCC_PY=build_tools.File('enum_cc.py'),
++                USE_PYTHON='--use-python' if env['USE_PYTHON'] else '')
++        Source(cc_file, tags=tags, add_tags='python')
+ 
+ 
+ # version tags
+-- 
+1.8.3.1
+

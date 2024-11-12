@@ -1,0 +1,56 @@
+From 0255d5ea51c1992aabeaefb4ed495c368fc8a147 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 14 Mar 2022 17:08:13 -0500
+Subject: [PATCH 480/757] dev-amdgpu: Handle framebuffer reads from device
+ cache
+
+Reads to the frame buffer are currently handled by either the MMIO trace
+or from the GART table if the address is in the GART aperture. In some
+cases the MMIO trace will not contain the address or the data may have
+been written previously and be different from the MMIO trace. To handle
+this, return the data that was written previously by the driver. The
+priority order from lowest to highest is: MMIO trace, device cache,
+special framebuffer registers.
+
+Change-Id: Ia45ae19555508fcd780926fedbd7a65c3d294727
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57589
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_device.cc | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 6714908..3c5b179 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -179,8 +179,14 @@ AMDGPUDevice::readFrame(PacketPtr pkt, Addr offset)
+ {
+     DPRINTF(AMDGPUDevice, "Read framebuffer address %#lx\n", offset);
+ 
++    /* Try MMIO trace for frame writes first. */
+     mmioReader.readFromTrace(pkt, FRAMEBUFFER_BAR, offset);
+ 
++    /* If the driver wrote something, use that value over the trace. */
++    if (frame_regs.find(offset) != frame_regs.end()) {
++        pkt->setUintX(frame_regs[offset], ByteOrder::little);
++    }
++
+     /* Handle special counter addresses in framebuffer. */
+     if (offset == 0xa28000) {
+         /* Counter addresses expect the read to return previous value + 1. */
+@@ -247,8 +253,9 @@ AMDGPUDevice::writeFrame(PacketPtr pkt, Addr offset)
+     Addr aperture_offset = offset - aperture;
+ 
+     // Record the value
+-    frame_regs[aperture_offset] = pkt->getLE<uint32_t>();
++    frame_regs[offset] = pkt->getLE<uint32_t>();
+     if (aperture == gpuvm.gartBase()) {
++        frame_regs[aperture_offset] = pkt->getLE<uint32_t>();
+         DPRINTF(AMDGPUDevice, "GART translation %p -> %p\n", aperture_offset,
+             bits(frame_regs[aperture_offset], 48, 12));
+         gpuvm.gartTable[aperture_offset] = pkt->getLE<uint32_t>();
+-- 
+1.8.3.1
+

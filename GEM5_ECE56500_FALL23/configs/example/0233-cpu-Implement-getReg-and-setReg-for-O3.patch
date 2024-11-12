@@ -1,0 +1,502 @@
+From 3ca13734ac95dca9a3fbd7761caab41ac55cfadf Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 03:54:09 -0700
+Subject: [PATCH 233/757] cpu: Implement getReg and setReg for O3.
+
+Change-Id: I3f0bf1e75a5191be98c79fede5aad854a920e9c9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49109
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/cpu/o3/cpu.cc            | 155 +++++++++++++++++++++++++++++++++++++++++++
+ src/cpu/o3/cpu.hh            |  14 ++++
+ src/cpu/o3/regfile.hh        | 151 +++++++++++++++++++++++++++++++++++++++++
+ src/cpu/o3/thread_context.cc |  32 +++++++++
+ src/cpu/o3/thread_context.hh |   7 ++
+ src/cpu/regfile.hh           |  26 ++++++++
+ 6 files changed, 385 insertions(+)
+
+diff --git a/src/cpu/o3/cpu.cc b/src/cpu/o3/cpu.cc
+index e05ea92..1f0b666 100644
+--- a/src/cpu/o3/cpu.cc
++++ b/src/cpu/o3/cpu.cc
+@@ -1086,6 +1086,36 @@ CPU::setMiscReg(int misc_reg, RegVal val, ThreadID tid)
+ }
+ 
+ RegVal
++CPU::getReg(PhysRegIdPtr phys_reg)
++{
++    return regFile.getReg(phys_reg);
++}
++
++void
++CPU::getReg(PhysRegIdPtr phys_reg, void *val)
++{
++    regFile.getReg(phys_reg, val);
++}
++
++void *
++CPU::getWritableReg(PhysRegIdPtr phys_reg)
++{
++    return regFile.getWritableReg(phys_reg);
++}
++
++void
++CPU::setReg(PhysRegIdPtr phys_reg, RegVal val)
++{
++    regFile.setReg(phys_reg, val);
++}
++
++void
++CPU::setReg(PhysRegIdPtr phys_reg, const void *val)
++{
++    regFile.setReg(phys_reg, val);
++}
++
++RegVal
+ CPU::readIntReg(PhysRegIdPtr phys_reg)
+ {
+     cpuStats.intRegfileReads++;
+@@ -1185,6 +1215,131 @@ CPU::setCCReg(PhysRegIdPtr phys_reg, RegVal val)
+ }
+ 
+ RegVal
++CPU::getArchReg(const RegId &reg, ThreadID tid)
++{
++    switch (reg.classValue()) {
++      case IntRegClass:
++        cpuStats.intRegfileReads++;
++        break;
++      case FloatRegClass:
++        cpuStats.fpRegfileReads++;
++        break;
++      case CCRegClass:
++        cpuStats.ccRegfileReads++;
++        break;
++      case VecRegClass:
++      case VecElemClass:
++        cpuStats.vecRegfileReads++;
++        break;
++      case VecPredRegClass:
++        cpuStats.vecPredRegfileReads++;
++        break;
++      default:
++        break;
++    }
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    return getReg(phys_reg);
++}
++
++void
++CPU::getArchReg(const RegId &reg, void *val, ThreadID tid)
++{
++    switch (reg.classValue()) {
++      case IntRegClass:
++        cpuStats.intRegfileReads++;
++        break;
++      case FloatRegClass:
++        cpuStats.fpRegfileReads++;
++        break;
++      case CCRegClass:
++        cpuStats.ccRegfileReads++;
++        break;
++      case VecRegClass:
++      case VecElemClass:
++        cpuStats.vecRegfileReads++;
++        break;
++      case VecPredRegClass:
++        cpuStats.vecPredRegfileReads++;
++        break;
++      default:
++        break;
++    }
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    getReg(phys_reg, val);
++}
++
++void *
++CPU::getWritableArchReg(const RegId &reg, ThreadID tid)
++{
++    switch (reg.classValue()) {
++      case VecRegClass:
++        cpuStats.vecRegfileReads++;
++        break;
++      case VecPredRegClass:
++        cpuStats.vecPredRegfileReads++;
++        break;
++      default:
++        break;
++    }
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    return getWritableReg(phys_reg);
++}
++
++void
++CPU::setArchReg(const RegId &reg, RegVal val, ThreadID tid)
++{
++    switch (reg.classValue()) {
++      case IntRegClass:
++        cpuStats.intRegfileWrites++;
++        break;
++      case FloatRegClass:
++        cpuStats.fpRegfileWrites++;
++        break;
++      case CCRegClass:
++        cpuStats.ccRegfileWrites++;
++        break;
++      case VecRegClass:
++      case VecElemClass:
++        cpuStats.vecRegfileWrites++;
++        break;
++      case VecPredRegClass:
++        cpuStats.vecPredRegfileWrites++;
++        break;
++      default:
++        break;
++    }
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    setReg(phys_reg, val);
++}
++
++void
++CPU::setArchReg(const RegId &reg, const void *val, ThreadID tid)
++{
++    switch (reg.classValue()) {
++      case IntRegClass:
++        cpuStats.intRegfileWrites++;
++        break;
++      case FloatRegClass:
++        cpuStats.fpRegfileWrites++;
++        break;
++      case CCRegClass:
++        cpuStats.ccRegfileWrites++;
++        break;
++      case VecRegClass:
++      case VecElemClass:
++        cpuStats.vecRegfileWrites++;
++        break;
++      case VecPredRegClass:
++        cpuStats.vecPredRegfileWrites++;
++        break;
++      default:
++        break;
++    }
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    setReg(phys_reg, val);
++}
++
++RegVal
+ CPU::readArchIntReg(int reg_idx, ThreadID tid)
+ {
+     PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+diff --git a/src/cpu/o3/cpu.hh b/src/cpu/o3/cpu.hh
+index 3fab0cb..5dd310f 100644
+--- a/src/cpu/o3/cpu.hh
++++ b/src/cpu/o3/cpu.hh
+@@ -311,6 +311,13 @@ class CPU : public BaseCPU
+      */
+     void setMiscReg(int misc_reg, RegVal val, ThreadID tid);
+ 
++    RegVal getReg(PhysRegIdPtr phys_reg);
++    void getReg(PhysRegIdPtr phys_reg, void *val);
++    void *getWritableReg(PhysRegIdPtr phys_reg);
++
++    void setReg(PhysRegIdPtr phys_reg, RegVal val);
++    void setReg(PhysRegIdPtr phys_reg, const void *val);
++
+     RegVal readIntReg(PhysRegIdPtr phys_reg);
+ 
+     RegVal readFloatReg(PhysRegIdPtr phys_reg);
+@@ -344,6 +351,13 @@ class CPU : public BaseCPU
+ 
+     void setCCReg(PhysRegIdPtr phys_reg, RegVal val);
+ 
++    RegVal getArchReg(const RegId &reg, ThreadID tid);
++    void getArchReg(const RegId &reg, void *val, ThreadID tid);
++    void *getWritableArchReg(const RegId &reg, ThreadID tid);
++
++    void setArchReg(const RegId &reg, RegVal val, ThreadID tid);
++    void setArchReg(const RegId &reg, const void *val, ThreadID tid);
++
+     RegVal readArchIntReg(int reg_idx, ThreadID tid);
+ 
+     RegVal readArchFloatReg(int reg_idx, ThreadID tid);
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index cffa382..0ee321e 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -42,6 +42,7 @@
+ #ifndef __CPU_O3_REGFILE_HH__
+ #define __CPU_O3_REGFILE_HH__
+ 
++#include <cstring>
+ #include <vector>
+ 
+ #include "arch/generic/isa.hh"
+@@ -177,6 +178,156 @@ class PhysRegFile
+         return &miscRegIds[reg_idx];
+     }
+ 
++    RegVal
++    getReg(PhysRegIdPtr phys_reg) const
++    {
++        const RegClassType type = phys_reg->classValue();
++        const RegIndex idx = phys_reg->index();
++
++        RegVal val;
++        switch (type) {
++          case IntRegClass:
++            val = intRegFile.reg(idx);
++            DPRINTF(IEW, "RegFile: Access to int register %i, has data %#x\n",
++                    idx, val);
++            return val;
++          case FloatRegClass:
++            val = floatRegFile.reg(idx);
++            DPRINTF(IEW, "RegFile: Access to float register %i has data %#x\n",
++                    idx, val);
++            return val;
++          case VecElemClass:
++            val = vectorElemRegFile.reg(idx);
++            DPRINTF(IEW, "RegFile: Access to vector element register %i "
++                    "has data %#x\n", idx, val);
++            return val;
++          case CCRegClass:
++            val = ccRegFile.reg(idx);
++            DPRINTF(IEW, "RegFile: Access to cc register %i has data %#x\n",
++                    idx, val);
++            return val;
++          default:
++            panic("Unsupported register class type %d.", type);
++        }
++    }
++
++    void
++    getReg(PhysRegIdPtr phys_reg, void *val) const
++    {
++        const RegClassType type = phys_reg->classValue();
++        const RegIndex idx = phys_reg->index();
++
++        switch (type) {
++          case IntRegClass:
++            *(RegVal *)val = getReg(phys_reg);
++            break;
++          case FloatRegClass:
++            *(RegVal *)val = getReg(phys_reg);
++            break;
++          case VecRegClass:
++            vectorRegFile.get(idx, val);
++            DPRINTF(IEW, "RegFile: Access to vector register %i, has "
++                    "data %s\n", idx, *(TheISA::VecRegContainer *)val);
++            break;
++          case VecElemClass:
++            *(RegVal *)val = getReg(phys_reg);
++            break;
++          case VecPredRegClass:
++            vecPredRegFile.get(idx, val);
++            DPRINTF(IEW, "RegFile: Access to predicate register %i, has "
++                    "data %s\n", idx, *(TheISA::VecRegContainer *)val);
++            break;
++          case CCRegClass:
++            *(RegVal *)val = getReg(phys_reg);
++            break;
++          default:
++            panic("Unrecognized register class type %d.", type);
++        }
++    }
++
++    void *
++    getWritableReg(PhysRegIdPtr phys_reg)
++    {
++        const RegClassType type = phys_reg->classValue();
++        const RegIndex idx = phys_reg->index();
++
++        switch (type) {
++          case VecRegClass:
++            return vectorRegFile.ptr(idx);
++          case VecPredRegClass:
++            return vecPredRegFile.ptr(idx);
++          default:
++            panic("Unrecognized register class type %d.", type);
++        }
++    }
++
++    void
++    setReg(PhysRegIdPtr phys_reg, RegVal val)
++    {
++        const RegClassType type = phys_reg->classValue();
++        const RegIndex idx = phys_reg->index();
++
++        switch (type) {
++          case IntRegClass:
++            if (phys_reg->index() != zeroReg.index())
++                intRegFile.reg(idx) = val;
++            DPRINTF(IEW, "RegFile: Setting int register %i to %#x\n",
++                    idx, val);
++            break;
++          case FloatRegClass:
++            floatRegFile.reg(idx) = val;
++            DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
++                    idx, val);
++            break;
++          case VecElemClass:
++            vectorElemRegFile.reg(idx) = val;
++            DPRINTF(IEW, "RegFile: Setting vector element register %i to "
++                    "%#x\n", idx, val);
++            break;
++          case CCRegClass:
++            ccRegFile.reg(idx) = val;
++            DPRINTF(IEW, "RegFile: Setting cc register %i to %#x\n",
++                    idx, val);
++            break;
++          default:
++            panic("Unsupported register class type %d.", type);
++        }
++    }
++
++    void
++    setReg(PhysRegIdPtr phys_reg, const void *val)
++    {
++        const RegClassType type = phys_reg->classValue();
++        const RegIndex idx = phys_reg->index();
++
++        switch (type) {
++          case IntRegClass:
++            setReg(phys_reg, *(RegVal *)val);
++            break;
++          case FloatRegClass:
++            setReg(phys_reg, *(RegVal *)val);
++            break;
++          case VecRegClass:
++            DPRINTF(IEW, "RegFile: Setting vector register %i to %s\n",
++                    idx, *(TheISA::VecRegContainer *)val);
++            vectorRegFile.set(idx, val);
++            break;
++          case VecElemClass:
++            setReg(phys_reg, *(RegVal *)val);
++            break;
++          case VecPredRegClass:
++            DPRINTF(IEW, "RegFile: Setting predicate register %i to %s\n",
++                    idx, *(TheISA::VecRegContainer *)val);
++            vecPredRegFile.set(idx, val);
++            break;
++          case CCRegClass:
++            setReg(phys_reg, *(RegVal *)val);
++            break;
++          default:
++            panic("Unrecognized register class type %d.", type);
++        }
++    }
++
+     /** Reads an integer register. */
+     RegVal
+     readIntReg(PhysRegIdPtr phys_reg) const
+diff --git a/src/cpu/o3/thread_context.cc b/src/cpu/o3/thread_context.cc
+index c22229f..dda0f04 100644
+--- a/src/cpu/o3/thread_context.cc
++++ b/src/cpu/o3/thread_context.cc
+@@ -197,6 +197,38 @@ ThreadContext::readCCRegFlat(RegIndex reg_idx) const
+     return cpu->readArchCCReg(reg_idx, thread->threadId());
+ }
+ 
++RegVal
++ThreadContext::getRegFlat(const RegId &reg) const
++{
++    return cpu->getArchReg(reg, thread->threadId());
++}
++
++void *
++ThreadContext::getWritableRegFlat(const RegId &reg)
++{
++    return cpu->getWritableArchReg(reg, thread->threadId());
++}
++
++void
++ThreadContext::getRegFlat(const RegId &reg, void *val) const
++{
++    cpu->getArchReg(reg, val, thread->threadId());
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, RegVal val)
++{
++    cpu->setArchReg(reg, val, thread->threadId());
++    conditionalSquash();
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, const void *val)
++{
++    cpu->setArchReg(reg, val, thread->threadId());
++    conditionalSquash();
++}
++
+ void
+ ThreadContext::setIntRegFlat(RegIndex reg_idx, RegVal val)
+ {
+diff --git a/src/cpu/o3/thread_context.hh b/src/cpu/o3/thread_context.hh
+index 86149ee..605f4cc 100644
+--- a/src/cpu/o3/thread_context.hh
++++ b/src/cpu/o3/thread_context.hh
+@@ -333,6 +333,13 @@ class ThreadContext : public gem5::ThreadContext
+             cpu->squashFromTC(thread->threadId());
+     }
+ 
++    RegVal getRegFlat(const RegId &reg) const override;
++    void getRegFlat(const RegId &reg, void *val) const override;
++    void *getWritableRegFlat(const RegId &reg) override;
++
++    void setRegFlat(const RegId &reg, RegVal val) override;
++    void setRegFlat(const RegId &reg, const void *val) override;
++
+     RegVal readIntRegFlat(RegIndex idx) const override;
+     void setIntRegFlat(RegIndex idx, RegVal val) override;
+ 
+diff --git a/src/cpu/regfile.hh b/src/cpu/regfile.hh
+index 22a15d6..42fe59c 100644
+--- a/src/cpu/regfile.hh
++++ b/src/cpu/regfile.hh
+@@ -28,7 +28,9 @@
+ #ifndef __CPU_REGFILE_HH__
+ #define __CPU_REGFILE_HH__
+ 
++#include <algorithm>
+ #include <cassert>
++#include <cstring>
+ #include <vector>
+ 
+ #include "cpu/reg_class.hh"
+@@ -72,6 +74,30 @@ class RegFile
+                 data.data() + (idx << _regShift));
+     }
+ 
++    void *
++    ptr(size_t idx)
++    {
++        return data.data() + (idx << _regShift);
++    }
++
++    const void *
++    ptr(size_t idx) const
++    {
++        return data.data() + (idx << _regShift);
++    }
++
++    void
++    get(size_t idx, void *val) const
++    {
++        std::memcpy(val, ptr(idx), _regBytes);
++    }
++
++    void
++    set(size_t idx, const void *val)
++    {
++        std::memcpy(ptr(idx), val, _regBytes);
++    }
++
+     void clear() { std::fill(data.begin(), data.end(), 0); }
+ };
+ 
+-- 
+1.8.3.1
+

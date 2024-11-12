@@ -1,0 +1,130 @@
+From e55ae49e96fd02498787a1df8bc1d6ad94ad46ae Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 20 Jan 2022 22:21:56 -0800
+Subject: [PATCH 364/757] arch-x86: Use inline initializers for members of
+ Interrupts.
+
+Use initializers within the body of the Interrupts class, instead of
+listing them in the constructor.
+
+Change-Id: Ia33aa77066cedabcc1c3610fefac653ff2f56f6c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55693
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/interrupts.cc |  9 ---------
+ src/arch/x86/interrupts.hh | 38 +++++++++++++++++++-------------------
+ 2 files changed, 19 insertions(+), 28 deletions(-)
+
+diff --git a/src/arch/x86/interrupts.cc b/src/arch/x86/interrupts.cc
+index 47db3da..c2ee1bc 100644
+--- a/src/arch/x86/interrupts.cc
++++ b/src/arch/x86/interrupts.cc
+@@ -600,13 +600,6 @@ X86ISA::Interrupts::setReg(ApicRegIndex reg, uint32_t val)
+ X86ISA::Interrupts::Interrupts(const Params &p)
+     : BaseInterrupts(p), sys(p.system), clockDomain(*p.clk_domain),
+       apicTimerEvent([this]{ processApicTimerEvent(); }, name()),
+-      pendingSmi(false), smiVector(0),
+-      pendingNmi(false), nmiVector(0),
+-      pendingExtInt(false), extIntVector(0),
+-      pendingInit(false), initVector(0),
+-      pendingStartup(false), startupVector(0),
+-      startedUp(false), pendingUnmaskableInt(false),
+-      pendingIPIs(0),
+       intResponsePort(name() + ".int_responder", this, this),
+       intRequestPort(name() + ".int_requestor", this, this, p.int_latency),
+       pioPort(this), pioDelay(p.pio_latency)
+@@ -614,8 +607,6 @@ X86ISA::Interrupts::Interrupts(const Params &p)
+     memset(regs, 0, sizeof(regs));
+     //Set the local apic DFR to the flat model.
+     regs[APIC_DESTINATION_FORMAT] = (uint32_t)(-1);
+-    ISRV = 0;
+-    IRRV = 0;
+ 
+     // At reset, all LVT entries start out zeroed, except for their mask bit.
+     LVTEntry masked = 0;
+diff --git a/src/arch/x86/interrupts.hh b/src/arch/x86/interrupts.hh
+index 7557b22..52fe475 100644
+--- a/src/arch/x86/interrupts.hh
++++ b/src/arch/x86/interrupts.hh
+@@ -77,11 +77,11 @@ ApicRegIndex decodeAddr(Addr paddr);
+ class Interrupts : public BaseInterrupts
+ {
+   protected:
+-    System *sys;
++    System *sys = nullptr;
+     ClockDomain &clockDomain;
+ 
+     // Storage for the APIC registers
+-    uint32_t regs[NUM_APIC_REGS];
++    uint32_t regs[NUM_APIC_REGS] = {};
+ 
+     BitUnion32(LVTEntry)
+         Bitfield<7, 0> vector;
+@@ -104,29 +104,29 @@ class Interrupts : public BaseInterrupts
+      * A set of variables to keep track of interrupts that don't go through
+      * the IRR.
+      */
+-    bool pendingSmi;
+-    uint8_t smiVector;
+-    bool pendingNmi;
+-    uint8_t nmiVector;
+-    bool pendingExtInt;
+-    uint8_t extIntVector;
+-    bool pendingInit;
+-    uint8_t initVector;
+-    bool pendingStartup;
+-    uint8_t startupVector;
+-    bool startedUp;
++    bool pendingSmi = false;
++    uint8_t smiVector = 0;
++    bool pendingNmi = false;
++    uint8_t nmiVector = 0;
++    bool pendingExtInt = false;
++    uint8_t extIntVector = 0;
++    bool pendingInit = false;
++    uint8_t initVector = 0;
++    bool pendingStartup = false;
++    uint8_t startupVector = 0;
++    bool startedUp = false;
+ 
+     // This is a quick check whether any of the above (except ExtInt) are set.
+-    bool pendingUnmaskableInt;
++    bool pendingUnmaskableInt = false;
+ 
+     // A count of how many IPIs are in flight.
+-    int pendingIPIs;
++    int pendingIPIs = 0;
+ 
+     /*
+      * IRR and ISR maintenance.
+      */
+-    uint8_t IRRV;
+-    uint8_t ISRV;
++    uint8_t IRRV = 0;
++    uint8_t ISRV = 0;
+ 
+     int
+     findRegArrayMSB(ApicRegIndex base)
+@@ -174,7 +174,7 @@ class Interrupts : public BaseInterrupts
+ 
+     void requestInterrupt(uint8_t vector, uint8_t deliveryMode, bool level);
+ 
+-    int initialApicId;
++    int initialApicId = 0;
+ 
+     // Ports for interrupts.
+     IntResponsePort<Interrupts> intResponsePort;
+@@ -183,7 +183,7 @@ class Interrupts : public BaseInterrupts
+     // Port for memory mapped register accesses.
+     PioPort<Interrupts> pioPort;
+ 
+-    Tick pioDelay;
++    Tick pioDelay = 0;
+     Addr pioAddr = MaxAddr;
+ 
+   public:
+-- 
+1.8.3.1
+

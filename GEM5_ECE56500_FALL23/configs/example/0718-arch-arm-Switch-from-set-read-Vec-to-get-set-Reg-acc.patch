@@ -1,0 +1,331 @@
+From 7f61db0f2ec22a9ec9f6dbf174906b7bc46492bd Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 28 Aug 2021 21:38:49 -0700
+Subject: [PATCH 718/757] arch-arm: Switch from (set|read)Vec* to (get|set)Reg*
+ accessors.
+
+Change-Id: I9e9b51b965402b3c8c94cce1593d62aa2118cd0c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49766
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/aapcs32.hh                  | 12 +++++++-----
+ src/arch/arm/aapcs64.hh                  |  9 ++++++---
+ src/arch/arm/htm.cc                      |  4 ++--
+ src/arch/arm/isa.cc                      | 14 ++++++++++----
+ src/arch/arm/kvm/armv8_cpu.cc            |  4 +++-
+ src/arch/arm/nativetrace.cc              |  9 +++++----
+ src/arch/arm/remote_gdb.cc               |  9 ++++++---
+ src/arch/arm/tracers/tarmac_parser.cc    | 30 +++++++++++++++---------------
+ src/arch/arm/tracers/tarmac_record_v8.cc |  4 ++--
+ src/arch/arm/utility.cc                  |  9 +++++----
+ 10 files changed, 61 insertions(+), 43 deletions(-)
+
+diff --git a/src/arch/arm/aapcs32.hh b/src/arch/arm/aapcs32.hh
+index 88406e9..ff52039 100644
+--- a/src/arch/arm/aapcs32.hh
++++ b/src/arch/arm/aapcs32.hh
+@@ -479,7 +479,7 @@ struct Result<Aapcs32Vfp, Float, typename std::enable_if_t<
+         auto *vec_elems = static_cast<ArmISA::VecElem *>(&bytes);
+         constexpr int chunks = sizeof(Float) / sizeof(ArmISA::VecElem);
+         for (int chunk = 0; chunk < chunks; chunk++)
+-            tc->setVecElem(RegId(VecElemClass, chunk), vec_elems[chunk]);
++            tc->setReg(RegId(VecElemClass, chunk), vec_elems[chunk]);
+     };
+ };
+ 
+@@ -503,7 +503,7 @@ struct Argument<Aapcs32Vfp, Float, typename std::enable_if_t<
+ 
+         constexpr int chunks = sizeof(Float) / sizeof(ArmISA::VecElem);
+         for (int chunk = 0; chunk < chunks; chunk++)
+-            vec_elems[chunk] = tc->readVecElem(RegId(VecElemClass, chunk));
++            vec_elems[chunk] = tc->getReg(RegId(VecElemClass, chunk));
+ 
+         return bitsToFloat(result);
+     }
+@@ -572,7 +572,8 @@ struct Argument<Aapcs32Vfp, HA, typename std::enable_if_t<
+                 const int lane = index % lane_per_reg;
+ 
+                 RegId id(VecRegClass, reg);
+-                auto val = tc->readVecReg(id);
++                ArmISA::VecRegContainer val;
++                tc->getReg(id, &val);
+                 ha[i] = val.as<Elem>()[lane];
+             }
+             return ha;
+@@ -619,9 +620,10 @@ struct Result<Aapcs32Vfp, HA,
+             const int lane = i % lane_per_reg;
+ 
+             RegId id(VecRegClass, reg);
+-            auto val = tc->readVecReg(id);
++            ArmISA::VecRegContainer val;
++            tc->getReg(id, &val);
+             val.as<Elem>()[lane] = ha[i];
+-            tc->setVecReg(id, val);
++            tc->setReg(id, &val);
+         }
+     }
+ 
+diff --git a/src/arch/arm/aapcs64.hh b/src/arch/arm/aapcs64.hh
+index 3398d40..fe58fef 100644
+--- a/src/arch/arm/aapcs64.hh
++++ b/src/arch/arm/aapcs64.hh
+@@ -202,7 +202,9 @@ struct Argument<Aapcs64, Float, typename std::enable_if_t<
+     {
+         if (state.nsrn <= state.MAX_SRN) {
+             RegId id(VecRegClass, state.nsrn++);
+-            return tc->readVecReg(id).as<Float>()[0];
++            ArmISA::VecRegContainer vc;
++            tc->getReg(id, &vc);
++            return vc.as<Float>()[0];
+         }
+ 
+         return loadFromStack<Float>(tc, state);
+@@ -217,9 +219,10 @@ struct Result<Aapcs64, Float, typename std::enable_if_t<
+     store(ThreadContext *tc, const Float &f)
+     {
+         RegId id(VecRegClass, 0);
+-        auto reg = tc->readVecReg(id);
++        ArmISA::VecRegContainer reg;
++        tc->getReg(id, &reg);
+         reg.as<Float>()[0] = f;
+-        tc->setVecReg(id, reg);
++        tc->setReg(id, &reg);
+     }
+ };
+ 
+diff --git a/src/arch/arm/htm.cc b/src/arch/arm/htm.cc
+index 534fd8d..2549fe3 100644
+--- a/src/arch/arm/htm.cc
++++ b/src/arch/arm/htm.cc
+@@ -82,7 +82,7 @@ ArmISA::HTMCheckpoint::save(ThreadContext *tc)
+     // TODO first detect if FP is enabled at this EL
+     for (auto n = 0; n < NumVecRegs; n++) {
+         RegId idx = RegId(VecRegClass, n);
+-        z[n] = tc->readVecReg(idx);
++        tc->getReg(idx, &z[n]);
+     }
+     for (auto n = 0; n < NumVecPredRegs; n++) {
+         RegId idx = RegId(VecPredRegClass, n);
+@@ -109,7 +109,7 @@ ArmISA::HTMCheckpoint::restore(ThreadContext *tc, HtmFailureFaultCause cause)
+     // TODO first detect if FP is enabled at this EL
+     for (auto n = 0; n < NumVecRegs; n++) {
+         RegId idx = RegId(VecRegClass, n);
+-        tc->setVecReg(idx, z[n]);
++        tc->setReg(idx, &z[n]);
+     }
+     for (auto n = 0; n < NumVecPredRegs; n++) {
+         RegId idx = RegId(VecPredRegClass, n);
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index 2a829cb..fda47b7 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -576,11 +576,17 @@ ISA::copyRegsFrom(ThreadContext *src)
+     for (int i = 0; i < NUM_MISCREGS; i++)
+         tc->setMiscRegNoEffect(i, src->readMiscRegNoEffect(i));
+ 
+-    for (int i = 0; i < NumVecRegs; i++)
+-        tc->setVecRegFlat(i, src->readVecRegFlat(i));
++    ArmISA::VecRegContainer vc;
++    for (int i = 0; i < NumVecRegs; i++) {
++        RegId reg(VecRegClass, i);
++        src->getRegFlat(reg, &vc);
++        tc->setRegFlat(reg, &vc);
++    }
+ 
+-    for (int i = 0; i < NumVecRegs * NumVecElemPerVecReg; i++)
+-        tc->setVecElemFlat(i, src->readVecElemFlat(i));
++    for (int i = 0; i < NumVecRegs * NumVecElemPerVecReg; i++) {
++        RegId reg(VecElemClass, i);
++        tc->setRegFlat(reg, src->getRegFlat(reg));
++    }
+ 
+     // setMiscReg "with effect" will set the misc register mapping correctly.
+     // e.g. updateRegMap(val)
+diff --git a/src/arch/arm/kvm/armv8_cpu.cc b/src/arch/arm/kvm/armv8_cpu.cc
+index e5387be..a059e14 100644
+--- a/src/arch/arm/kvm/armv8_cpu.cc
++++ b/src/arch/arm/kvm/armv8_cpu.cc
+@@ -258,7 +258,9 @@ ArmV8KvmCPU::updateKvmState()
+         KvmFPReg reg;
+         if (!inAArch64(tc))
+             syncVecElemsToRegs(tc);
+-        auto v = tc->readVecReg(RegId(VecRegClass, i)).as<VecElem>();
++        ArmISA::VecRegContainer vc;
++        tc->getReg(RegId(VecRegClass, i), &vc);
++        auto v = vc.as<VecElem>();
+         for (int j = 0; j < FP_REGS_PER_VFP_REG; j++)
+             reg.s[j].i = v[j];
+ 
+diff --git a/src/arch/arm/nativetrace.cc b/src/arch/arm/nativetrace.cc
+index ee95023..0303ff6 100644
+--- a/src/arch/arm/nativetrace.cc
++++ b/src/arch/arm/nativetrace.cc
+@@ -128,10 +128,11 @@ Trace::ArmNativeTrace::ThreadState::update(ThreadContext *tc)
+     changed[STATE_CPSR] = (newState[STATE_CPSR] != oldState[STATE_CPSR]);
+ 
+     for (int i = 0; i < NumVecV7ArchRegs; i++) {
+-        auto vec = tc->readVecReg(RegId(VecRegClass,i));
+-        auto *arr = vec.as<uint64_t>();
+-        newState[STATE_F0 + 2*i] = arr[0];
+-        newState[STATE_F0 + 2*i + 1] = arr[1];
++        ArmISA::VecRegContainer vec_container;
++        tc->getReg(RegId(VecRegClass, i), &vec_container);
++        auto *vec = vec_container.as<uint64_t>();
++        newState[STATE_F0 + 2*i] = vec[0];
++        newState[STATE_F0 + 2*i + 1] = vec[1];
+     }
+     newState[STATE_FPSCR] = tc->readMiscRegNoEffect(MISCREG_FPSCR) |
+                             tc->getReg(cc_reg::Fp);
+diff --git a/src/arch/arm/remote_gdb.cc b/src/arch/arm/remote_gdb.cc
+index 2f89e2f..7b91fab 100644
+--- a/src/arch/arm/remote_gdb.cc
++++ b/src/arch/arm/remote_gdb.cc
+@@ -242,7 +242,9 @@ RemoteGDB::AArch64GdbRegCache::getRegs(ThreadContext *context)
+ 
+     size_t base = 0;
+     for (int i = 0; i < NumVecV8ArchRegs; i++) {
+-        auto v = (context->readVecReg(RegId(VecRegClass, i))).as<VecElem>();
++        ArmISA::VecRegContainer vc;
++        context->getReg(RegId(VecRegClass, i), &vc);
++        auto v = vc.as<VecElem>();
+         for (size_t j = 0; j < NumVecElemPerNeonVecReg; j++) {
+             r.v[base] = v[j];
+             base++;
+@@ -270,8 +272,9 @@ RemoteGDB::AArch64GdbRegCache::setRegs(ThreadContext *context) const
+ 
+     size_t base = 0;
+     for (int i = 0; i < NumVecV8ArchRegs; i++) {
+-        auto v = (context->getWritableVecReg(
+-                RegId(VecRegClass, i))).as<VecElem>();
++        auto *vc = static_cast<ArmISA::VecRegContainer *>(
++                context->getWritableReg(RegId(VecRegClass, i)));
++        auto v = vc->as<VecElem>();
+         for (size_t j = 0; j < NumVecElemPerNeonVecReg; j++) {
+             v[j] = r.v[base];
+             base++;
+diff --git a/src/arch/arm/tracers/tarmac_parser.cc b/src/arch/arm/tracers/tarmac_parser.cc
+index d69dbde..34d7ca7 100644
+--- a/src/arch/arm/tracers/tarmac_parser.cc
++++ b/src/arch/arm/tracers/tarmac_parser.cc
+@@ -759,26 +759,26 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+             break;
+           case REG_S:
+             if (instRecord.isetstate == ISET_A64) {
+-                const ArmISA::VecRegContainer& vc = thread->readVecReg(
+-                    RegId(VecRegClass, it->index));
++                ArmISA::VecRegContainer vc;
++                thread->getReg(RegId(VecRegClass, it->index), &vc);
+                 auto vv = vc.as<uint32_t>();
+                 values.push_back(vv[0]);
+             } else {
+-                const VecElem elem = thread->readVecElem(
++                const VecElem elem = thread->getReg(
+                     RegId(VecElemClass, it->index));
+                 values.push_back(elem);
+             }
+             break;
+           case REG_D:
+             if (instRecord.isetstate == ISET_A64) {
+-                const ArmISA::VecRegContainer& vc = thread->readVecReg(
+-                    RegId(VecRegClass, it->index));
++                ArmISA::VecRegContainer vc;
++                thread->getReg(RegId(VecRegClass, it->index), &vc);
+                 auto vv = vc.as<uint64_t>();
+                 values.push_back(vv[0]);
+             } else {
+-                const VecElem w0 = thread->readVecElem(
++                const VecElem w0 = thread->getReg(
+                     RegId(VecElemClass, it->index));
+-                const VecElem w1 = thread->readVecElem(
++                const VecElem w1 = thread->getReg(
+                     RegId(VecElemClass, it->index + 1));
+ 
+                 values.push_back((uint64_t)(w1) << 32 | w0);
+@@ -798,19 +798,19 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+             break;
+           case REG_Q:
+             if (instRecord.isetstate == ISET_A64) {
+-                const ArmISA::VecRegContainer& vc = thread->readVecReg(
+-                    RegId(VecRegClass, it->index));
++                ArmISA::VecRegContainer vc;
++                thread->getReg(RegId(VecRegClass, it->index), &vc);
+                 auto vv = vc.as<uint64_t>();
+                 values.push_back(vv[0]);
+                 values.push_back(vv[1]);
+             } else {
+-                const VecElem w0 = thread->readVecElem(
++                const VecElem w0 = thread->getReg(
+                     RegId(VecElemClass, it->index));
+-                const VecElem w1 = thread->readVecElem(
++                const VecElem w1 = thread->getReg(
+                     RegId(VecElemClass, it->index + 1));
+-                const VecElem w2 = thread->readVecElem(
++                const VecElem w2 = thread->getReg(
+                     RegId(VecElemClass, it->index + 2));
+-                const VecElem w3 = thread->readVecElem(
++                const VecElem w3 = thread->getReg(
+                     RegId(VecElemClass, it->index + 3));
+ 
+                 values.push_back((uint64_t)(w1) << 32 | w0);
+@@ -820,8 +820,8 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+           case REG_Z:
+             {
+                 int8_t i = maxVectorLength;
+-                const ArmISA::VecRegContainer& vc = thread->readVecReg(
+-                    RegId(VecRegClass, it->index));
++                ArmISA::VecRegContainer vc;
++                thread->getReg(RegId(VecRegClass, it->index), &vc);
+                 auto vv = vc.as<uint64_t>();
+                 while (i > 0) {
+                     values.push_back(vv[--i]);
+diff --git a/src/arch/arm/tracers/tarmac_record_v8.cc b/src/arch/arm/tracers/tarmac_record_v8.cc
+index 30e9d1e..3c4a152 100644
+--- a/src/arch/arm/tracers/tarmac_record_v8.cc
++++ b/src/arch/arm/tracers/tarmac_record_v8.cc
+@@ -138,8 +138,8 @@ TarmacTracerRecordV8::TraceRegEntryV8::updateVec(
+ )
+ {
+     auto thread = tarmCtx.thread;
+-    const auto& vec_container = thread->readVecReg(
+-        RegId(regClass, regRelIdx));
++    ArmISA::VecRegContainer vec_container;
++    thread->getReg(RegId(regClass, regRelIdx), &vec_container);
+     auto vv = vec_container.as<VecElem>();
+ 
+     regWidth = ArmStaticInst::getCurSveVecLenInBits(thread);
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index 4339744..1c54c88 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -1341,10 +1341,11 @@ syncVecRegsToElems(ThreadContext *tc)
+     int ei = 0;
+     for (int ri = 0; ri < NumVecRegs; ri++) {
+         RegId reg_id(VecRegClass, ri);
+-        const VecRegContainer &reg = tc->readVecReg(reg_id);
++        VecRegContainer reg;
++        tc->getReg(reg_id, &reg);
+         for (int j = 0; j < NumVecElemPerVecReg; j++, ei++) {
+             RegId elem_id(VecElemClass, ei);
+-            tc->setVecElem(elem_id, reg.as<VecElem>()[j]);
++            tc->setReg(elem_id, reg.as<VecElem>()[j]);
+         }
+     }
+ }
+@@ -1357,10 +1358,10 @@ syncVecElemsToRegs(ThreadContext *tc)
+         VecRegContainer reg;
+         for (int j = 0; j < NumVecElemPerVecReg; j++, ei++) {
+             RegId elem_id(VecElemClass, ei);
+-            reg.as<VecElem>()[j] = tc->readVecElem(elem_id);
++            reg.as<VecElem>()[j] = tc->getReg(elem_id);
+         }
+         RegId reg_id(VecRegClass, ri);
+-        tc->setVecReg(reg_id, reg);
++        tc->setReg(reg_id, &reg);
+     }
+ }
+ 
+-- 
+1.8.3.1
+

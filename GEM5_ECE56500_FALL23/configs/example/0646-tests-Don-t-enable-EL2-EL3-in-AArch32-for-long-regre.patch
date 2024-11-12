@@ -1,0 +1,41 @@
+From 934590521abb602fb72e54c31ac587a4dfd8cefa Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 20 May 2022 16:17:45 +0100
+Subject: [PATCH 646/757] tests: Don't enable EL2/EL3 in AArch32 for long
+ regressions
+
+This is fixing long regressions, caused by
+automatically enabling EL2 and EL3 in Arm.
+This is temporary: either fixing EL3 boot in AArch32 or
+disabling EL3 in AArch32 should be chosen in the long term
+
+Change-Id: If92b219ff89dcf13916a151fac9a2a3ac0e7d69b
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59849
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/configs/arm_generic.py | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/tests/gem5/configs/arm_generic.py b/tests/gem5/configs/arm_generic.py
+index a47a3b3..5ea5e64 100644
+--- a/tests/gem5/configs/arm_generic.py
++++ b/tests/gem5/configs/arm_generic.py
+@@ -124,6 +124,12 @@ class LinuxArmSystemBuilder(object):
+                                         self.machine_type, self.num_cpus,
+                                         sc, ruby=self.use_ruby)
+ 
++        # TODO: This is removing SECURITY and VIRTUALIZATION extensions
++        # from AArch32 runs to fix long regressions. Find a fix or
++        # remove EL3/EL2 support at AArch32
++        if not self.aarch64_kernel:
++            system.release = ArmRelease(extensions=["LPAE"])
++
+         # We typically want the simulator to panic if the kernel
+         # panics or oopses. This prevents the simulator from running
+         # an obviously failed test case until the end of time.
+-- 
+1.8.3.1
+

@@ -1,0 +1,224 @@
+From fda4137780f06bc7ca731cb0cfe740744e051c07 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 24 May 2022 13:08:22 -0700
+Subject: [PATCH 712/757] stdlib: Refactor multi-isa stdlib incorporation
+
+The previous version of this requires the user to set the `main-isa` at
+runtime, as inplemented via
+https://gem5-review.googlesource.com/c/public/gem5/+/55423. In order to
+keep this work in-sync with how the multi-protocol approach will work
+(see here: https://gem5-review.googlesource.com/c/public/gem5/+/59193),
+it's been decided this should be set at compile time. With this we are
+keeping the `TARGET_ISA` parameter. If this is set, this is the de
+facto "main-isa". The `main-isa` parameter has been removed from the
+gem5 command-line.
+
+If the `TARGET_ISA` parameter is not set, but only one ISA is compiled,
+then this single ISA is assumed to be the `main-isa` for simulation. If
+neither `TARGET_ISA` is set or the binary is compiled to a single ISA,
+an exception is thrown when `get_runtime_isa` is called.
+
+At the time of writing this change is moot as the multi-isa work has
+yet to be merged into the gem5 develop branch. It exists here:
+https://gem5.googlesource.com/public/gem5/+/refs/heads/multi-isa and
+will need refactored to work with this patch.
+
+The multi-isa tests have been updated. As we no longer pass the
+`main-isa` as a run-time parameter, we remove many tests which validated
+this use-case.
+
+Change-Id: If3366212fe1dacbae389efa43d79349deb907537
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59949
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/python/gem5/runtime.py             | 72 +++++++++++-----------------------
+ src/python/m5/main.py                  |  6 ---
+ tests/gem5/multi_isa/test_multi_isa.py | 46 +---------------------
+ 3 files changed, 23 insertions(+), 101 deletions(-)
+
+diff --git a/src/python/gem5/runtime.py b/src/python/gem5/runtime.py
+index 0984f6f..623228c 100644
+--- a/src/python/gem5/runtime.py
++++ b/src/python/gem5/runtime.py
+@@ -30,38 +30,36 @@ This file contains functions to extract gem5 runtime information.
+ 
+ from m5.defines import buildEnv
+ from m5.util import warn
+-import os
+ 
+ from .isas import ISA, get_isa_from_str, get_isas_str_set
+ from .coherence_protocol import CoherenceProtocol
+ from typing import Set
+-from m5 import options
+ 
+ def get_supported_isas() -> Set[ISA]:
++    """
++    Returns the set of all the ISAs compiled into the current binary.
++    """
+     supported_isas = set()
+ 
+-    # This if-statement is an intermediate step so the stdlib works on the
+-    # "old style" of determining the available ISA (via the "TARGET_ISA"
+-    # environment variable) and the "new style" which enables multiple ISAs
+-    # (via the "USE_X_ISA" environment variables). Once multiple ISAs are fully
+-    # incorporated, this code may be simplified.
+     if "TARGET_ISA" in buildEnv.keys():
+         supported_isas.add(get_isa_from_str(buildEnv["TARGET_ISA"]))
+-    else:
+-        for key in get_isas_str_set():
+-            if buildEnv[f"USE_{key.upper()}_ISA"]:
+-                supported_isas.add(get_isa_from_str(key))
++
++    for key in get_isas_str_set():
++        if f"USE_{key.upper()}_ISA" in buildEnv:
++            supported_isas.add(get_isa_from_str(key))
++
+     return supported_isas
+ 
+ 
+ 
+ def get_runtime_isa() -> ISA:
+-    """Returns a single target ISA at runtime.
+-    This is inferred at runtime and is assumed to be the ISA target ISA.
+-    This is determined one of two ways:
++    """
++    Returns a single target ISA at runtime.
+ 
+-    1. The gem5 binary is compiled to one ISA target.
+-    2. The user specifies the target ISA via gem5's `--main-isa` parameter.
++    This determined via the "TARGET_ISA" parameter, which is set at
++    compilation. If not set, but only one ISA is compiled, we assume it's the
++    one ISA. If neither the "TARGET_ISA" parameter is set and there are
++    multiple ISA targets, an exception is thrown.
+ 
+     **WARNING**: This function is deprecated and may be removed in future
+     versions of gem5. This function should not be relied upon to run gem5
+@@ -73,43 +71,17 @@ def get_runtime_isa() -> ISA:
+     warn("The `get_runtime_isa` function is deprecated. Please migrate away "
+          "from using this function.")
+ 
+-    supported = get_supported_isas()
+-    main_isa_param = options.main_isa
+-
+-    supported_list_str = ""
+-    for isa in supported:
+-        supported_list_str += f"{os.linesep}{isa.name}"
+-
+-
+-    if not main_isa_param:
+-        if len(supported) == 1:
+-            # In this case, where the main_isa_param is not specified, but only
+-            # one ISA is compiled, we go with the ISA that has been compiled.
+-            return next(iter(supported))
+-
+-        # If there are multiple supported ISAs, but no main ISA specified, we
+-        # raise an exception.
+-        raise Exception("The gem5 binary is compiled with multiple-ISAs. "
+-                        "Please specify which you require using the "
+-                        "`--main-isa` parameter when running gem5. "
+-                        f"Supported ISAs: {supported_list_str}"
+-                       )
+-
+-    assert main_isa_param
+-
+-    main_isa = get_isa_from_str(main_isa_param)
++    if "TARGET_ISA" in buildEnv.keys():
++        return get_isa_from_str(buildEnv["TARGET_ISA"])
+ 
+-    if main_isa not in supported:
+-        # In the case the user has specified an ISA not compiled into
+-        # the binary.
+-        raise Exception(f"The ISA specified via the `--main-isa` "
+-                        f"parameter, '{main_isa_param}', has not been "
+-                        f"compiled into the binary. ISAs available: "
+-                        f"{supported_list_str}."
+-                       )
++    supported_isas = get_supported_isas()
+ 
+-    return main_isa
++    if len(supported_isas) == 1:
++        return next(iter(supported_isas))
+ 
++    raise Exception("Cannot determine the the runtime ISA. Either the "
++                    "'TARGET_ISA' parameter must be set or the binary only "
++                    "compiled to one ISA.")
+ 
+ def get_runtime_coherence_protocol() -> CoherenceProtocol:
+     """Gets the cache coherence protocol.
+diff --git a/src/python/m5/main.py b/src/python/m5/main.py
+index 09228b4..b216840 100644
+--- a/src/python/m5/main.py
++++ b/src/python/m5/main.py
+@@ -107,12 +107,6 @@ def parse_options():
+         help="Reduce verbosity")
+     option('-v', "--verbose", action="count", default=0,
+         help="Increase verbosity")
+-    option('--main-isa', action='store', default=None,
+-          help='Select the main target ISA. This dictates what the '
+-          '`gem5.runtime.get_runtime_isa()` function returns when multiple '
+-          'ISAs are compiled into the gem5 binary. Note: This functionality '
+-          'is deprecated. The `gem5.runtime.get_runtime_isa()` function will '
+-          'be removed in future releases of gem5.')
+ 
+     # Statistics options
+     group("Statistics Options")
+diff --git a/tests/gem5/multi_isa/test_multi_isa.py b/tests/gem5/multi_isa/test_multi_isa.py
+index cf11f84..9f48724 100644
+--- a/tests/gem5/multi_isa/test_multi_isa.py
++++ b/tests/gem5/multi_isa/test_multi_isa.py
+@@ -62,48 +62,4 @@ for isa in isa_map.keys():
+         valid_isas=(isa_map[isa],),
+         valid_hosts=constants.supported_hosts,
+         length=length_map[isa],
+-    )
+-
+-for isa in isa_map.keys():
+-    gem5_verify_config(
+-        name=f"runtime-isa-check_{isa}-compiled-alone-"
+-              "with-main-isa-set-correctly",
+-        verifiers=(),
+-        fixtures=(),
+-        gem5_args=('--main-isa', isa),
+-        config=joinpath(
+-            config.base_dir,
+-            "tests",
+-            "gem5",
+-            "configs",
+-            "runtime_isa_check.py",
+-        ),
+-        config_args=["-e", isa],
+-        valid_isas=(isa_map[isa],),
+-        valid_hosts=constants.supported_hosts,
+-        length=length_map[isa],
+-    )
+-
+-
+-# These tests can be enabled when the multi-isa work is completed (i.e., when
+-# `build/ARM/gem5.opt` can be successfully compiled).
+-
+-for isa in isa_map.keys():
+-    break # Remove this line to enable this test.
+-    gem5_verify_config(
+-        name=f"runtime-isa-check_all-compiled-with-main-isa-set-to-{isa}",
+-        verifiers=(),
+-        fixtures=(),
+-        gem5_args=('--main-isa', isa),
+-        config=joinpath(
+-            config.base_dir,
+-            "tests",
+-            "gem5",
+-            "configs",
+-            "runtime_isa_check.py",
+-        ),
+-        config_args=["-e", isa],
+-        valid_isas=(constants.all_compiled_tag),
+-        valid_hosts=constants.supported_hosts,
+-        length=constants.long_tag,
+-    )
++    )
+\ No newline at end of file
+-- 
+1.8.3.1
+

@@ -1,0 +1,61 @@
+From 01333c73def6f2d3d35f04ad8489bf3271033dc7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 8 Jan 2022 23:42:03 -0800
+Subject: [PATCH 124/757] arch-x86: Fix real mode far jumps with set MSB in the
+ offset.
+
+When performing a real mode far jump, we were computing the offset into
+the segment more or less correctly, but then when we tried to actually
+set the PC using it, we used the second of the two wrip microop
+arguments. The first argument is an unsigned value and is intended to be
+a base to work from when figuring out the new IP, and the second
+argument is a signed offset which can be used to implement relative
+jumps/branches. When we used the second operand for our new value,
+setting the first operand to t0 (the zero register on x86), we would
+inadvertantly sign extend it since the wrip instruction would treat it
+as a signed value.
+
+Instead, we can just switch the two operands so that the wrip microop
+treats the desired value as the unsigned base, and then adds a signed t0
+to it, which will still be 0 one way or the other.
+
+Also, while researching this bug, I found that the size used for
+computing the new IP is always the operand size, and never the address
+size. This CL fixes that problem as well by removing the faulty
+override.
+
+Change-Id: I96ac9effd37b40161dd8d0b634c5869e767a8873
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55243
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+index f39e799..b289f18 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+@@ -157,7 +157,8 @@ def macroop JMP_FAR_REAL_M
+     slli t3, t3, 4, dataSize=8
+     wrsel cs, t1, dataSize=2
+     wrbase cs, t3, dataSize=8
+-    wrip t0, t2, dataSize=asz
++    # Put t2 first so it isn't sign extended.
++    wrip t2, t0
+ };
+ 
+ def macroop JMP_FAR_REAL_P
+@@ -183,6 +184,7 @@ def macroop JMP_FAR_REAL_I
+     slli t3, t1, 4, dataSize=8
+     wrsel cs, t1, dataSize=2
+     wrbase cs, t3, dataSize=8
+-    wrip t0, t2, dataSize=asz
++    # Put t2 first so it isn't sign extended.
++    wrip t2, t0
+ };
+ '''
+-- 
+1.8.3.1
+

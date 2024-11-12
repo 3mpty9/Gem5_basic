@@ -1,0 +1,73 @@
+From 770f4704959887557a2484a7eecc94047c8fa087 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 19 May 2022 11:33:55 -0700
+Subject: [PATCH 642/757] arch-arm: Fixed ARM/gem5.fast compilation failures
+
+The compiler-tests were failing:
+https://jenkins.gem5.org/job/compiler-checks/238
+
+This was due to an `error: unused variable` error being thrown in cases
+where a variable was declared and used soley in an `assert` within a
+SLICC file. Assertions of this kind are stripped during .fast
+compilation.
+
+This patch fixes this.
+
+Change-Id: I3a91ac8b1a51de7ddffd6a1cff602a934862b49c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59829
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-ports.sm         | 3 +--
+ src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm | 8 +++-----
+ 2 files changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+index 3c628ec..ecb4e61 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+@@ -107,8 +107,7 @@ in_port(datInPort, CHIDataMsg, datIn, rank=9,
+     peek(datInPort, CHIDataMsg) {
+       // We don't have any transactions that use data requests
+       assert(!in_msg.usesTxnId);
+-      int received := in_msg.bitMask.count();
+-      assert((received <= data_channel_size) && (received > 0));
++      assert((in_msg.bitMask.count() <= data_channel_size) && (in_msg.bitMask.count() > 0));
+       trigger(dataToEvent(in_msg.type), in_msg.addr,
+               getCacheEntry(in_msg.addr), getCurrentActiveTBE(in_msg.addr));
+     }
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
+index 0520b39..1a6a09c 100644
+--- a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
+@@ -87,8 +87,7 @@ in_port(datInPort, CHIDataMsg, datIn, rank=10,
+   if (datInPort.isReady(clockEdge())) {
+     printResources();
+     peek(datInPort, CHIDataMsg) {
+-      int received := in_msg.bitMask.count();
+-      assert((received <= data_channel_size) && (received > 0));
++      assert((in_msg.bitMask.count() <= data_channel_size) && (in_msg.bitMask.count() > 0));
+       assert(in_msg.usesTxnId);
+       trigger(dataToEvent(in_msg.type), in_msg.txnId, getCurrentActiveTBE(in_msg.txnId));
+     }
+@@ -121,8 +120,7 @@ in_port(reqInPort, CHIRequestMsg, reqIn, rank=2,
+     peek(reqInPort, CHIRequestMsg) {
+       assert(in_msg.usesTxnId);
+       // Make sure we aren't already processing this
+-      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
+-      assert(!is_valid(tbe));
++      assert(!is_valid(getCurrentActiveTBE(in_msg.txnId)));
+       if (in_msg.allowRetry) {
+         trigger(Event:AllocRequest, in_msg.txnId, nullTBE());
+       } else {
+@@ -315,4 +313,4 @@ void updatePendingOps(), run_on_input_cycle_end="yes" {
+       }
+     }
+   }
+-}
+\ No newline at end of file
++}
+-- 
+1.8.3.1
+

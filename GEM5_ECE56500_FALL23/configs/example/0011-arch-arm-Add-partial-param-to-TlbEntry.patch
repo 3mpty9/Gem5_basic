@@ -1,0 +1,54 @@
+From ef34cd0a000457a1c383e90a4356e964169fee43 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 4 Aug 2021 18:47:17 +0100
+Subject: [PATCH 011/757] arch-arm: Add partial param to TlbEntry
+
+The boolean will flag a partial translation
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1108
+
+Change-Id: Ia27e321cd5c4b062cafcfd0dc39a208a4d5e3247
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/52123
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/pagetable.hh | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/pagetable.hh b/src/arch/arm/pagetable.hh
+index 4cfdf2a..8300175 100644
+--- a/src/arch/arm/pagetable.hh
++++ b/src/arch/arm/pagetable.hh
+@@ -244,6 +244,8 @@ struct TlbEntry : public Serializable
+     // This is used to distinguish between instruction and data entries
+     // in unified TLBs
+     TypeTLB type;
++    // True if the entry is caching a partial translation (a table walk)
++    bool partial;
+ 
+     // Type of memory
+     bool nonCacheable;     // Can we wrap this in mtype?
+@@ -266,6 +268,7 @@ struct TlbEntry : public Serializable
+          domain(DomainType::Client),  mtype(MemoryType::StronglyOrdered),
+          longDescFormat(false), isHyp(false), global(false), valid(true),
+          ns(true), nstid(true), el(EL0), type(TypeTLB::unified),
++         partial(false),
+          nonCacheable(uncacheable),
+          shareable(false), outerShareable(false), xn(0), pxn(0)
+     {
+@@ -283,7 +286,7 @@ struct TlbEntry : public Serializable
+          domain(DomainType::Client), mtype(MemoryType::StronglyOrdered),
+          longDescFormat(false), isHyp(false), global(false), valid(false),
+          ns(true), nstid(true), el(EL0), type(TypeTLB::unified),
+-         nonCacheable(false),
++         partial(false), nonCacheable(false),
+          shareable(false), outerShareable(false), xn(0), pxn(0)
+     {
+         // no restrictions by default, hap = 0x3
+-- 
+1.8.3.1
+

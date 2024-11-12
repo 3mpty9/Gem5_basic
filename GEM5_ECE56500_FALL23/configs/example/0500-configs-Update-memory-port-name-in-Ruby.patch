@@ -1,0 +1,43 @@
+From 4c9084e318f5ae02af4b372e39bbb7fee3518b97 Mon Sep 17 00:00:00 2001
+From: Srikant Bharadwaj <srikant.bharadwaj@amd.com>
+Date: Thu, 24 Mar 2022 20:59:01 -0400
+Subject: [PATCH 500/757] configs: Update memory port name in Ruby
+
+Memory port for controllers is now called memory_out_port.
+'memory' is a depracated param according to this change:
+https://gem5-review.googlesource.com/c/public/gem5/+/34417
+
+Change-Id: I6a561f5603c7597a3974af1766ab642acb3e59de
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58189
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/ruby/Ruby.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configs/ruby/Ruby.py b/configs/ruby/Ruby.py
+index 631c65c..ba94c15 100644
+--- a/configs/ruby/Ruby.py
++++ b/configs/ruby/Ruby.py
+@@ -130,7 +130,7 @@ def setup_memory_controllers(system, ruby, dir_cntrls, options):
+         if len(system.mem_ranges) > 1:
+             crossbar = IOXBar()
+             crossbars.append(crossbar)
+-            dir_cntrl.memory = crossbar.cpu_side_ports
++            dir_cntrl.memory_out_port = crossbar.cpu_side_ports
+ 
+         dir_ranges = []
+         for r in system.mem_ranges:
+@@ -152,7 +152,7 @@ def setup_memory_controllers(system, ruby, dir_cntrls, options):
+             if crossbar != None:
+                 mem_ctrl.port = crossbar.mem_side_ports
+             else:
+-                mem_ctrl.port = dir_cntrl.memory
++                mem_ctrl.port = dir_cntrl.memory_out_port
+ 
+             # Enable low-power DRAM states if option is set
+             if issubclass(mem_type, DRAMInterface):
+-- 
+1.8.3.1
+

@@ -1,0 +1,70 @@
+From 4c6790ada6f9989dca1be652ebfe11fb34a76d04 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 29 Mar 2022 23:05:06 -0700
+Subject: [PATCH 508/757] scons: Stop the fast model project file parser from
+ writing files.
+
+PLY tries to write these little files into the SCons installation
+directory, which it shouldn't even if it was allowed to. This avoids
+a bunch of annoying messages about not having enough permission.
+
+Change-Id: Ifd4eda9dd9f8518b3fd075e8a46de1b6c12c2127
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58353
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jui-min Lee <fcrh@google.com>
+---
+ SConstruct                        |  3 +++
+ src/arch/arm/fastmodel/SConscript | 14 ++++++++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/SConstruct b/SConstruct
+index 684cc8c..b170cf4 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -85,6 +85,9 @@ from os.path import abspath, dirname, expanduser
+ from os.path import isdir, isfile
+ from os.path import join, split
+ 
++import logging
++logging.basicConfig()
++
+ # SCons imports
+ import SCons
+ import SCons.Node
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index a8734cd..5c4bbf9 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -36,6 +36,7 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from itertools import cycle
++import logging
+ import shlex
+ 
+ Import('*')
+@@ -147,6 +148,19 @@ SourceLib('dl')
+ SourceLib('rt')
+ 
+ class ProjectFileParser(Grammar):
++    def __init__(self):
++        self.log = logging.getLogger('fm_proj_ply')
++        if GetOption('verbose'):
++            self.log.setLevel(logging.DEBUG)
++
++        self.yacc_kwargs['write_tables'] = False
++
++        self.yacc_kwargs['debuglog'] = self.log
++        self.yacc_kwargs['errorlog'] = self.log
++
++        self.lex_kwargs['debuglog'] = self.log
++        self.lex_kwargs['errorlog'] = self.log
++
+     class Param(object):
+         def __init__(self, is_object):
+             self.is_object = is_object
+-- 
+1.8.3.1
+

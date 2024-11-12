@@ -1,0 +1,78 @@
+From da41d3eaa4e5178e49fcf74f0e26360d8af35d04 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 23 Feb 2021 18:39:45 -0600
+Subject: [PATCH 150/757] tests: extend ruby_mem_test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace ruby_mem_test by these tests which run different
+configurations:
+
+ruby_mem_test-garnet: use Garnet
+
+ruby_mem_test-simple: use SimpleNetwork (same as original ruby_mem_test)
+
+ruby_mem_test-simple-extra: use SimpleNetwork with
+--simple-physical-channels option
+
+ruby_mem_test-simple-extra-multicore: same as previous using 4 cores
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I7716cd222dd56ddbf06f53f92ec9b568ed5a182c
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41867
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/memory/test.py | 29 +++++++++++++++++++++--------
+ 1 file changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/tests/gem5/memory/test.py b/tests/gem5/memory/test.py
+index db20ab5..01bd68b 100644
+--- a/tests/gem5/memory/test.py
++++ b/tests/gem5/memory/test.py
+@@ -68,17 +68,30 @@ gem5_verify_config(
+ )
+ 
+ null_tests = [
+-    ('garnet_synth_traffic', ['--sim-cycles', '5000000']),
+-    ('memcheck', ['--maxtick', '2000000000', '--prefetchers']),
+-    ('ruby_mem_test', ['--abs-max-tick', '20000000',
+-        '--functional', '10']),
+-    ('ruby_random_test', ['--maxloads', '5000']),
+-    ('ruby_direct_test', ['--requests', '50000']),
++    ('garnet_synth_traffic', None, ['--sim-cycles', '5000000']),
++    ('memcheck', None, ['--maxtick', '2000000000', '--prefetchers']),
++    ('ruby_mem_test-garnet', 'ruby_mem_test',
++        ['--abs-max-tick', '20000000', '--functional', '10', \
++         '--network=garnet']),
++    ('ruby_mem_test-simple', 'ruby_mem_test',
++        ['--abs-max-tick', '20000000', '--functional', '10', \
++         '--network=simple']),
++    ('ruby_mem_test-simple-extra', 'ruby_mem_test',
++        ['--abs-max-tick', '20000000', '--functional', '10', \
++         '--network=simple', '--simple-physical-channels']),
++    ('ruby_mem_test-simple-extra-multicore', 'ruby_mem_test',
++        ['--abs-max-tick', '20000000', '--functional', '10', \
++         '--network=simple', '--simple-physical-channels',
++         '--num-cpus=4']),
++    ('ruby_random_test', None, ['--maxloads', '5000']),
++    ('ruby_direct_test', None, ['--requests', '50000']),
+ ]
+ 
+-for basename_noext, args in null_tests:
++for test_name, basename_noext, args in null_tests:
++    if basename_noext == None:
++        basename_noext = test_name
+     gem5_verify_config(
+-        name=basename_noext,
++        name=test_name,
+         fixtures=(),
+         verifiers=(),
+         config=joinpath(config.base_dir, 'configs',
+-- 
+1.8.3.1
+

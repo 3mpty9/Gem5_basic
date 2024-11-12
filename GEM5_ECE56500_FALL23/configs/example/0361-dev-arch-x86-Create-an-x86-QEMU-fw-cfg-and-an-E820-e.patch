@@ -1,0 +1,244 @@
+From ba82b56193838dd83e7f6b2692af3778a6480666 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 18 Jan 2022 21:22:50 -0800
+Subject: [PATCH 361/757] dev,arch-x86: Create an x86 QEMU fw cfg, and an E820
+ entry type.
+
+The x86 version is basically just a specialization of the base IO port
+version of the QEMU firmware configuration device, with the port
+addresses set for x86.
+
+The E820 entry type is x86 specific, and is a way to pass an E820 memory
+map to firmware which doesn't have another way to figure out where
+memory is. This would be for firmware like SeaBIOS which is itself
+responsible for publishing an E820 map, but it needs somewhere to get
+that information from in the first place. This mechanism is one it
+supports natively.
+
+This entry type reuses the E820Entry SimObjects which were defined a
+long time ago for passing to a Linux FS workload. It doesn't use their
+ability to write themselves out to guest memory, and just uses them as a
+transport for their address, size and type properties.
+
+Change-Id: Ifff214f5fc10bd7d0a2a0acddad4fc00dd65f67d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55628
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/x86/SConscript      |  3 ++
+ src/dev/x86/X86QemuFwCfg.py | 48 +++++++++++++++++++++++++++++++
+ src/dev/x86/qemu_fw_cfg.cc  | 69 +++++++++++++++++++++++++++++++++++++++++++++
+ src/dev/x86/qemu_fw_cfg.hh  | 58 +++++++++++++++++++++++++++++++++++++
+ 4 files changed, 178 insertions(+)
+ create mode 100644 src/dev/x86/X86QemuFwCfg.py
+ create mode 100644 src/dev/x86/qemu_fw_cfg.cc
+ create mode 100644 src/dev/x86/qemu_fw_cfg.hh
+
+diff --git a/src/dev/x86/SConscript b/src/dev/x86/SConscript
+index dba54ce..a58c22e 100644
+--- a/src/dev/x86/SConscript
++++ b/src/dev/x86/SConscript
+@@ -65,3 +65,6 @@ DebugFlag('PcSpeaker', tags='x86 isa')
+ SimObject('I82094AA.py', sim_objects=['I82094AA'], tags='x86 isa')
+ Source('i82094aa.cc', tags='x86 isa')
+ DebugFlag('I82094AA', tags='x86 isa')
++
++SimObject('X86QemuFwCfg.py', sim_objects=['QemuFwCfgItemE820'], tags='x86 isa')
++Source('qemu_fw_cfg.cc', tags='x86 isa')
+diff --git a/src/dev/x86/X86QemuFwCfg.py b/src/dev/x86/X86QemuFwCfg.py
+new file mode 100644
+index 0000000..6af2b79
+--- /dev/null
++++ b/src/dev/x86/X86QemuFwCfg.py
+@@ -0,0 +1,48 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.objects.E820 import X86E820Entry
++from m5.objects.QemuFwCfg import QemuFwCfgIo, QemuFwCfgItem
++
++def x86IOAddress(port):
++    IO_address_space_base = 0x8000000000000000
++    return IO_address_space_base + port;
++
++class X86QemuFwCfg(QemuFwCfgIo):
++    selector_addr = x86IOAddress(0x510)
++
++class QemuFwCfgItemE820(QemuFwCfgItem):
++    type = 'QemuFwCfgItemE820'
++    cxx_class = 'gem5::qemu::FwCfgItemFactory<gem5::qemu::FwCfgItemE820>'
++    cxx_template_params = ['class ItemType']
++    cxx_header = 'dev/x86/qemu_fw_cfg.hh'
++
++    # There is a fixed index for this file.
++    index = 0x8003
++    arch_specific = True
++    path = "etc/e820"
++
++    entries = VectorParam.X86E820Entry('entries for the e820 table')
+diff --git a/src/dev/x86/qemu_fw_cfg.cc b/src/dev/x86/qemu_fw_cfg.cc
+new file mode 100644
+index 0000000..40e768a
+--- /dev/null
++++ b/src/dev/x86/qemu_fw_cfg.cc
+@@ -0,0 +1,69 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/x86/qemu_fw_cfg.hh"
++
++#include "arch/x86/bios/e820.hh"
++#include "base/compiler.hh"
++#include "base/logging.hh"
++#include "sim/byteswap.hh"
++
++namespace gem5
++{
++
++namespace qemu
++{
++
++FwCfgItemE820::FwCfgItemE820(const QemuFwCfgItemE820Params &p) :
++    FwCfgItemFixed(p.path, p.arch_specific, p.index)
++{
++    struct GEM5_PACKED Entry
++    {
++        uint64_t addr;
++        uint64_t size;
++        uint32_t type;
++    };
++
++    uint32_t count = p.entries.size();
++
++    panic_if(count >= 128, "Too many E820 entries (%d).", count);
++
++    size_t bytes = count * sizeof(Entry);
++    data.resize(bytes);
++
++    uint8_t *ptr = data.data();
++
++    // Write out the e820 entries.
++    for (auto *e: p.entries) {
++        Entry entry{htole(e->addr), htole(e->size), htole(e->type)};
++        std::memcpy(ptr, &entry, sizeof(entry));
++        ptr += sizeof(entry);
++    }
++};
++
++} // namespace qemu
++} // namespace gem5
+diff --git a/src/dev/x86/qemu_fw_cfg.hh b/src/dev/x86/qemu_fw_cfg.hh
+new file mode 100644
+index 0000000..18f2638
+--- /dev/null
++++ b/src/dev/x86/qemu_fw_cfg.hh
+@@ -0,0 +1,58 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_X86_QEMU_FW_CFG_HH__
++#define __DEV_X86_QEMU_FW_CFG_HH__
++
++#include <vector>
++
++#include "dev/qemu/fw_cfg.hh"
++#include "params/QemuFwCfgItemE820.hh"
++
++namespace gem5
++{
++
++namespace qemu
++{
++
++// An item which holds the E820 table, precomputed for the firmware.
++class FwCfgItemE820 : public FwCfgItemFixed
++{
++  private:
++    std::vector<uint8_t> data;
++
++  public:
++    FwCfgItemE820(const QemuFwCfgItemE820Params &p);
++
++    const void *bytes() const override { return data.data(); }
++    uint64_t length() const override { return data.size(); }
++};
++
++} // namespace qemu
++} // namespace gem5
++
++#endif //__DEV_X86_QEMU_FW_CFG_HH__
+-- 
+1.8.3.1
+

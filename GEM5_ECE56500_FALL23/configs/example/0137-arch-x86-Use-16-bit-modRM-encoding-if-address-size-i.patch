@@ -1,0 +1,36 @@
+From c2c4303a07ae20af5268b08f673263102454b97e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 14 Jan 2022 00:15:21 -0800
+Subject: [PATCH 137/757] arch-x86: Use 16 bit modRM encoding if address size
+ is 16 bit.
+
+The modRM byte should be interpreted with 16 bit rules if the address
+size is 16 bits, whether that's because the address size is that by
+default, or because it was overridden. It should not be based on the
+operand size in any case.
+
+Change-Id: I8827abe1eea8905b0404f7402fb9531804d63fae
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55503
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/decoder.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/decoder.cc b/src/arch/x86/decoder.cc
+index 842e0ad..4c79872 100644
+--- a/src/arch/x86/decoder.cc
++++ b/src/arch/x86/decoder.cc
+@@ -515,7 +515,7 @@ Decoder::doModRMState(uint8_t nextByte)
+     State nextState = ErrorState;
+     ModRM modRM = nextByte;
+     DPRINTF(Decoder, "Found modrm byte %#x.\n", nextByte);
+-    if (defOp == 1) {
++    if (emi.addrSize == 2) {
+         // Figure out 16 bit displacement size.
+         if ((modRM.mod == 0 && modRM.rm == 6) || modRM.mod == 2)
+             displacementSize = 2;
+-- 
+1.8.3.1
+

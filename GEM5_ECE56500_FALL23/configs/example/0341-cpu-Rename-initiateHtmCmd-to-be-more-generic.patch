@@ -1,0 +1,285 @@
+From de9cdc28ceb61fe3e1bac82c51bce6eb34fdecb2 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 21 Sep 2021 17:32:01 +0100
+Subject: [PATCH 341/757] cpu: Rename initiateHtmCmd to be more generic
+
+To prepare for future CHI work, rename ExecContext::initiateHtmCmd to
+ExecContext::initiateSpecialMemCmd
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I7c7aed8ec06a66d9023c14dba37eae42907df222
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56598
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/insts/tme64ruby.cc |  8 ++++----
+ src/cpu/checker/cpu.hh          |  2 +-
+ src/cpu/exec_context.hh         | 12 ++++++++----
+ src/cpu/minor/exec_context.hh   |  7 ++++---
+ src/cpu/o3/dyn_inst.cc          |  2 +-
+ src/cpu/o3/dyn_inst.hh          |  4 ++--
+ src/cpu/simple/atomic.hh        |  8 ++++----
+ src/cpu/simple/base.hh          | 15 ++++++++++-----
+ src/cpu/simple/exec_context.hh  |  4 ++--
+ src/cpu/simple/timing.cc        |  4 ++--
+ src/cpu/simple/timing.hh        |  6 +++---
+ 11 files changed, 41 insertions(+), 31 deletions(-)
+
+diff --git a/src/arch/arm/insts/tme64ruby.cc b/src/arch/arm/insts/tme64ruby.cc
+index 8221154..3ddc735 100644
+--- a/src/arch/arm/insts/tme64ruby.cc
++++ b/src/arch/arm/insts/tme64ruby.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2020 ARM Limited
++ * Copyright (c) 2020-2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -77,7 +77,7 @@ Tstart64::initiateAcc(ExecContext *xc,
+             memAccessFlags = memAccessFlags | Request::NO_ACCESS;
+         }
+ 
+-        fault = xc->initiateHtmCmd(memAccessFlags);
++        fault = xc->initiateSpecialMemCmd(memAccessFlags);
+     }
+ 
+     return fault;
+@@ -175,7 +175,7 @@ Tcancel64::initiateAcc(ExecContext *xc, Trace::InstRecord *traceData) const
+     Request::Flags memAccessFlags =
+         Request::STRICT_ORDER|Request::PHYSICAL|Request::HTM_CANCEL;
+ 
+-    fault = xc->initiateHtmCmd(memAccessFlags);
++    fault = xc->initiateSpecialMemCmd(memAccessFlags);
+ 
+     return fault;
+ }
+@@ -231,7 +231,7 @@ MicroTcommit64::initiateAcc(ExecContext *xc,
+         memAccessFlags = memAccessFlags | Request::NO_ACCESS;
+     }
+ 
+-    fault = xc->initiateHtmCmd(memAccessFlags);
++    fault = xc->initiateSpecialMemCmd(memAccessFlags);
+ 
+     return fault;
+ }
+diff --git a/src/cpu/checker/cpu.hh b/src/cpu/checker/cpu.hh
+index 5a0d322..cdb7f19 100644
+--- a/src/cpu/checker/cpu.hh
++++ b/src/cpu/checker/cpu.hh
+@@ -242,7 +242,7 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     };
+ 
+     Fault
+-    initiateHtmCmd(Request::Flags flags) override
++    initiateSpecialMemCmd(Request::Flags flags) override
+     {
+         panic("not yet supported!");
+         return NoFault;
+diff --git a/src/cpu/exec_context.hh b/src/cpu/exec_context.hh
+index 60c8167..ece0c9c 100644
+--- a/src/cpu/exec_context.hh
++++ b/src/cpu/exec_context.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014, 2016-2018, 2020 ARM Limited
++ * Copyright (c) 2014, 2016-2018, 2020-2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -144,10 +144,14 @@ class ExecContext
+     }
+ 
+     /**
+-     * Initiate an HTM command,
+-     * e.g. tell Ruby we're starting/stopping a transaction
++     * Initiate a Special memory command with no valid address.
++     * Currently, these instructions need to bypass squashing in the O3 model
++     * Examples include HTM commands and TLBI commands.
++     * e.g. tell Ruby we're starting/stopping a HTM transaction,
++     *      or tell Ruby to issue a TLBI operation
+      */
+-    virtual Fault initiateHtmCmd(Request::Flags flags) = 0;
++    virtual Fault initiateSpecialMemCmd(Request::Flags flags) = 0;
++
+     /**
+      * For atomic-mode contexts, perform an atomic memory write operation.
+      * For timing-mode contexts, initiate a timing memory write operation.
+diff --git a/src/cpu/minor/exec_context.hh b/src/cpu/minor/exec_context.hh
+index 43dad26..c95550f 100644
+--- a/src/cpu/minor/exec_context.hh
++++ b/src/cpu/minor/exec_context.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2011-2014, 2016-2018, 2020 ARM Limited
++ * Copyright (c) 2011-2014, 2016-2018, 2020-2021 ARM Limited
+  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+  * All rights reserved
+  *
+@@ -116,9 +116,10 @@ class ExecContext : public gem5::ExecContext
+     }
+ 
+     Fault
+-    initiateHtmCmd(Request::Flags flags) override
++    initiateSpecialMemCmd(Request::Flags flags) override
+     {
+-        panic("ExecContext::initiateHtmCmd() not implemented on MinorCPU\n");
++        panic("ExecContext::initiateSpecialMemCmd() not implemented "
++              " on MinorCPU\n");
+         return NoFault;
+     }
+ 
+diff --git a/src/cpu/o3/dyn_inst.cc b/src/cpu/o3/dyn_inst.cc
+index 4769896..8eb270a 100644
+--- a/src/cpu/o3/dyn_inst.cc
++++ b/src/cpu/o3/dyn_inst.cc
+@@ -410,7 +410,7 @@ DynInst::initiateMemRead(Addr addr, unsigned size, Request::Flags flags,
+ }
+ 
+ Fault
+-DynInst::initiateHtmCmd(Request::Flags flags)
++DynInst::initiateSpecialMemCmd(Request::Flags flags)
+ {
+     const unsigned int size = 8;
+     return cpu->pushRequest(
+diff --git a/src/cpu/o3/dyn_inst.hh b/src/cpu/o3/dyn_inst.hh
+index c083d50..d4ddb33 100644
+--- a/src/cpu/o3/dyn_inst.hh
++++ b/src/cpu/o3/dyn_inst.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010, 2016 ARM Limited
++ * Copyright (c) 2010, 2016, 2021 ARM Limited
+  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+  * All rights reserved
+  *
+@@ -397,7 +397,7 @@ class DynInst : public ExecContext, public RefCounted
+     Fault initiateMemRead(Addr addr, unsigned size, Request::Flags flags,
+             const std::vector<bool> &byte_enable) override;
+ 
+-    Fault initiateHtmCmd(Request::Flags flags) override;
++    Fault initiateSpecialMemCmd(Request::Flags flags) override;
+ 
+     Fault writeMem(uint8_t *data, unsigned size, Addr addr,
+                    Request::Flags flags, uint64_t *res,
+diff --git a/src/cpu/simple/atomic.hh b/src/cpu/simple/atomic.hh
+index c0d0f1d..d7ab9c2 100644
+--- a/src/cpu/simple/atomic.hh
++++ b/src/cpu/simple/atomic.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013, 2015, 2018, 2020 ARM Limited
++ * Copyright (c) 2012-2013, 2015, 2018, 2020-2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -224,10 +224,10 @@ class AtomicSimpleCPU : public BaseSimpleCPU
+         override;
+ 
+     Fault
+-    initiateHtmCmd(Request::Flags flags) override
++    initiateSpecialMemCmd(Request::Flags flags) override
+     {
+-        panic("initiateHtmCmd() is for timing accesses, and should "
+-              "never be called on AtomicSimpleCPU.\n");
++        panic("initiateSpecialMemCmd() is for timing accesses, and "
++              "should never be called on AtomicSimpleCPU.\n");
+     }
+ 
+     void
+diff --git a/src/cpu/simple/base.hh b/src/cpu/simple/base.hh
+index 45fd5ea..4949ebc 100644
+--- a/src/cpu/simple/base.hh
++++ b/src/cpu/simple/base.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2011-2012,2015,2018,2020 ARM Limited
++ * Copyright (c) 2011-2012,2015,2018,2020-2021 ARM Limited
+  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+  * All rights reserved
+  *
+@@ -190,11 +190,16 @@ class BaseSimpleCPU : public BaseCPU
+     void serializeThread(CheckpointOut &cp, ThreadID tid) const override;
+     void unserializeThread(CheckpointIn &cp, ThreadID tid) override;
+ 
+-    /** Hardware transactional memory commands (HtmCmds), e.g. start a
++    /**
++     * Special memory commands such as hardware transactional memory
++     * commands (HtmCmds) or TLBI commands, e.g. start a
+      * transaction and commit a transaction, are memory operations but are
+-     * neither really (true) loads nor stores. For this reason the interface
+-     * is extended and initiateHtmCmd() is used to instigate the command. */
+-    virtual Fault initiateHtmCmd(Request::Flags flags) = 0;
++     * neither really (true) loads nor stores.
++     * For this reason the interface is extended,
++     * and initiateSpecialMemCmd() is used to instigate the command.
++     */
++    virtual Fault initiateSpecialMemCmd(Request::Flags flags) = 0;
++
+ };
+ 
+ } // namespace gem5
+diff --git a/src/cpu/simple/exec_context.hh b/src/cpu/simple/exec_context.hh
+index 22ccafe..6f4e26b 100644
+--- a/src/cpu/simple/exec_context.hh
++++ b/src/cpu/simple/exec_context.hh
+@@ -446,9 +446,9 @@ class SimpleExecContext : public ExecContext
+     }
+ 
+     Fault
+-    initiateHtmCmd(Request::Flags flags) override
++    initiateSpecialMemCmd(Request::Flags flags) override
+     {
+-        return cpu->initiateHtmCmd(flags);
++        return cpu->initiateSpecialMemCmd(flags);
+     }
+ 
+     /**
+diff --git a/src/cpu/simple/timing.cc b/src/cpu/simple/timing.cc
+index d562c17..d791e3f 100644
+--- a/src/cpu/simple/timing.cc
++++ b/src/cpu/simple/timing.cc
+@@ -1,6 +1,6 @@
+ /*
+  * Copyright 2014 Google, Inc.
+- * Copyright (c) 2010-2013,2015,2017-2018, 2020 ARM Limited
++ * Copyright (c) 2010-2013,2015,2017-2018, 2020-2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1216,7 +1216,7 @@ TimingSimpleCPU::printAddr(Addr a)
+ }
+ 
+ Fault
+-TimingSimpleCPU::initiateHtmCmd(Request::Flags flags)
++TimingSimpleCPU::initiateSpecialMemCmd(Request::Flags flags)
+ {
+     SimpleExecContext &t_info = *threadInfo[curThread];
+     SimpleThread* thread = t_info.thread;
+diff --git a/src/cpu/simple/timing.hh b/src/cpu/simple/timing.hh
+index b211ab1..3dbdcad 100644
+--- a/src/cpu/simple/timing.hh
++++ b/src/cpu/simple/timing.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013,2015,2018,2020 ARM Limited
++ * Copyright (c) 2012-2013,2015,2018,2020-2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -324,8 +324,8 @@ class TimingSimpleCPU : public BaseSimpleCPU
+      */
+     void finishTranslation(WholeTranslationState *state);
+ 
+-    /** hardware transactional memory **/
+-    Fault initiateHtmCmd(Request::Flags flags) override;
++    /** hardware transactional memory & TLBI operations **/
++    Fault initiateSpecialMemCmd(Request::Flags flags) override;
+ 
+     void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
+                             HtmFailureFaultCause) override;
+-- 
+1.8.3.1
+

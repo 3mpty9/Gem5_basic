@@ -1,0 +1,89 @@
+From c537d9ad105ba41cb508ee462beb921879b4f609 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 9 Aug 2021 23:35:58 -0700
+Subject: [PATCH 159/757] arch-arm,cpu: Add a class for ops for vec reg
+ elements.
+
+This lets a caller print the name of a register in a friendly way
+without having to know how many elements go with each vector register.
+
+Change-Id: I85598c078c604f1bebdba797308102482639c209
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49163
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.cc  |  5 ++++-
+ src/cpu/reg_class.cc |  8 ++++++++
+ src/cpu/reg_class.hh | 13 +++++++++++++
+ 3 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index ed3bea2..5c8c743 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -80,6 +80,8 @@ class MiscRegClassOps : public RegClassOps
+     }
+ } miscRegClassOps;
+ 
++VecElemRegClassOps vecRegElemClassOps(NumVecElemPerVecReg);
++
+ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _decoderFlavor(p.decoderFlavor), pmu(p.pmu), impdefAsNop(p.impdef_nop),
+     afterStartup(false)
+@@ -87,7 +89,8 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _regClasses.emplace_back(NUM_INTREGS, INTREG_ZERO);
+     _regClasses.emplace_back(0);
+     _regClasses.emplace_back(NumVecRegs);
+-    _regClasses.emplace_back(NumVecRegs * TheISA::NumVecElemPerVecReg);
++    _regClasses.emplace_back(NumVecRegs * NumVecElemPerVecReg,
++            vecRegElemClassOps);
+     _regClasses.emplace_back(NumVecPredRegs);
+     _regClasses.emplace_back(NUM_CCREGS);
+     _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps);
+diff --git a/src/cpu/reg_class.cc b/src/cpu/reg_class.cc
+index fc39e42..b667838 100644
+--- a/src/cpu/reg_class.cc
++++ b/src/cpu/reg_class.cc
+@@ -50,6 +50,14 @@ DefaultRegClassOps::regName(const RegId &id) const
+     return csprintf("r%d", id.index());
+ }
+ 
++std::string
++VecElemRegClassOps::regName(const RegId &id) const
++{
++    RegIndex reg_idx = id.index() / elemsPerVec;
++    RegIndex elem_idx = id.index() % elemsPerVec;
++    return csprintf("v%d[%d]", reg_idx, elem_idx);
++}
++
+ const char *RegId::regClassStrings[] = {
+     "IntRegClass",
+     "FloatRegClass",
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index 3c3a656..da6be67 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -79,6 +79,19 @@ class DefaultRegClassOps : public RegClassOps
+     std::string regName(const RegId &id) const override;
+ };
+ 
++class VecElemRegClassOps : public RegClassOps
++{
++  protected:
++    size_t elemsPerVec;
++
++  public:
++    explicit VecElemRegClassOps(size_t elems_per_vec) :
++        elemsPerVec(elems_per_vec)
++    {}
++
++    std::string regName(const RegId &id) const override;
++};
++
+ class RegClass
+ {
+   private:
+-- 
+1.8.3.1
+

@@ -1,0 +1,53 @@
+From f9deeea4271d02e1bdbc0bb3745908f40246d7ce Mon Sep 17 00:00:00 2001
+From: Kyle Roarty <kyleroarty1716@gmail.com>
+Date: Sat, 18 Dec 2021 17:42:04 -0600
+Subject: [PATCH 062/757] arch-gcn3,arch-vega: Select proper data on misaligned
+ access
+
+req1->getSize() returns the size in bytes, but because we're using it
+in an array index, we need to scale it by the size of the data type.
+
+This ensures we give the second request the proper data.
+
+Change-Id: I578665406762d5d0c95f2ea8297c362e1cc0620b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54503
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+---
+ src/arch/amdgpu/gcn3/gpu_mem_helpers.hh | 3 ++-
+ src/arch/amdgpu/vega/gpu_mem_helpers.hh | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh b/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
+index 009bb7c..05299e1 100644
+--- a/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
++++ b/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
+@@ -107,7 +107,8 @@ initMemReqHelper(GPUDynInstPtr gpuDynInst, MemCmd mem_req_type,
+                 pkt1->dataStatic(&(reinterpret_cast<T*>(
+                     gpuDynInst->d_data))[lane * N]);
+                 pkt2->dataStatic(&(reinterpret_cast<T*>(
+-                    gpuDynInst->d_data))[lane * N + req1->getSize()]);
++                    gpuDynInst->d_data))[lane * N +
++                                         req1->getSize()/sizeof(T)]);
+                 DPRINTF(GPUMem, "CU%d: WF[%d][%d]: index: %d unaligned memory "
+                         "request for %#x\n", gpuDynInst->cu_id,
+                         gpuDynInst->simdId, gpuDynInst->wfSlotId, lane,
+diff --git a/src/arch/amdgpu/vega/gpu_mem_helpers.hh b/src/arch/amdgpu/vega/gpu_mem_helpers.hh
+index c60325d..a5a9ec9 100644
+--- a/src/arch/amdgpu/vega/gpu_mem_helpers.hh
++++ b/src/arch/amdgpu/vega/gpu_mem_helpers.hh
+@@ -107,7 +107,8 @@ initMemReqHelper(GPUDynInstPtr gpuDynInst, MemCmd mem_req_type,
+                 pkt1->dataStatic(&(reinterpret_cast<T*>(
+                     gpuDynInst->d_data))[lane * N]);
+                 pkt2->dataStatic(&(reinterpret_cast<T*>(
+-                    gpuDynInst->d_data))[lane * N + req1->getSize()]);
++                    gpuDynInst->d_data))[lane * N +
++                                         req1->getSize()/sizeof(T)]);
+                 DPRINTF(GPUMem, "CU%d: WF[%d][%d]: index: %d unaligned memory "
+                         "request for %#x\n", gpuDynInst->cu_id,
+                         gpuDynInst->simdId, gpuDynInst->wfSlotId, lane,
+-- 
+1.8.3.1
+

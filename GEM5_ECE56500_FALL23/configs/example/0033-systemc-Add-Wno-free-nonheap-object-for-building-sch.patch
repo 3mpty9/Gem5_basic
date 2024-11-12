@@ -1,0 +1,54 @@
+From 5762f66288e918bb4e585bd02dbaa8a37f140c91 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Mon, 13 Dec 2021 15:20:56 +0800
+Subject: [PATCH 033/757] systemc: Add -Wno-free-nonheap-object for building
+ scheduler.cc
+
+GCC11 introduces a new warning, free-nonheap-object, which would check
+if the code potentially calls delete with a nonheap object. The
+scheduler is a global object, and its events members fall to this case.
+
+Here's a simplified example.
+https://godbolt.org/z/q6GqEfETa
+
+We think this is a false positive warning, since we set auto delete to
+false in the event constructor. To avoid performance penalty, we want to
+keep current implementation. As the result, we disable the warning in
+the SConscript.
+
+Change-Id: I606ebfdec0af7c78d7bbb336faa1f587caa62855
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54064
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/systemc/core/SConscript | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/systemc/core/SConscript b/src/systemc/core/SConscript
+index 8805e9b..45bad4f 100644
+--- a/src/systemc/core/SConscript
++++ b/src/systemc/core/SConscript
+@@ -39,7 +39,6 @@ if env['USE_SYSTEMC']:
+     Source('object.cc')
+     Source('port.cc')
+     Source('process.cc')
+-    Source('scheduler.cc')
+     Source('sched_event.cc')
+     Source('sensitivity.cc')
+     Source('time.cc')
+@@ -72,3 +71,11 @@ if env['USE_SYSTEMC']:
+                     append['CCFLAGS'] = [flag]
+                     break
+         Source('sc_time_python.cc', append=append)
++
++    # Disable the false positive warning for the event members of the scheduler.
++    with gem5_scons.Configure(main) as conf:
++        flag = '-Wno-free-nonheap-object'
++        append = {}
++        if conf.CheckCxxFlag(flag, autoadd=False):
++            append['CCFLAGS'] = [flag]
++        Source('scheduler.cc', append=append)
+-- 
+1.8.3.1
+

@@ -1,0 +1,101 @@
+From 70fd98e807001debdbd48a3a9c8df8faea84cbc3 Mon Sep 17 00:00:00 2001
+From: Jerin Joy <joy@rivosinc.com>
+Date: Fri, 1 Apr 2022 11:55:46 -0700
+Subject: [PATCH 561/757] arch-riscv: Added the Zbs bitmanip instructions
+
+Added the bclr, bclri, bext, bexti, binv, binvi, bset, bseti
+instructions.
+
+Changes based on spec:
+https://github.com/riscv/riscv-bitmanip/releases/download/1.0.0/bitmanip-1.0.0.pdf
+
+Change-Id: I126d659d973b250b642bd56b3b149f0ee6a3323e
+Signed-off-by: Jerin Joy <joy@rivosinc.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58632
+Reviewed-by: Luming Wang <wlm199558@126.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/riscv/isa/decoder.isa | 40 +++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index bc3368f..cb46ec5 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -432,9 +432,23 @@ decode QUADRANT default Unknown::unknown() {
+ 
+         0x04: decode FUNCT3 {
+             0x1: decode FS3 {
+-                0x00: IOp::slli({{
+-                    Rd = Rs1 << imm;
+-                }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                format IOp {
++                    0x00: slli({{
++                        Rd = Rs1 << imm;
++                    }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                    0x05: bseti({{
++                        uint64_t index = imm & (64 - 1);
++                        Rd = Rs1 | (UINT64_C(1) << index);
++                    }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                    0x09: bclri({{
++                        uint64_t index = imm & (64 - 1);
++                        Rd = Rs1 & (~(UINT64_C(1) << index));
++                    }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                    0x0d: binvi({{
++                        uint64_t index = imm & (64 - 1);
++                        Rd = Rs1 ^ (UINT64_C(1) << index);
++                    }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                }
+                 format ROp {
+                     0x0c: decode RS2 {
+                         0x00: clz({{
+@@ -487,6 +501,10 @@ decode QUADRANT default Unknown::unknown() {
+                     0x8: srai({{
+                         Rd_sd = Rs1_sd >> imm;
+                     }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
++                    0x9: bexti({{
++                        uint64_t index = imm & (64 - 1);
++                        Rd = (Rs1 >> index) & 0x1;
++                    }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
+                     0xc: rori({{
+                         Rd = (Rs1 >> imm) | (Rs1 << ((64 - imm) & (64 - 1)));
+                     }}, imm_type = uint64_t, imm_code = {{ imm = SHAMT6; }});
+@@ -784,10 +802,22 @@ decode QUADRANT default Unknown::unknown() {
+                             }
+                         }
+                     }});
++                    0x14: bset({{
++                        Rs2 &= (64 - 1);
++                        Rd = Rs1 | (UINT64_C(1) << Rs2);
++                    }});
++                    0x24: bclr({{
++                        Rs2 &= (64 - 1);
++                        Rd = Rs1 & (~(UINT64_C(1) << Rs2));
++                    }});
+                     0x30: rol({{
+                         int shamt = Rs2 & (64 - 1);
+                         Rd = (Rs1 << shamt) | (Rs1 >> ((64 - shamt) & (64 - 1)));
+                     }});
++                    0x34: binv({{
++                        Rs2 &= (64 - 1);
++                        Rd = Rs1 ^ (UINT64_C(1) << Rs2);
++                    }});
+                 }
+                 0x2: decode FUNCT7 {
+                     0x0: slt({{
+@@ -895,6 +925,10 @@ decode QUADRANT default Unknown::unknown() {
+                     0x5: minu({{
+                         Rd = Rs1 < Rs2 ? Rs1 : Rs2;
+                     }});
++                    0x24: bext({{
++                        Rs2 &= (64 - 1);
++                        Rd = (Rs1 >> Rs2) & 0x1;
++                    }});
+                     0x30: ror({{
+                         int shamt = Rs2 & (64 - 1);
+                         Rd = (Rs1 >> shamt) | (Rs1 << ((64 - shamt) & (64 - 1)));
+-- 
+1.8.3.1
+

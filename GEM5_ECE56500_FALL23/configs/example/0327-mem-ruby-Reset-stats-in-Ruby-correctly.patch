@@ -1,0 +1,31 @@
+From 01785b5d0e3869d74611457b6952b6cb755797f2 Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Tue, 1 Mar 2022 15:47:39 -0800
+Subject: [PATCH 327/757] mem-ruby: Reset stats in Ruby correctly
+
+Change-Id: Ie60c6f4be7b2a2705dc6da77b8b3d03717f13188
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57269
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/mem/ruby/system/RubySystem.cc | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/mem/ruby/system/RubySystem.cc b/src/mem/ruby/system/RubySystem.cc
+index 76d3f25..91c4bc3 100644
+--- a/src/mem/ruby/system/RubySystem.cc
++++ b/src/mem/ruby/system/RubySystem.cc
+@@ -477,6 +477,7 @@ RubySystem::resetStats()
+     for (auto& network : m_networks) {
+         network->resetStats();
+     }
++    ClockedObject::resetStats();
+ }
+ 
+ #ifndef PARTIAL_FUNC_READS
+-- 
+1.8.3.1
+

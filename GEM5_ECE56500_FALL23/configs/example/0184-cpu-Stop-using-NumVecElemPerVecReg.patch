@@ -1,0 +1,201 @@
+From a00a6f953f8ce211fbd5885a0b941ddd67da0bed Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 10 Aug 2021 00:16:54 -0700
+Subject: [PATCH 184/757] cpu: Stop using NumVecElemPerVecReg.
+
+Use the register classes regName method, or if necessary, the ratio
+between the size of the vector register file and the vector element
+register file.
+
+Change-Id: Ibf63ce2b3cc3e3cc3261e5a9b8dcbfdc0af5035b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49164
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/cpu/minor/dyn_inst.cc |  3 +--
+ src/cpu/o3/inst_queue.cc  |  5 ++++-
+ src/cpu/o3/regfile.cc     | 24 ++++++++++++------------
+ src/cpu/o3/regfile.hh     | 16 +++++++---------
+ src/cpu/simple_thread.hh  | 12 ++++++------
+ 5 files changed, 30 insertions(+), 30 deletions(-)
+
+diff --git a/src/cpu/minor/dyn_inst.cc b/src/cpu/minor/dyn_inst.cc
+index aa35689..e01d990 100644
+--- a/src/cpu/minor/dyn_inst.cc
++++ b/src/cpu/minor/dyn_inst.cc
+@@ -152,8 +152,7 @@ printRegName(std::ostream &os, const RegId& reg,
+         os << 'v' << reg.index();
+         break;
+       case VecElemClass:
+-        os << 'v' << (reg.index() / TheISA::NumVecElemPerVecReg) << '[' <<
+-            (reg.index() % TheISA::NumVecElemPerVecReg) << ']';
++        os << reg_class.regName(reg);
+         break;
+       case IntRegClass:
+         if (reg.index() == reg_class.zeroReg()) {
+diff --git a/src/cpu/o3/inst_queue.cc b/src/cpu/o3/inst_queue.cc
+index 3f90064..834ae41 100644
+--- a/src/cpu/o3/inst_queue.cc
++++ b/src/cpu/o3/inst_queue.cc
+@@ -99,11 +99,14 @@ InstructionQueue::InstructionQueue(CPU *cpu_ptr, IEW *iew_ptr,
+ {
+     assert(fuPool);
+ 
++    const auto &reg_classes = params.isa[0]->regClasses();
+     // Set the number of total physical registers
+     // As the vector registers have two addressing modes, they are added twice
+     numPhysRegs = params.numPhysIntRegs + params.numPhysFloatRegs +
+                     params.numPhysVecRegs +
+-                    params.numPhysVecRegs * TheISA::NumVecElemPerVecReg +
++                    params.numPhysVecRegs * (
++                            reg_classes.at(VecElemClass).size() /
++                            reg_classes.at(VecRegClass).size()) +
+                     params.numPhysVecPredRegs +
+                     params.numPhysCCRegs;
+ 
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index 7001c8e..c0c122d 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -54,26 +54,30 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+                          unsigned _numPhysicalVecRegs,
+                          unsigned _numPhysicalVecPredRegs,
+                          unsigned _numPhysicalCCRegs,
+-                         const BaseISA::RegClasses &regClasses)
++                         const BaseISA::RegClasses &classes)
+     : intRegFile(_numPhysicalIntRegs),
+       floatRegFile(_numPhysicalFloatRegs),
+       vectorRegFile(_numPhysicalVecRegs),
+-      vectorElemRegFile(_numPhysicalVecRegs * TheISA::NumVecElemPerVecReg),
++      vectorElemRegFile(_numPhysicalVecRegs * (
++                  classes.at(VecElemClass).size() /
++                  classes.at(VecRegClass).size())),
+       vecPredRegFile(_numPhysicalVecPredRegs),
+       ccRegFile(_numPhysicalCCRegs),
+       numPhysicalIntRegs(_numPhysicalIntRegs),
+       numPhysicalFloatRegs(_numPhysicalFloatRegs),
+       numPhysicalVecRegs(_numPhysicalVecRegs),
+-      numPhysicalVecElemRegs(_numPhysicalVecRegs *
+-                             TheISA::NumVecElemPerVecReg),
++      numPhysicalVecElemRegs(_numPhysicalVecRegs * (
++                  classes.at(VecElemClass).size() /
++                  classes.at(VecRegClass).size())),
+       numPhysicalVecPredRegs(_numPhysicalVecPredRegs),
+       numPhysicalCCRegs(_numPhysicalCCRegs),
+       totalNumRegs(_numPhysicalIntRegs
+                    + _numPhysicalFloatRegs
+                    + _numPhysicalVecRegs
+-                   + _numPhysicalVecRegs * TheISA::NumVecElemPerVecReg
++                   + numPhysicalVecElemRegs
+                    + _numPhysicalVecPredRegs
+-                   + _numPhysicalCCRegs)
++                   + _numPhysicalCCRegs),
++      regClasses(classes)
+ {
+     RegIndex phys_reg;
+     RegIndex flat_reg_idx = 0;
+@@ -99,9 +103,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+     }
+     // The next batch of the registers are the vector element physical
+     // registers; put them onto the vector free list.
+-    for (phys_reg = 0;
+-            phys_reg < numPhysicalVecRegs * TheISA::NumVecElemPerVecReg;
+-            phys_reg++) {
++    for (phys_reg = 0; phys_reg < numPhysicalVecElemRegs; phys_reg++) {
+         vecElemIds.emplace_back(VecElemClass, phys_reg, flat_reg_idx++);
+     }
+ 
+@@ -150,9 +152,7 @@ PhysRegFile::initFreeList(UnifiedFreeList *freeList)
+         assert(vecRegIds[reg_idx].index() == reg_idx);
+     }
+     freeList->addRegs(vecRegIds.begin(), vecRegIds.end());
+-    for (reg_idx = 0;
+-            reg_idx < numPhysicalVecRegs * TheISA::NumVecElemPerVecReg;
+-            reg_idx++) {
++    for (reg_idx = 0; reg_idx < numPhysicalVecElemRegs; reg_idx++) {
+         assert(vecElemIds[reg_idx].index() == reg_idx);
+     }
+     freeList->addRegs(vecElemIds.begin(), vecElemIds.end());
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index d97f977..b98d5ef 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -132,6 +132,8 @@ class PhysRegFile
+     /** Total number of physical registers. */
+     unsigned totalNumRegs;
+ 
++    const BaseISA::RegClasses &regClasses;
++
+   public:
+     /**
+      * Constructs a physical register file with the specified amount of
+@@ -142,7 +144,7 @@ class PhysRegFile
+                 unsigned _numPhysicalVecRegs,
+                 unsigned _numPhysicalVecPredRegs,
+                 unsigned _numPhysicalCCRegs,
+-                const BaseISA::RegClasses &regClasses);
++                const BaseISA::RegClasses &classes);
+ 
+     /**
+      * Destructor to free resources
+@@ -227,10 +229,8 @@ class PhysRegFile
+     {
+         assert(phys_reg->is(VecElemClass));
+         RegVal val = vectorElemRegFile[phys_reg->index()];
+-        DPRINTF(IEW, "RegFile: Access to element %d of vector register %i,"
+-                " has data %#x\n",
+-                phys_reg->index() / TheISA::NumVecElemPerVecReg,
+-                phys_reg->index() % TheISA::NumVecElemPerVecReg, val);
++        DPRINTF(IEW, "RegFile: Access to vector register element %d,"
++                " has data %#x\n", phys_reg->index(), val);
+ 
+         return val;
+     }
+@@ -311,10 +311,8 @@ class PhysRegFile
+     {
+         assert(phys_reg->is(VecElemClass));
+ 
+-        DPRINTF(IEW, "RegFile: Setting element %d of vector register %i to"
+-                " %#x\n",
+-                phys_reg->index() / TheISA::NumVecElemPerVecReg,
+-                phys_reg->index() % TheISA::NumVecElemPerVecReg, val);
++        DPRINTF(IEW, "RegFile: Setting vector register element %d to %#x\n",
++                phys_reg->index(), val);
+ 
+         vectorElemRegFile[phys_reg->index()] = val;
+     }
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 74ddcb4..ab6ce03 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -313,9 +313,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+         int flatIndex = isa->flattenVecElemIndex(reg.index());
+         assert(flatIndex < vecElemRegs.size());
+         RegVal regVal = readVecElemFlat(flatIndex);
+-        DPRINTF(VecRegs, "Reading element %d of vector reg %d (%d) as"
+-                " %#x.\n", reg.index() % TheISA::NumVecElemPerVecReg,
+-                reg.index() / TheISA::NumVecElemPerVecReg, flatIndex, regVal);
++        DPRINTF(VecRegs, "Reading vector register element %s (%d) as %#x.\n",
++                isa->regClasses().at(VecElemClass).regName(reg), flatIndex,
++                regVal);
+         return regVal;
+     }
+ 
+@@ -395,9 +395,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+         int flatIndex = isa->flattenVecElemIndex(reg.index());
+         assert(flatIndex < vecElemRegs.size());
+         setVecElemFlat(flatIndex, val);
+-        DPRINTF(VecRegs, "Setting element %d of vector reg %d (%d) to"
+-                " %#x.\n", reg.index() % TheISA::NumVecElemPerVecReg,
+-                reg.index() / TheISA::NumVecElemPerVecReg, flatIndex, val);
++        DPRINTF(VecRegs, "Setting vector register element %s (%d) to %#x.\n",
++                isa->regClasses().at(VecElemClass).regName(reg), flatIndex,
++                val);
+     }
+ 
+     void
+-- 
+1.8.3.1
+

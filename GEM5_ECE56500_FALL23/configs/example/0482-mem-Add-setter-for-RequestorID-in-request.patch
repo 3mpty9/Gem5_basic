@@ -1,0 +1,39 @@
+From 9df61a8aea57561cc32d7ef6726c5c277d860bc7 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 14 Mar 2022 22:56:25 -0500
+Subject: [PATCH 482/757] mem: Add setter for RequestorID in request
+
+This is more convenient than setVirt for changing the requestor ID. This
+field is modified frequently in disjoint Ruby network topologies to
+specify which Ruby network a request should be routed through.
+
+Change-Id: If37d13207e3b2b5c62362bab9a0e1250c392be63
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57650
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index b68edd2..8b6527c 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -812,6 +812,12 @@ class Request
+         return _requestorId;
+     }
+ 
++    void
++    requestorId(RequestorID rid)
++    {
++        _requestorId = rid;
++    }
++
+     uint32_t
+     taskId() const
+     {
+-- 
+1.8.3.1
+

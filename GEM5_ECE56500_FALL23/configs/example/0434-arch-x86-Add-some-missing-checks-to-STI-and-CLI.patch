@@ -1,0 +1,204 @@
+From 36618ad057c149c7e1566d1a749a4fc8754a7be4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 24 Jan 2022 05:37:20 -0800
+Subject: [PATCH 434/757] arch-x86: Add some missing checks to STI and CLI.
+
+Also make sure those instructions won't truncate the flags register.
+
+Change-Id: Id55a4454480cd20ca462c08b93043254a9962dfe
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55892
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa      |   2 +
+ .../insts/general_purpose/flags/set_and_clear.py   | 131 +++++++++++++++++----
+ 2 files changed, 112 insertions(+), 21 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index f4236a9..e5ad019 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -606,10 +606,12 @@
+             0x1: STC();
+             0x2: decode MODE_SUBMODE {
+                 0x3: CLI_VIRT();
++                0x4: CLI_REAL();
+                 default: CLI();
+             }
+             0x3: decode MODE_SUBMODE {
+                 0x3: STI_VIRT();
++                0x4: STI_REAL();
+                 default: STI();
+             }
+             0x4: CLD();
+diff --git a/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py b/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
+index 63b37bb..2f2b2ce 100644
+--- a/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
++++ b/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
+@@ -35,41 +35,89 @@
+ 
+ microcode = '''
+ def macroop CLD {
+-    ruflags t1
++    ruflags t1, dataSize=8
+     limm t2, "~((uint64_t)DFBit)", dataSize=8
+-    and t1, t1, t2
+-    wruflags t1, t0
++    and t1, t1, t2, dataSize=8
++    wruflags t1, t0, dataSize=8
+ };
+ 
+ def macroop STD {
+-    ruflags t1
++    ruflags t1, dataSize=8
+     limm t2, "DFBit", dataSize=8
+-    or t1, t1, t2
+-    wruflags t1, t0
++    or t1, t1, t2, dataSize=8
++    wruflags t1, t0, dataSize=8
+ };
+ 
+ def macroop CLC {
+-    ruflags t1
+-    andi t2, t1, "CFBit"
+-    wruflags t1, t2
++    ruflags t1, dataSize=8
++    limm t2, "~((uint64_t)CFBit)", dataSize=8
++    and t1, t1, t2, dataSize=8
++    wruflags t1, t0, dataSize=8
+ };
+ 
+ def macroop STC {
+-    ruflags t1
+-    ori t1, t1, "CFBit"
+-    wruflags t1, t0
++    ruflags t1, dataSize=8
++    ori t1, t1, "CFBit", dataSize=8
++    wruflags t1, t0, dataSize=8
+ };
+ 
+ def macroop CMC {
+-    ruflags t1
+-    wruflagsi t1, "CFBit"
++    ruflags t1, dataSize=8
++    wruflagsi t1, "CFBit", dataSize=8
+ };
+ 
+ def macroop STI {
+-    rflags t1
++    rflags t1, dataSize=8
++
++    # Extract the IOPL.
++    srli t2, t1, 12, dataSize=8
++    andi t2, t1, 0x3, dataSize=8
++
++    # Find the CPL.
++    rdm5reg t3, dataSize=8
++    srli t3, t3, 4, dataSize=8
++    andi t3, t3, 0x3, dataSize=8
++
++    # if !(CPL > IOPL), jump down to setting IF.
++    sub t0, t2, t3, flags=(ECF,), dataSize=8
++    br label("setIf"), flags=(nCECF,)
++
++    # if (CR4.PVI == 1 && CPL == 3) {
++    # } else GP
++
++    # Check CR4.PVI
++    rdcr t4, cr4, dataSize=8
++    andi t0, t4, 0x1, flags=(CEZF,)
++    fault "std::make_shared<GeneralProtection>(0)", flags=(CEZF,)
++
++    # Check CPL.
++    andi t4, t3, 0x3, dataSize=8
++    xori t4, t4, 0x3, dataSize=8, flags=(CEZF,)
++    fault "std::make_shared<GeneralProtection>(0)", flags=(nCEZF,)
++
++    #     if (RFLAGS.VIP == 1)
++    #         EXCEPTION[#GP(0)]
++
++    # Check RFLAGS.VIP == 1
++    rflag t0, "VIPBit"
++    fault "std::make_shared<GeneralProtection>(0)", flags=(nCEZF,)
++
++    limm t2, "VIFBit", dataSize=8
++    br label("setBitInT2")
++
++setIf:
+     limm t2, "IFBit", dataSize=8
+-    or t1, t1, t2
+-    wrflags t1, t0
++
++setBitInT2:
++    or t1, t1, t2, dataSize=8
++    wrflags t1, t0, dataSize=8
++};
++
++def macroop STI_REAL {
++    rflags t1, dataSize=8
++    limm t2, "IFBit", dataSize=8
++    or t1, t1, t2, dataSize=8
++    wrflags t1, t0, dataSize=8
+ };
+ 
+ def macroop STI_VIRT {
+@@ -77,10 +125,51 @@ def macroop STI_VIRT {
+ };
+ 
+ def macroop CLI {
+-    rflags t1
+-    limm t2, "~IFBit", dataSize=8
+-    and t1, t1, t2
+-    wrflags t1, t0
++    rflags t1, dataSize=8
++
++    # Extract the IOPL.
++    srli t2, t1, 12, dataSize=8
++    andi t2, t1, 0x3, dataSize=8
++
++    # Find the CPL.
++    rdm5reg t3, dataSize=8
++    srli t3, t3, 4, dataSize=8
++    andi t3, t3, 0x3, dataSize=8
++
++    # if !(CPL > IOPL), jump down to clearing IF.
++    sub t0, t2, t3, flags=(ECF,), dataSize=8
++    br label("maskIf"), flags=(nCECF,)
++
++    # if (CR4.PVI == 1 && CPL == 3) {
++    # } else GP
++
++    # Check CR4.PVI
++    rdcr t4, cr4, dataSize=8
++    andi t0, t4, 0x1, flags=(CEZF,)
++    fault "std::make_shared<GeneralProtection>(0)", flags=(CEZF,)
++
++    # Check CPL.
++    andi t4, t3, 0x3, dataSize=8
++    xori t4, t4, 0x3, dataSize=8, flags=(CEZF,)
++    fault "std::make_shared<GeneralProtection>(0)", flags=(nCEZF,)
++
++    # RFLAGS.VIF = 0
++    limm t2, "~((uint64_t)VIFBit)", dataSize=8
++    br label("maskWithT2")
++
++maskIf:
++    limm t2, "~((uint64_t)IFBit)", dataSize=8
++
++maskWithT2:
++    and t1, t1, t2, dataSize=8
++    wrflags t1, t0, dataSize=8
++};
++
++def macroop CLI_REAL {
++    rflags t1, dataSize=8
++    limm t2, "~((uint64_t)IFBit)", dataSize=8
++    and t1, t1, t2, dataSize=8
++    wrflags t1, t0, dataSize=8
+ };
+ 
+ def macroop CLI_VIRT {
+-- 
+1.8.3.1
+

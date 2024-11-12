@@ -1,0 +1,44 @@
+From 1dfd319d9891dc65c59d786c22cfe28864ef9ad5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Fri, 8 Apr 2022 10:44:03 -0500
+Subject: [PATCH 664/757] mem-ruby: fix data state for partial WU
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When receiving data from a WriteUniquePtl we were wrongfully clearing
+the data valid flag.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: I5c17433f1cfb706e443a0169a9f0e99ff5c1fcc0
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59989
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 968cdf2..7208fc2 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -1934,7 +1934,12 @@ action(UpdateDataState_FromWUDataResp, desc="") {
+     peek(datInPort, CHIDataMsg) {
+       assert(in_msg.type == CHIDataType:NCBWrData);
+       tbe.dataDirty := true;
+-      tbe.dataValid := tbe.accSize == blockSize;
++      if (tbe.reqType == CHIRequestType:WriteUniquePtl) {
++        // we are just updating any valid data we already had
++        tbe.dataValid := tbe.dataValid || (tbe.accSize == blockSize);
++      } else {
++        tbe.dataValid := tbe.accSize == blockSize;
++      }
+     }
+   }
+   printTBEState(tbe);
+-- 
+1.8.3.1
+

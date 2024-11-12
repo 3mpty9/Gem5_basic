@@ -1,0 +1,48 @@
+From a9bf1a2d08339c31a665c81b53f45956b7476376 Mon Sep 17 00:00:00 2001
+From: Richard Cooper <richard.cooper@arm.com>
+Date: Thu, 17 Mar 2022 19:28:42 +0000
+Subject: [PATCH 447/757] util-m5: Fix Scons exports when building the m5
+ utility
+
+The name of the imported environment in ext/googletest/SConscript was
+changed from `main` to `env` in [1].
+
+Updated the `exports` when building the `m5` utility to export the
+correct name.
+
+[1] https://gem5-review.googlesource.com/c/public/gem5/+/56750
+
+Change-Id: I195b760e9092fbe63e5de1316403e090c1fa4e1f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57909
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/m5/SConstruct | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/util/m5/SConstruct b/util/m5/SConstruct
+index 941b9fe..62be63c 100644
+--- a/util/m5/SConstruct
++++ b/util/m5/SConstruct
+@@ -179,7 +179,7 @@ native_dir = build_dir.Dir('native')
+ 
+ # Bring in the googletest sources.
+ native.SConscript(googletest_dir.File('SConscript'),
+-        variant_dir=native_dir.Dir('googletest'), exports={ 'main': native })
++        variant_dir=native_dir.Dir('googletest'), exports={ 'env': native })
+ 
+ native.SConscript(src_dir.File('SConscript.native'),
+         variant_dir=native_dir, exports={ 'env': native })
+@@ -268,6 +268,6 @@ for root, dirs, files in os.walk(abspath(src_dir)):
+         # Bring in the googletest sources.
+         env.SConscript(googletest_dir.File('SConscript'),
+                 variant_dir=abi_dir.Dir('googletest'),
+-                exports={ 'main': env })
++                exports='env')
+         env.SConscript(src_dir.File('SConscript'),
+                        variant_dir=abi_dir, exports='env')
+-- 
+1.8.3.1
+

@@ -1,0 +1,32 @@
+From 37e1fcb9efb9f908dfb6e82e118ead20d78bd7e5 Mon Sep 17 00:00:00 2001
+From: Cesar Avalos <cesar.avalos3@gmail.com>
+Date: Wed, 20 Sep 2023 19:41:38 -0400
+Subject: [PATCH 755/757] Update spec2k6_spec2k17.py
+
+Fix astar bug. When running, the data binary has to be in the working directory.
+---
+ configs/spec/spec2k6_spec2k17.py | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/configs/spec/spec2k6_spec2k17.py b/configs/spec/spec2k6_spec2k17.py
+index 386ffed..d037714 100644
+--- a/configs/spec/spec2k6_spec2k17.py
++++ b/configs/spec/spec2k6_spec2k17.py
+@@ -532,12 +532,11 @@ def get_process(options, target_isa="arm"):
+     astar_dir='473.astar/'
+     astar.executable = exe_dir_06+astar_dir+\
+         'exe/astar' + exe_suffix
+-    data= bench_dir_06+astar_dir+'/data/ref/input/rivers.cfg'
++    data= bench_dir_06+astar_dir+'/data/test/input/lake.cfg'
+     astar.cmd = [astar.executable]+[data]
+-    astar.cwd = bench_dir_06+astar_dir+'run'
++    astar.cwd = bench_dir_06+astar_dir+'/data/test/input/'
+     astar.output = 'lake.out'
+ 
+-
+     #481.wrf
+     wrf=Process()
+     wrf_dir = '481.wrf/'
+-- 
+1.8.3.1
+

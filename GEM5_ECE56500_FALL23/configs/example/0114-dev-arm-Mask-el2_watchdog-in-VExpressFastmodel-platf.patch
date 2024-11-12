@@ -1,0 +1,35 @@
+From a8c85b1c401ee62fe2128810662a2c7233b41ce0 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Mon, 10 Jan 2022 13:36:39 +0800
+Subject: [PATCH 114/757] dev-arm: Mask el2_watchdog in VExpressFastmodel
+ platform
+
+el2_watchdog depends on SystemCounter. However, we have mask
+system_counter in the platform. We should also mask the el2_watchdog
+accordingly.
+
+Change-Id: I2ed774549272438d654e0573ffe9f482a6659d37
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55306
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/VExpressFastmodel.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/dev/arm/VExpressFastmodel.py b/src/dev/arm/VExpressFastmodel.py
+index 6f9a731..6e5ade4 100644
+--- a/src/dev/arm/VExpressFastmodel.py
++++ b/src/dev/arm/VExpressFastmodel.py
+@@ -45,6 +45,7 @@ class VExpressFastmodel(VExpress_GEM5_Base):
+     generic_timer = SubSystem()
+     generic_timer_mem = SubSystem()
+     sys_counter = SubSystem()
++    el2_watchdog = SubSystem()
+ 
+     def _on_chip_devices(self):
+         return [
+-- 
+1.8.3.1
+

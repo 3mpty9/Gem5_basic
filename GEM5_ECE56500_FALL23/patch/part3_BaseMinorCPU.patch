@@ -1,0 +1,35 @@
+diff --git a/src/cpu/minor/BaseMinorCPU.py b/src/cpu/minor/BaseMinorCPU.py
+index ac26743..e587c4f 100644
+--- a/src/cpu/minor/BaseMinorCPU.py
++++ b/src/cpu/minor/BaseMinorCPU.py
+@@ -229,14 +229,28 @@ class BaseMinorCPU(BaseCPU):
+         "Size of input buffer to Decode in cycles-worth of insts.")
+     decodeToExecuteForwardDelay = Param.Cycles(1,
+         "Forward cycle delay from Decode to Execute (1 means next cycle)")
+-    decodeInputWidth = Param.Unsigned(2,
++    decodeInputWidth = Param.Unsigned(1,
+         "Width (in instructions) of input to Decode (and implicitly"
+         " Decode's own width)")
+     decodeCycleInput = Param.Bool(True,
+         "Allow Decode to pack instructions from more than one input cycle"
+         " to fill its output each cycle")
+ 
+-    executeInputWidth = Param.Unsigned(2,
++    dummyexecuteInputBufferSize = Param.Unsigned(3,
++        "Size of input buffer to Dummy in cycles-worth of insts.")
++    decodeToDummyExecuteForwardDelay = Param.Cycles(1,
++        "Forward cycle delay from Decode to DummyExecute (1 means next cycle)")
++    dummyexecuteToExecuteForwardDelay = Param.Cycles(1,
++        "Forward cycle delay from Decode to DummyExecute (1 means next cycle)")
++    dummyexecuteInputWidth = Param.Unsigned(1,
++        "Width (in instructions) of input to DummyExecute (and implicitly"
++        " DummyExecute's own width)")
++    dummyexecuteCycleInput = Param.Bool(True,
++        "Allow Dummy to pack instructions from more than one input cycle"
++        " to fill its output each cycle")
++
++
++    executeInputWidth = Param.Unsigned(1,
+         "Width (in instructions) of input to Execute")
+     executeCycleInput = Param.Bool(True,
+         "Allow Execute to use instructions from more than one input cycle"

@@ -1,0 +1,269 @@
+From c70403ed80b075b4f970a19355b2d00be2cfa629 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 13 Dec 2021 10:52:50 -0600
+Subject: [PATCH 061/757] tests: Add GPU ISA parameter to nightly/weekly
+
+GCN3_X86 and VEGA_X86 can use the same test binaries to run tests for
+that build configuration. This adds an option to the nightly and weekly
+test scripts to select which GPU ISA to test. By default the GCN3_X86
+ISA is tested which was previously the only test. No behavior is changed
+from current testing.
+
+Change-Id: Ifedcdea5d7c1c8e9994559a20aea5e1954180772
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54083
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/nightly.sh | 24 ++++++++++++++++++------
+ tests/weekly.sh  | 54 ++++++++++++++++++++++++++++++++++--------------------
+ 2 files changed, 52 insertions(+), 26 deletions(-)
+
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index 05a1e0b..e85ae67 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -46,6 +46,18 @@ if [[ $# -gt 1 ]]; then
+     run_threads=$2
+ fi
+ 
++# The third argument is the GPU ISA to run. If no argument is given we default
++# to GCN3_X86.
++gpu_isa=GCN3_X86
++if [[ $# -gt 2 ]]; then
++    gpu_isa=$3
++fi
++
++if [[ "$gpu_isa" != "GCN3_X86" ]] && [[ "$gpu_isa" != "VEGA_X86" ]]; then
++    echo "Invalid GPU ISA: $gpu_isa"
++    exit 1
++fi
++
+ build_target () {
+     isa=$1
+ 
+@@ -88,12 +100,12 @@ docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+         ./main.py run --length long -j${compile_threads} -t${run_threads} -vv
+ 
+ # Run the GPU tests.
+-# For the GPU tests we compile and run GCN3_X86 inside a gcn-gpu container.
++# For the GPU tests we compile and run the GPU ISA inside a gcn-gpu container.
+ docker pull gcr.io/gem5-test/gcn-gpu:latest
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+     "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest bash -c \
+-    "scons build/GCN3_X86/gem5.opt -j${compile_threads} \
+-        || (rm -rf build && scons build/GCN3_X86/gem5.opt -j${compile_threads})"
++    "scons build/${gpu_isa}/gem5.opt -j${compile_threads} \
++        || (rm -rf build && scons build/${gpu_isa}/gem5.opt -j${compile_threads})"
+ 
+ # get square
+ wget -qN http://dist.gem5.org/dist/develop/test-progs/square/square
+@@ -104,7 +116,7 @@ mkdir -p tests/testing-results
+ # Thus, we always want to run this in the nightly regressions to make sure
+ # basic GPU functionality is working.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/GCN3_X86/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c square
+ 
+ # get HeteroSync
+@@ -115,7 +127,7 @@ wget -qN http://dist.gem5.org/dist/develop/test-progs/heterosync/gcn3/allSyncPri
+ # moderate contention case for the default 4 CU GPU config and help ensure GPU
+ # atomics are tested.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/GCN3_X86/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c \
+     allSyncPrims-1kernel --options="sleepMutex 10 16 4"
+ 
+@@ -125,7 +137,7 @@ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+ # moderate contention case for the default 4 CU GPU config and help ensure GPU
+ # atomics are tested.
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/GCN3_X86/gem5.opt \
++    "${gem5_root}" gcr.io/gem5-test/gcn-gpu:latest build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py --reg-alloc-policy=dynamic -n3 -c \
+     allSyncPrims-1kernel --options="lfTreeBarrUniq 10 16 4"
+ 
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index d65ee40..1e25c4f 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -32,11 +32,25 @@ set -x
+ dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+ gem5_root="${dir}/.."
+ 
+-# We assume the lone argument is the number of threads. If no argument is
+-# given we default to one.
++# We assume the first two arguments are the number of threads followed by the
++# GPU ISA to test. These default to 1 and GCN3_X86 is no argument is given.
+ threads=1
+-if [[ $# -gt 0 ]]; then
++gpu_isa=GCN3_X86
++if [[ $# -eq 1 ]]; then
+     threads=$1
++elif [[ $# -eq 2 ]]; then
++    threads=$1
++    gpu_isa=$2
++else
++    if [[ $# -gt 0 ]]; then
++        echo "Invalid number of arguments: $#"
++        exit 1
++    fi
++fi
++
++if [[ "$gpu_isa" != "GCN3_X86" ]] && [[ "$gpu_isa" != "VEGA_X86" ]]; then
++    echo "Invalid GPU ISA: $gpu_isa"
++    exit 1
+ fi
+ 
+ # Run the gem5 very-long tests.
+@@ -64,7 +78,7 @@ rm -f coAuthorsDBLP.graph 1k_128k.gr result.out
+ git clone -b develop https://gem5.googlesource.com/public/gem5-resources \
+     "${gem5_root}/gem5-resources"
+ 
+-# For the GPU tests we compile and run GCN3_X86 inside a gcn-gpu container.
++# For the GPU tests we compile and run the GPU ISA inside a gcn-gpu container.
+ # HACC requires setting numerous environment variables to run correctly.  To
+ # avoid needing to set all of these, we instead build a docker for it, which
+ # has all these variables pre-set in its Dockerfile
+@@ -74,8 +88,8 @@ docker build -t hacc-test-weekly ${gem5_root}/gem5-resources/src/gpu/halo-finder
+ 
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+     "${gem5_root}" hacc-test-weekly bash -c \
+-    "scons build/GCN3_X86/gem5.opt -j${threads} \
+-        || rm -rf build && scons build/GCN3_X86/gem5.opt -j${threads}"
++    "scons build/${gpu_isa}/gem5.opt -j${threads} \
++        || rm -rf build && scons build/${gpu_isa}/gem5.opt -j${threads}"
+ 
+ # Some of the apps we test use m5ops (and x86), so compile them for x86
+ # Note: setting TERM in the environment is necessary as scons fails for m5ops if
+@@ -94,7 +108,7 @@ docker run --rm --volume "${gem5_root}":"${gem5_root}" -w \
+ # LULESH is heavily used in the HPC community on GPUs, and does a good job of
+ # stressing several GPU compute and memory components
+ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+-    "${gem5_root}" hacc-test-weekly build/GCN3_X86/gem5.opt \
++    "${gem5_root}" hacc-test-weekly build/${gpu_isa}/gem5.opt \
+     configs/example/apu_se.py -n3 --mem-size=8GB --reg-alloc-policy=dynamic \
+     --benchmark-root="${gem5_root}/gem5-resources/src/gpu/lulesh/bin" -c lulesh
+ 
+@@ -136,7 +150,7 @@ docker run --rm -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
+ docker run --rm --volume "${gem5_root}":"${gem5_root}" -v \
+        "${gem5_root}/gem5-resources/src/gpu/DNNMark/cachefiles:/root/.cache/miopen/2.9.0" \
+        -w "${gem5_root}/gem5-resources/src/gpu/DNNMark" hacc-test-weekly \
+-       "${gem5_root}/build/GCN3_X86/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
++       "${gem5_root}/build/${gpu_isa}/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root="${gem5_root}/gem5-resources/src/gpu/DNNMark/build/benchmarks/test_fwd_softmax" \
+        -c dnnmark_test_fwd_softmax \
+@@ -146,7 +160,7 @@ docker run --rm --volume "${gem5_root}":"${gem5_root}" -v \
+ docker run --rm --volume "${gem5_root}":"${gem5_root}" -v \
+        "${gem5_root}/gem5-resources/src/gpu/DNNMark/cachefiles:/root/.cache/miopen/2.9.0" \
+        -w "${gem5_root}/gem5-resources/src/gpu/DNNMark" hacc-test-weekly \
+-       "${gem5_root}/build/GCN3_X86/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
++       "${gem5_root}/build/${gpu_isa}/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root="${gem5_root}/gem5-resources/src/gpu/DNNMark/build/benchmarks/test_fwd_pool" \
+        -c dnnmark_test_fwd_pool \
+@@ -156,7 +170,7 @@ docker run --rm --volume "${gem5_root}":"${gem5_root}" -v \
+ docker run --rm --volume "${gem5_root}":"${gem5_root}" -v \
+        "${gem5_root}/gem5-resources/src/gpu/DNNMark/cachefiles:/root/.cache/miopen/2.9.0" \
+        -w "${gem5_root}/gem5-resources/src/gpu/DNNMark" hacc-test-weekly \
+-       "${gem5_root}/build/GCN3_X86/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
++       "${gem5_root}/build/${gpu_isa}/gem5.opt" "${gem5_root}/configs/example/apu_se.py" -n3 \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root="${gem5_root}/gem5-resources/src/gpu/DNNMark/build/benchmarks/test_bwd_bn" \
+        -c dnnmark_test_bwd_bn \
+@@ -172,7 +186,7 @@ docker run --rm -v ${PWD}:${PWD} -w \
+ # Like LULESH, HACC is heavily used in the HPC community and is used to stress
+ # the GPU memory system
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/halo-finder/src/hip \
+        -c ForceTreeTest --options="0.5 0.1 64 0.1 1 N 12 rcb"
+@@ -192,7 +206,7 @@ docker run --rm -v ${PWD}:${PWD} \
+ wget http://dist.gem5.org/dist/develop/datasets/pannotia/bc/1k_128k.gr
+ # run BC
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=gem5-resources/src/gpu/pannotia/bc/bin -c bc.gem5 \
+@@ -206,7 +220,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run Color (Max) (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/color/bin \
+@@ -220,7 +234,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run Color (MaxMin) (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/color/bin \
+@@ -234,7 +248,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run FW (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/fw/bin \
+@@ -248,7 +262,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run MIS (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/mis/bin \
+@@ -264,7 +278,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ wget http://dist.gem5.org/dist/develop/datasets/pannotia/pagerank/coAuthorsDBLP.graph
+ # run PageRank (Default)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/pagerank/bin \
+@@ -278,7 +292,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run PageRank (SPMV)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/pagerank/bin \
+@@ -292,7 +306,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run SSSP (CSR) (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/sssp/bin \
+@@ -306,7 +320,7 @@ docker run --rm -v ${gem5_root}:${gem5_root} -w \
+ 
+ # run SSSP (ELL) (use same input dataset as BC for faster testing)
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       hacc-test-weekly ${gem5_root}/build/GCN3_X86/gem5.opt \
++       hacc-test-weekly ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --mem-size=8GB \
+        --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/pannotia/sssp/bin \
+-- 
+1.8.3.1
+

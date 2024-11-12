@@ -1,0 +1,191 @@
+From d40bedc019e4489147c503b1d0ac82e49fe11be2 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 24 Aug 2021 01:52:55 -0700
+Subject: [PATCH 710/757] arch-x86: Rework CCRegs for getReg, setReg.
+
+Put them in a namespace, make them match the style guide, turn them into
+RegIds, and replace readCCReg and setCCReg with getReg and setReg.
+
+Change-Id: I46f766a544696caf3dcfc6b34b50f02b86766da4
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49759
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa.cc           |  8 +++++---
+ src/arch/x86/isa/operands.isa | 20 ++++++++++----------
+ src/arch/x86/regs/ccr.hh      | 41 ++++++++++++++++++++++++++---------------
+ src/arch/x86/utility.cc       | 16 ++++++++--------
+ 4 files changed, 49 insertions(+), 36 deletions(-)
+
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index 6fdb5d0..d298525 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -151,7 +151,7 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+-    _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
++    _regClasses.emplace_back(cc_reg::NumRegs, debug::CCRegs);
+     _regClasses.emplace_back(misc_reg::NumRegs, debug::MiscRegs);
+ 
+     clear();
+@@ -189,8 +189,10 @@ ISA::copyRegsFrom(ThreadContext *src)
+     for (int i = 0; i < NumFloatRegs; ++i)
+         tc->setFloatRegFlat(i, src->readFloatRegFlat(i));
+     //copy condition-code regs
+-    for (int i = 0; i < NUM_CCREGS; ++i)
+-        tc->setCCRegFlat(i, src->readCCRegFlat(i));
++    for (int i = 0; i < cc_reg::NumRegs; ++i) {
++        RegId reg(CCRegClass, i);
++        tc->setRegFlat(reg, src->getRegFlat(reg));
++    }
+     copyMiscRegs(src, tc);
+     tc->pcState(src->pcState());
+ }
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index 6247040..8c5df9b 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -175,11 +175,11 @@ def operands {{
+                           (None, None, 'IsControl'), 50),
+         # These registers hold the condition code portion of the flag
+         # register. The nccFlagBits version holds the rest.
+-        'ccFlagBits':    CCReg('X86ISA::CCREG_ZAPS', 60),
+-        'cfofBits':      CCReg('X86ISA::CCREG_CFOF', 61),
+-        'dfBit':         CCReg('X86ISA::CCREG_DF', 62),
+-        'ecfBit':        CCReg('X86ISA::CCREG_ECF', 63),
+-        'ezfBit':        CCReg('X86ISA::CCREG_EZF', 64),
++        'ccFlagBits':    CCReg('X86ISA::cc_reg::Zaps', 60),
++        'cfofBits':      CCReg('X86ISA::cc_reg::Cfof', 61),
++        'dfBit':         CCReg('X86ISA::cc_reg::Df', 62),
++        'ecfBit':        CCReg('X86ISA::cc_reg::Ecf', 63),
++        'ezfBit':        CCReg('X86ISA::cc_reg::Ezf', 64),
+ 
+         # These Pred registers are to be used where reading the portions of
+         # condition code registers is possibly optional, depending on how the
+@@ -196,21 +196,21 @@ def operands {{
+         # would be retained, the write predicate checks if any of the bits
+         # are being written.
+ 
+-        'PredccFlagBits': CCRegPred('X86ISA::CCREG_ZAPS', 60,
++        'PredccFlagBits': CCRegPred('X86ISA::cc_reg::Zaps', 60,
+                 read_predicate='(ext & X86ISA::CcFlagMask) != '
+                 'X86ISA::CcFlagMask && (ext & X86ISA::CcFlagMask) != 0',
+                 write_predicate='(ext & X86ISA::CcFlagMask) != 0'),
+-        'PredcfofBits':  CCRegPred('X86ISA::CCREG_CFOF', 61,
++        'PredcfofBits':  CCRegPred('X86ISA::cc_reg::Cfof', 61,
+                 read_predicate='(ext & X86ISA::CfofMask) '
+                 '!= X86ISA::CfofMask && (ext & X86ISA::CfofMask) != 0',
+                 write_predicate='(ext & X86ISA::CfofMask) != 0'),
+-        'PreddfBit':     CCRegPred('X86ISA::CCREG_DF', 62,
++        'PreddfBit':     CCRegPred('X86ISA::cc_reg::Df', 62,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::DFBit) != 0'),
+-        'PredecfBit':    CCRegPred('X86ISA::CCREG_ECF', 63,
++        'PredecfBit':    CCRegPred('X86ISA::cc_reg::Ecf', 63,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::ECFBit) != 0'),
+-        'PredezfBit':    CCRegPred('X86ISA::CCREG_EZF', 64,
++        'PredezfBit':    CCRegPred('X86ISA::cc_reg::Ezf', 64,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::EZFBit) != 0'),
+ 
+diff --git a/src/arch/x86/regs/ccr.hh b/src/arch/x86/regs/ccr.hh
+index 0a68e06..1073edd 100644
+--- a/src/arch/x86/regs/ccr.hh
++++ b/src/arch/x86/regs/ccr.hh
+@@ -35,27 +35,38 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
+-#ifndef __ARCH_X86_CCREGS_HH__
+-#define __ARCH_X86_CCREGS_HH__
++#ifndef __ARCH_X86_REGS_CCR_HH__
++#define __ARCH_X86_REGS_CCR_HH__
+ 
+-#include "arch/x86/x86_traits.hh"
++#include "cpu/reg_class.hh"
+ 
+ namespace gem5
+ {
+-
+ namespace X86ISA
+ {
+-    enum CCRegIndex
+-    {
+-        CCREG_ZAPS,
+-        CCREG_CFOF,
+-        CCREG_DF,
+-        CCREG_ECF,
+-        CCREG_EZF,
+-
+-        NUM_CCREGS
+-    };
++namespace cc_reg
++{
++
++enum : RegIndex
++{
++    _ZapsIdx,
++    _CfofIdx,
++    _DfIdx,
++    _EcfIdx,
++    _EzfIdx,
++
++    NumRegs
++};
++
++inline constexpr RegId
++    Zaps(CCRegClass, _ZapsIdx),
++    Cfof(CCRegClass, _CfofIdx),
++    Df(CCRegClass, _DfIdx),
++    Ecf(CCRegClass, _EcfIdx),
++    Ezf(CCRegClass, _EzfIdx);
++
++} // namespace cc_reg
+ } // namespace X86ISA
+ } // namespace gem5
+ 
+-#endif // __ARCH_X86_CCREGS_HH__
++#endif // __ARCH_X86_REGS_CCR_HH__
+diff --git a/src/arch/x86/utility.cc b/src/arch/x86/utility.cc
+index 5138223..6228df7 100644
+--- a/src/arch/x86/utility.cc
++++ b/src/arch/x86/utility.cc
+@@ -58,9 +58,9 @@ uint64_t
+ getRFlags(ThreadContext *tc)
+ {
+     const uint64_t ncc_flags(tc->readMiscRegNoEffect(misc_reg::Rflags));
+-    const uint64_t cc_flags(tc->readCCReg(X86ISA::CCREG_ZAPS));
+-    const uint64_t cfof_bits(tc->readCCReg(X86ISA::CCREG_CFOF));
+-    const uint64_t df_bit(tc->readCCReg(X86ISA::CCREG_DF));
++    const uint64_t cc_flags(tc->getReg(X86ISA::cc_reg::Zaps));
++    const uint64_t cfof_bits(tc->getReg(X86ISA::cc_reg::Cfof));
++    const uint64_t df_bit(tc->getReg(X86ISA::cc_reg::Df));
+     // ecf (PSEUDO(3)) & ezf (PSEUDO(4)) are only visible to
+     // microcode, so we can safely ignore them.
+ 
+@@ -73,13 +73,13 @@ getRFlags(ThreadContext *tc)
+ void
+ setRFlags(ThreadContext *tc, uint64_t val)
+ {
+-    tc->setCCReg(X86ISA::CCREG_ZAPS, val & CcFlagMask);
+-    tc->setCCReg(X86ISA::CCREG_CFOF, val & CfofMask);
+-    tc->setCCReg(X86ISA::CCREG_DF, val & DFBit);
++    tc->setReg(X86ISA::cc_reg::Zaps, val & CcFlagMask);
++    tc->setReg(X86ISA::cc_reg::Cfof, val & CfofMask);
++    tc->setReg(X86ISA::cc_reg::Df, val & DFBit);
+ 
+     // Internal microcode registers (ECF & EZF)
+-    tc->setCCReg(X86ISA::CCREG_ECF, 0);
+-    tc->setCCReg(X86ISA::CCREG_EZF, 0);
++    tc->setReg(X86ISA::cc_reg::Ecf, (RegVal)0);
++    tc->setReg(X86ISA::cc_reg::Ezf, (RegVal)0);
+ 
+     // Update the RFLAGS misc reg with whatever didn't go into the
+     // magic registers.
+-- 
+1.8.3.1
+

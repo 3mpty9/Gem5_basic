@@ -1,0 +1,41 @@
+From da290e9e2e98691ba64140c70345e15639bcc2f0 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 09:38:52 -0800
+Subject: [PATCH 392/757] arch-x86: Fix the SAHF and LAHF instructions.
+
+These had been transposed with each other, and had other problems having
+to do with data truncation and old bits leaking through into other
+registers.
+
+Change-Id: Ib46eaa201d4b8273a683ebcb0060e8d49c447d96
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55824
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/insts/general_purpose/flags/load_and_store.py | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/flags/load_and_store.py b/src/arch/x86/isa/insts/general_purpose/flags/load_and_store.py
+index 76f81c1..31723b3 100644
+--- a/src/arch/x86/isa/insts/general_purpose/flags/load_and_store.py
++++ b/src/arch/x86/isa/insts/general_purpose/flags/load_and_store.py
+@@ -35,10 +35,13 @@
+ 
+ microcode = '''
+ def macroop SAHF {
+-    ruflags ah, dataSize=1
++    ruflags t1, dataSize=8
++    mov t1, t1, ah, dataSize=1
++    wruflags t1, t0, dataSize=8
+ };
+ 
+ def macroop LAHF {
+-    wruflags ah, t0, dataSize=1
++    rflags t1, dataSize=8
++    andi ah, t1, "CFBit | PFBit | AFBit | ZFBit | SFBit | (1 << 1)", dataSize=1
+ };
+ '''
+-- 
+1.8.3.1
+

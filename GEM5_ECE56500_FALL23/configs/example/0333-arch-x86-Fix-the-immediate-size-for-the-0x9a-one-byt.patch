@@ -1,0 +1,43 @@
+From cbc55aeff0b433521b5eee5a2d350e2eb6ed1772 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 18 Jan 2022 21:07:42 -0800
+Subject: [PATCH 333/757] arch-x86: Fix the immediate size for the 0x9a one
+ byte opcode.
+
+This is a far call direct, which has a far pointer (a 16 bit segment
+selector and a 16 or 32 bit offset) as an immediate value. The gem5
+decoder was expecting no immediate, and so was not gathering one. The
+actual microcode for the instruction was taking the junk immediate and
+trying to use it which did not work.
+
+This change makes a small update to the table which says how big the
+immediate values are for various instructions, changing the entry for
+one byte opcode 0x9a from 0 (no immediate) to PO (pointer sized). The
+immediate size will be automatically selected by the decoder based on
+the PO rule, and the currently active operand size.
+
+Change-Id: Ic290e7bb01dc6165c4eabed214887e4b5adb42da
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55626
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/decoder_tables.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/decoder_tables.cc b/src/arch/x86/decoder_tables.cc
+index 8deb63f..2fba889 100644
+--- a/src/arch/x86/decoder_tables.cc
++++ b/src/arch/x86/decoder_tables.cc
+@@ -236,7 +236,7 @@ namespace X86ISA
+ /*  6 */ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , ZW, ZW, BY, BY, 0 , 0 , 0 , 0 ,
+ /*  7 */ BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY, BY,
+ /*  8 */ BY, ZW, BY, BY, 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
+-/*  9 */ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
++/*  9 */ 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 , PO, 0 , 0 , 0 , 0 , 0 ,
+ /*  A */ VW, VW, VW, VW, 0 , 0 , 0 , 0 , BY, ZW, 0 , 0 , 0 , 0 , 0 , 0 ,
+ /*  B */ BY, BY, BY, BY, BY, BY, BY, BY, VW, VW, VW, VW, VW, VW, VW, VW,
+ /*  C */ BY, BY, WO, 0 , 0 , 0 , BY, ZW, EN, 0 , WO, 0 , 0 , BY, 0 , 0 ,
+-- 
+1.8.3.1
+

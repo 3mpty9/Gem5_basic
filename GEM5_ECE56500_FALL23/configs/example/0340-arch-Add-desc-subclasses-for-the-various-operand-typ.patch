@@ -1,0 +1,162 @@
+From a84c987eef77cff8299c69e69ec655bf6667adff Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 04:48:05 -0700
+Subject: [PATCH 340/757] arch: Add desc subclasses for the various operand
+ types.
+
+These correspond to the existing operand types like IntRegOperand, or as
+it's called in the operand table 'IntReg'. These subclasses
+automatically set the base type name ('IntReg' for IntRegOperands),
+which results in some mildly more familiar looking syntax, but is still
+not that different from what we have today.
+
+Change-Id: Id77c4e5a5e1b93c10aa9ad85e1a615f6c145832a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49725
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/isa_parser.py    | 30 +++++++++++++++++++++++-------
+ src/arch/isa_parser/operand_types.py | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 59 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 90808c0..fdab1f7 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -517,6 +517,17 @@ class ISAParser(Grammar):
+ 
+         symbols = ('makeList', 're')
+         self.exportContext = dict([(s, eval(s)) for s in symbols])
++        self.exportContext.update({
++            'IntRegOp': IntRegOperandDesc,
++            'FloatRegOp': FloatRegOperandDesc,
++            'CCRegOp': CCRegOperandDesc,
++            'VecElemOp': VecElemOperandDesc,
++            'VecRegOp': VecRegOperandDesc,
++            'VecPredRegOp': VecPredRegOperandDesc,
++            'ControlRegOp': ControlRegOperandDesc,
++            'MemOp': MemOperandDesc,
++            'PCStateOp': PCStateOperandDesc,
++        })
+ 
+         self.maxMiscDestRegs = 0
+ 
+@@ -1446,14 +1457,19 @@ StaticInstPtr
+     def buildOperandNameMap(self, user_dict, lineno):
+         operand_name = {}
+         for op_name, val in user_dict.items():
++            if isinstance(val, OperandDesc):
++                op_desc = val
++                base_cls_name = op_desc.attrs['base_cls_name']
++            else:
++                assert(isinstance(val, (list, tuple)))
++                base_cls_name = val[0]
++                # Check if extra attributes have been specified.
++                if len(val) > 9:
++                    error(lineno,
++                            'error: too many attributes for operand "%s"' %
++                            base_cls_name)
++                op_desc = OperandDesc(*val)
+ 
+-            base_cls_name = val[0]
+-            # Check if extra attributes have been specified.
+-            if len(val) > 9:
+-                error(lineno, 'error: too many attributes for operand "%s"' %
+-                      base_cls_name)
+-
+-            op_desc = OperandDesc(*val)
+             op_desc.setName(op_name)
+ 
+             # New class name will be e.g. "IntReg_Ra"
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 275309a..262659a 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -281,15 +281,31 @@ class RegValOperand(RegOperand):
+ class IntRegOperand(RegValOperand):
+     reg_class = 'IntRegClass'
+ 
++class IntRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('IntReg', *args, **kwargs)
++
+ class FloatRegOperand(RegValOperand):
+     reg_class = 'FloatRegClass'
+ 
++class FloatRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('FloatReg', *args, **kwargs)
++
+ class CCRegOperand(RegValOperand):
+     reg_class = 'CCRegClass'
+ 
++class CCRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('CCReg', *args, **kwargs)
++
+ class VecElemOperand(RegValOperand):
+     reg_class = 'VecElemClass'
+ 
++class VecElemOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('VecElem', *args, **kwargs)
++
+ class VecRegOperand(RegOperand):
+     reg_class = 'VecRegClass'
+ 
+@@ -418,6 +434,10 @@ class VecRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
++class VecRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('VecReg', *args, **kwargs)
++
+ class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+ 
+@@ -479,6 +499,10 @@ class VecPredRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
++class VecPredRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('VecPredReg', *args, **kwargs)
++
+ class ControlRegOperand(Operand):
+     reg_class = 'MiscRegClass'
+ 
+@@ -533,6 +557,10 @@ class ControlRegOperand(Operand):
+ 
+         return wb
+ 
++class ControlRegOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('ControlReg', *args, **kwargs)
++
+ class MemOperand(Operand):
+     def isMem(self):
+         return 1
+@@ -554,6 +582,10 @@ class MemOperand(Operand):
+             return self.buildWriteCode(predWrite)
+         return ''
+ 
++class MemOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('Mem', *args, **kwargs)
++
+ class PCStateOperand(Operand):
+     def __init__(self, parser, *args, **kwargs):
+         super().__init__(parser, *args, **kwargs)
+@@ -591,3 +623,7 @@ class PCStateOperand(Operand):
+ 
+     def isPCState(self):
+         return 1
++
++class PCStateOperandDesc(OperandDesc):
++    def __init__(self, *args, **kwargs):
++        super().__init__('PCState', *args, **kwargs)
+-- 
+1.8.3.1
+

@@ -1,0 +1,36 @@
+From 397e66d8b6d485684e6ffdd33865bde014a81c87 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 2 Jun 2022 15:20:38 -0700
+Subject: [PATCH 678/757] gpu-compute: Stop passing in a default value to
+ resize().
+
+A default constructed element of the container is the default value to
+the second resize() parameter. Having that parameter explicitly causes a
+warning/error in newer versions of gcc, and is unnecessary regardless.
+
+Change-Id: I6aee2d23f0f4382b00caf552c8e38940614c5f9a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60311
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+---
+ src/gpu-compute/vector_register_file.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/gpu-compute/vector_register_file.cc b/src/gpu-compute/vector_register_file.cc
+index 9ab1cfd..b5f17c8 100644
+--- a/src/gpu-compute/vector_register_file.cc
++++ b/src/gpu-compute/vector_register_file.cc
+@@ -48,7 +48,7 @@ namespace gem5
+ VectorRegisterFile::VectorRegisterFile(const VectorRegisterFileParams &p)
+     : RegisterFile(p)
+ {
+-    regFile.resize(numRegs(), VecRegContainer());
++    regFile.resize(numRegs());
+ 
+     for (auto &reg : regFile) {
+         reg.zero();
+-- 
+1.8.3.1
+

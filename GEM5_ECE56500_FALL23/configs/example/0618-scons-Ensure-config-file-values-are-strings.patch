@@ -1,0 +1,36 @@
+From dfc8614ee289f11fa73ee5f54eb65f9eaad2d854 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Sat, 30 Apr 2022 04:06:17 -0700
+Subject: [PATCH 618/757] scons: Ensure config file values are strings.
+
+Apparently, sometimes a SCons Value node created with an integer value
+0 will have a string representation which is the empty string, which
+is obviously problematic. To work around this bug, convert the value
+to a string explicitly before creating the Value node, so that we get
+a sensible translation instead.
+
+Change-Id: I4a09b2fb366aaf2d4d1c7e6f8cc84224b2d010c4
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59472
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ site_scons/gem5_scons/builders/config_file.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/site_scons/gem5_scons/builders/config_file.py b/site_scons/gem5_scons/builders/config_file.py
+index 191cc40..85820b9 100755
+--- a/site_scons/gem5_scons/builders/config_file.py
++++ b/site_scons/gem5_scons/builders/config_file.py
+@@ -70,7 +70,7 @@ def ConfigFile(env):
+         val = env['CONF'][variable]
+         if isinstance(val, bool):
+             # Force value to 0/1
+-            val = int(val)
++            val = str(int(val))
+         elif isinstance(val, str):
+             val = '"' + val + '"'
+ 
+-- 
+1.8.3.1
+

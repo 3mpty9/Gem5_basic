@@ -1,0 +1,34 @@
+From 2bbcee7723f7d188c27b2a528de57774a653317f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 01:09:10 -0800
+Subject: [PATCH 285/757] dev: Fix an assert in the I8259 interrupt controller.
+
+If an *index* is equal to or greater than the size of the thing it's
+indexing, then that's an error. Another count, on the other hand, must
+be strictly greater for that to be a problem.
+
+Change-Id: I9c891b37482fe72b6436850fc8c3c2fcef6f0476
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55585
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/x86/i8259.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/dev/x86/i8259.cc b/src/dev/x86/i8259.cc
+index 5cae5b8..bd6d18c 100644
+--- a/src/dev/x86/i8259.cc
++++ b/src/dev/x86/i8259.cc
+@@ -51,7 +51,7 @@ X86ISA::I8259::I8259(const Params &p)
+     }
+ 
+     int in_count = p.port_inputs_connection_count;
+-    panic_if(in_count >= NumLines,
++    panic_if(in_count > NumLines,
+             "I8259 only supports 8 inputs, but there are %d.", in_count);
+     for (int i = 0; i < in_count; i++) {
+         inputs.push_back(new IntSinkPin<I8259>(
+-- 
+1.8.3.1
+

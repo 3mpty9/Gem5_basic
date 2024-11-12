@@ -1,0 +1,51 @@
+From 1924be92eab6da86bff7e1467c970c9ae2e2494d Mon Sep 17 00:00:00 2001
+From: Erhu <fengerhu.ipads@gmail.com>
+Date: Thu, 30 Dec 2021 07:45:09 +0000
+Subject: [PATCH 221/757] arch-riscv: Fix the pmp check for pagetable walker
+
+During the page table walking,
+MMU will perform the PMP check for each page table page.
+However, in the current implementation,
+the param:mode used by pmp_Check() is equal to the MMU mode,
+which means the page table page has an executable mode
+if the target page is executable (during pmp_Check).
+As the page table page will never be executable,
+the mode for the page table page is either read or write.
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1143
+
+Change-Id: I105f52ef58fe1fbbf7d84c6563e8a8c22cea9ccb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55063
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Ayaz Akram <yazakram@ucdavis.edu>
+---
+ src/arch/riscv/pagetable_walker.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/riscv/pagetable_walker.cc b/src/arch/riscv/pagetable_walker.cc
+index 08767c2..81d1eb2 100644
+--- a/src/arch/riscv/pagetable_walker.cc
++++ b/src/arch/riscv/pagetable_walker.cc
+@@ -305,7 +305,7 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
+     walker->pma->check(read->req);
+     // Effective privilege mode for pmp checks for page table
+     // walks is S mode according to specs
+-    fault = walker->pmp->pmpCheck(read->req, mode,
++    fault = walker->pmp->pmpCheck(read->req, BaseMMU::Read,
+                     RiscvISA::PrivilegeMode::PRV_S, tc, entry.vaddr);
+ 
+     if (fault == NoFault) {
+@@ -357,7 +357,7 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
+                         walker->pma->check(read->req);
+ 
+                         fault = walker->pmp->pmpCheck(read->req,
+-                                            mode, pmode, tc, entry.vaddr);
++                                            BaseMMU::Write, pmode, tc, entry.vaddr);
+ 
+                     }
+                     // perform step 8 only if pmp checks pass
+-- 
+1.8.3.1
+

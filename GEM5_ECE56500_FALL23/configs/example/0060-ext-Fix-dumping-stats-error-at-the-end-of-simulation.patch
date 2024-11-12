@@ -1,0 +1,34 @@
+From c7689b0ddb907c1b593e04280afa3c990b9d65ad Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Thu, 16 Dec 2021 12:58:22 -0800
+Subject: [PATCH 060/757] ext: Fix dumping stats error at the end of simulation
+
+A missing comma causing two commands to be one, which resulted in
+a Python interpreter syntax error.
+
+Change-Id: Ieb0e3c620c175731084ff0e2040388b15364691e
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54343
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/gem5.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ext/sst/gem5.cc b/ext/sst/gem5.cc
+index 8eab6281..7af0eed 100644
+--- a/ext/sst/gem5.cc
++++ b/ext/sst/gem5.cc
+@@ -262,7 +262,7 @@ gem5Component::clockTick(SST::Cycle_t currentCycle)
+         );
+         // output gem5 stats
+         const std::vector<std::string> output_stats_commands = {
+-            "import m5.stats"
++            "import m5.stats",
+             "m5.stats.dump()"
+         };
+         execPythonCommands(output_stats_commands);
+-- 
+1.8.3.1
+

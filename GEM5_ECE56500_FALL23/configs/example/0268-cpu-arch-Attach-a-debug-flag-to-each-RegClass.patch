@@ -1,0 +1,289 @@
+From 64171d4d14398a259610f1206f3604bcd163e1fc Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 04:34:31 -0700
+Subject: [PATCH 268/757] cpu,arch: Attach a debug flag to each RegClass.
+
+This can be used for DPRINTFs related to those registers using DPRINTFV.
+
+Change-Id: I0fccb12b70fdb74e01022fe0d3d9c2f92425a5bf
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49696
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/isa.cc   | 21 +++++++++++++--------
+ src/arch/mips/isa.cc  | 17 ++++++++++-------
+ src/arch/power/isa.cc | 17 ++++++++++-------
+ src/arch/riscv/isa.cc | 17 ++++++++++-------
+ src/arch/sparc/isa.cc | 16 +++++++++-------
+ src/arch/x86/isa.cc   | 18 +++++++++++-------
+ src/cpu/reg_class.hh  | 14 +++++++++-----
+ 7 files changed, 72 insertions(+), 48 deletions(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index 0db133b..b591255 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -54,8 +54,13 @@
+ #include "cpu/checker/cpu.hh"
+ #include "cpu/reg_class.hh"
+ #include "debug/Arm.hh"
++#include "debug/CCRegs.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
+ #include "debug/LLSC.hh"
+ #include "debug/MiscRegs.hh"
++#include "debug/VecPredRegs.hh"
++#include "debug/VecRegs.hh"
+ #include "dev/arm/generic_timer.hh"
+ #include "dev/arm/gic_v3.hh"
+ #include "dev/arm/gic_v3_cpu_interface.hh"
+@@ -88,16 +93,16 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _decoderFlavor(p.decoderFlavor), pmu(p.pmu), impdefAsNop(p.impdef_nop),
+     afterStartup(false)
+ {
+-    _regClasses.emplace_back(NUM_INTREGS, INTREG_ZERO);
+-    _regClasses.emplace_back(0);
+-    _regClasses.emplace_back(NumVecRegs, vecRegClassOps, -1,
++    _regClasses.emplace_back(NUM_INTREGS, debug::IntRegs, INTREG_ZERO);
++    _regClasses.emplace_back(0, debug::FloatRegs);
++    _regClasses.emplace_back(NumVecRegs, vecRegClassOps, debug::VecRegs, -1,
+             sizeof(VecRegContainer));
+     _regClasses.emplace_back(NumVecRegs * NumVecElemPerVecReg,
+-            vecRegElemClassOps);
+-    _regClasses.emplace_back(NumVecPredRegs, vecPredRegClassOps, -1,
+-            sizeof(VecPredRegContainer));
+-    _regClasses.emplace_back(NUM_CCREGS);
+-    _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps);
++            vecRegElemClassOps, debug::VecRegs);
++    _regClasses.emplace_back(NumVecPredRegs, vecPredRegClassOps,
++            debug::VecPredRegs, -1, sizeof(VecPredRegContainer));
++    _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
++    _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps, debug::MiscRegs);
+ 
+     miscRegs[MISCREG_SCTLR_RST] = 0;
+ 
+diff --git a/src/arch/mips/isa.cc b/src/arch/mips/isa.cc
+index 2a075ec..66348a4 100644
+--- a/src/arch/mips/isa.cc
++++ b/src/arch/mips/isa.cc
+@@ -38,7 +38,10 @@
+ #include "cpu/base.hh"
+ #include "cpu/reg_class.hh"
+ #include "cpu/thread_context.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
+ #include "debug/MipsPRA.hh"
++#include "debug/MiscRegs.hh"
+ #include "params/MipsISA.hh"
+ 
+ namespace gem5
+@@ -97,13 +100,13 @@ ISA::miscRegNames[MISCREG_NUMREGS] =
+ ISA::ISA(const Params &p) : BaseISA(p), numThreads(p.num_threads),
+     numVpes(p.num_vpes)
+ {
+-    _regClasses.emplace_back(NumIntRegs, 0);
+-    _regClasses.emplace_back(NumFloatRegs);
+-    _regClasses.emplace_back(1); // Not applicable to MIPS.
+-    _regClasses.emplace_back(2); // Not applicable to MIPS.
+-    _regClasses.emplace_back(1); // Not applicable to MIPS.
+-    _regClasses.emplace_back(0); // Not applicable to MIPS.
+-    _regClasses.emplace_back(MISCREG_NUMREGS);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to MIPS.
++    _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to MIPS.
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to MIPS.
++    _regClasses.emplace_back(0, debug::IntRegs); // Not applicable to MIPS.
++    _regClasses.emplace_back(MISCREG_NUMREGS, debug::MiscRegs);
+ 
+     miscRegFile.resize(MISCREG_NUMREGS);
+     bankType.resize(MISCREG_NUMREGS);
+diff --git a/src/arch/power/isa.cc b/src/arch/power/isa.cc
+index 086369f..4cf7b39 100644
+--- a/src/arch/power/isa.cc
++++ b/src/arch/power/isa.cc
+@@ -41,6 +41,9 @@
+ #include "arch/power/regs/int.hh"
+ #include "arch/power/regs/misc.hh"
+ #include "cpu/thread_context.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
++#include "debug/MiscRegs.hh"
+ #include "params/PowerISA.hh"
+ 
+ namespace gem5
+@@ -51,13 +54,13 @@ namespace PowerISA
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, NumIntRegs - 1);
+-    _regClasses.emplace_back(NumFloatRegs);
+-    _regClasses.emplace_back(1);
+-    _regClasses.emplace_back(2);
+-    _regClasses.emplace_back(1);
+-    _regClasses.emplace_back(0);
+-    _regClasses.emplace_back(NUM_MISCREGS);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, NumIntRegs - 1);
++    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(1, debug::IntRegs);
++    _regClasses.emplace_back(2, debug::IntRegs);
++    _regClasses.emplace_back(1, debug::IntRegs);
++    _regClasses.emplace_back(0, debug::IntRegs);
++    _regClasses.emplace_back(NUM_MISCREGS, debug::MiscRegs);
+     clear();
+ }
+ 
+diff --git a/src/arch/riscv/isa.cc b/src/arch/riscv/isa.cc
+index 32cba39..f9d7ba1 100644
+--- a/src/arch/riscv/isa.cc
++++ b/src/arch/riscv/isa.cc
+@@ -47,7 +47,10 @@
+ #include "base/trace.hh"
+ #include "cpu/base.hh"
+ #include "debug/Checkpoint.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
+ #include "debug/LLSC.hh"
++#include "debug/MiscRegs.hh"
+ #include "debug/RiscvMisc.hh"
+ #include "mem/packet.hh"
+ #include "mem/request.hh"
+@@ -193,13 +196,13 @@ namespace RiscvISA
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, 0);
+-    _regClasses.emplace_back(NumFloatRegs);
+-    _regClasses.emplace_back(1); // Not applicable to RISCV
+-    _regClasses.emplace_back(2); // Not applicable to RISCV
+-    _regClasses.emplace_back(1); // Not applicable to RISCV
+-    _regClasses.emplace_back(0); // Not applicable to RISCV
+-    _regClasses.emplace_back(NUM_MISCREGS);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to RISCV
++    _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to RISCV
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to RISCV
++    _regClasses.emplace_back(0, debug::IntRegs); // Not applicable to RISCV
++    _regClasses.emplace_back(NUM_MISCREGS, debug::MiscRegs);
+ 
+     miscRegFile.resize(NUM_MISCREGS);
+     clear();
+diff --git a/src/arch/sparc/isa.cc b/src/arch/sparc/isa.cc
+index 2debbc5..0ee2314 100644
+--- a/src/arch/sparc/isa.cc
++++ b/src/arch/sparc/isa.cc
+@@ -39,6 +39,8 @@
+ #include "base/trace.hh"
+ #include "cpu/base.hh"
+ #include "cpu/thread_context.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
+ #include "debug/MiscRegs.hh"
+ #include "debug/Timer.hh"
+ #include "params/SparcISA.hh"
+@@ -68,13 +70,13 @@ static const PSTATE PstateMask = buildPstateMask();
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, 0);
+-    _regClasses.emplace_back(NumFloatRegs);
+-    _regClasses.emplace_back(1); // Not applicable for SPARC
+-    _regClasses.emplace_back(2); // Not applicable for SPARC
+-    _regClasses.emplace_back(1); // Not applicable for SPARC
+-    _regClasses.emplace_back(0); // Not applicable for SPARC
+-    _regClasses.emplace_back(NumMiscRegs);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable for SPARC
++    _regClasses.emplace_back(2, debug::IntRegs); // Not applicable for SPARC
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable for SPARC
++    _regClasses.emplace_back(0, debug::IntRegs); // Not applicable for SPARC
++    _regClasses.emplace_back(NumMiscRegs, debug::MiscRegs);
+     clear();
+ }
+ 
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index 89e0d29..713346e 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -36,6 +36,10 @@
+ #include "base/compiler.hh"
+ #include "cpu/base.hh"
+ #include "cpu/thread_context.hh"
++#include "debug/CCRegs.hh"
++#include "debug/FloatRegs.hh"
++#include "debug/IntRegs.hh"
++#include "debug/MiscRegs.hh"
+ #include "params/X86ISA.hh"
+ #include "sim/serialize.hh"
+ 
+@@ -142,13 +146,13 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+     fatal_if(vendorString.size() != 12,
+              "CPUID vendor string must be 12 characters\n");
+ 
+-    _regClasses.emplace_back(NumIntRegs, INTREG_T0);
+-    _regClasses.emplace_back(NumFloatRegs);
+-    _regClasses.emplace_back(1); // Not applicable to X86
+-    _regClasses.emplace_back(2); // Not applicable to X86
+-    _regClasses.emplace_back(1); // Not applicable to X86
+-    _regClasses.emplace_back(NUM_CCREGS);
+-    _regClasses.emplace_back(NUM_MISCREGS);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, INTREG_T0);
++    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
++    _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
++    _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
++    _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
++    _regClasses.emplace_back(NUM_MISCREGS, debug::MiscRegs);
+ 
+     clear();
+ }
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index e9e54da..ed1683a 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -45,6 +45,7 @@
+ #include <string>
+ 
+ #include "base/cprintf.hh"
++#include "base/debug.hh"
+ #include "base/intmath.hh"
+ #include "base/types.hh"
+ 
+@@ -89,16 +90,18 @@ class RegClass
+ 
+     static inline RegClassOps defaultOps;
+     RegClassOps *_ops = &defaultOps;
++    const debug::Flag &debugFlag;
+ 
+   public:
+-    RegClass(size_t num_regs, RegIndex new_zero=-1,
+-            size_t reg_bytes=sizeof(RegVal)) :
++    RegClass(size_t num_regs, const debug::Flag &debug_flag,
++            RegIndex new_zero=-1, size_t reg_bytes=sizeof(RegVal)) :
+         _numRegs(num_regs), _zeroReg(new_zero), _regBytes(reg_bytes),
+-        _regShift(ceilLog2(reg_bytes))
++        _regShift(ceilLog2(reg_bytes)), debugFlag(debug_flag)
+     {}
+-    RegClass(size_t num_regs, RegClassOps &new_ops, RegIndex new_zero=-1,
++    RegClass(size_t num_regs, RegClassOps &new_ops,
++            const debug::Flag &debug_flag, RegIndex new_zero=-1,
+             size_t reg_bytes=sizeof(RegVal)) :
+-        RegClass(num_regs, new_zero, reg_bytes)
++        RegClass(num_regs, debug_flag, new_zero, reg_bytes)
+     {
+         _ops = &new_ops;
+     }
+@@ -107,6 +110,7 @@ class RegClass
+     RegIndex zeroReg() const { return _zeroReg; }
+     size_t regBytes() const { return _regBytes; }
+     size_t regShift() const { return _regShift; }
++    const debug::Flag &debug() const { return debugFlag; }
+ 
+     std::string regName(const RegId &id) const { return _ops->regName(id); }
+     std::string
+-- 
+1.8.3.1
+

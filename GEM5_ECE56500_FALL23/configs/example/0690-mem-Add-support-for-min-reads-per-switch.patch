@@ -1,0 +1,91 @@
+From c685cfcb7e993b23f369a4fcc0a9aeb62c6a3aa9 Mon Sep 17 00:00:00 2001
+From: Ayaz Akram <yazakram@ucdavis.edu>
+Date: Sat, 14 May 2022 00:13:58 -0700
+Subject: [PATCH 690/757] mem: Add support for min reads per switch
+
+Similar to minimum writes per switch, this change adds support
+for minimum reads per switch. This helps to reduce the read to
+write transitions, which helps mixed read/write traffic patterns.
+
+Change-Id: I1f9619c984ba14d2cca09f43bc16863283ea64a5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59735
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Wendy Elsasser <welsasser@rambus.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/HBMCtrl.py  | 5 +++++
+ src/mem/MemCtrl.py  | 4 ++++
+ src/mem/mem_ctrl.cc | 6 +++++-
+ src/mem/mem_ctrl.hh | 1 +
+ 4 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/HBMCtrl.py b/src/mem/HBMCtrl.py
+index f711376..a7be7c8 100644
+--- a/src/mem/HBMCtrl.py
++++ b/src/mem/HBMCtrl.py
+@@ -41,4 +41,9 @@ class HBMCtrl(MemCtrl):
+     # HBMCtrl has been tested with two HBM_2000_4H_1x64 interfaces
+     dram_2 = Param.DRAMInterface("DRAM memory interface")
+ 
++    # For mixed traffic, HBMCtrl with HBM_2000_4H_1x64 interfaaces
++    # gives the best results with following min_r/w_per_switch
++    min_reads_per_switch = 64
++    min_writes_per_switch = 64
++
+     partitioned_q = Param.Bool(True, "split queues for pseudo channels")
+diff --git a/src/mem/MemCtrl.py b/src/mem/MemCtrl.py
+index 8960b59..ea199ee 100644
+--- a/src/mem/MemCtrl.py
++++ b/src/mem/MemCtrl.py
+@@ -78,6 +78,10 @@ class MemCtrl(QoSMemCtrl):
+     min_writes_per_switch = Param.Unsigned(16, "Minimum write bursts before "
+                                            "switching to reads")
+ 
++    # minimum read bursts to schedule before switching back to writes
++    min_reads_per_switch = Param.Unsigned(16, "Minimum read bursts before "
++                                           "switching to writes")
++
+     # scheduler, address map and page policy
+     mem_sched_policy = Param.MemSched('frfcfs', "Memory scheduling policy")
+ 
+diff --git a/src/mem/mem_ctrl.cc b/src/mem/mem_ctrl.cc
+index 18bf3a5..3baa1b0 100644
+--- a/src/mem/mem_ctrl.cc
++++ b/src/mem/mem_ctrl.cc
+@@ -71,6 +71,7 @@ MemCtrl::MemCtrl(const MemCtrlParams &p) :
+     writeHighThreshold(writeBufferSize * p.write_high_thresh_perc / 100.0),
+     writeLowThreshold(writeBufferSize * p.write_low_thresh_perc / 100.0),
+     minWritesPerSwitch(p.min_writes_per_switch),
++    minReadsPerSwitch(p.min_reads_per_switch),
+     writesThisTime(0), readsThisTime(0),
+     memSchedPolicy(p.mem_sched_policy),
+     frontendLatency(p.static_frontend_latency),
+@@ -1016,8 +1017,11 @@ MemCtrl::processNextReqEvent(MemInterface* mem_intr,
+             // we have so many writes that we have to transition
+             // don't transition if the writeRespQueue is full and
+             // there are no other writes that can issue
++            // Also ensure that we've issued a minimum defined number
++            // of reads before switching, or have emptied the readQ
+             if ((totalWriteQueueSize > writeHighThreshold) &&
+-               !(nvmWriteBlock(mem_intr))) {
++               (readsThisTime >= minReadsPerSwitch || totalReadQueueSize == 0)
++               && !(nvmWriteBlock(mem_intr))) {
+                 switch_to_writes = true;
+             }
+ 
+diff --git a/src/mem/mem_ctrl.hh b/src/mem/mem_ctrl.hh
+index 6c2b447..3b623fb 100644
+--- a/src/mem/mem_ctrl.hh
++++ b/src/mem/mem_ctrl.hh
+@@ -513,6 +513,7 @@ class MemCtrl : public qos::MemCtrl
+     uint32_t writeHighThreshold;
+     uint32_t writeLowThreshold;
+     const uint32_t minWritesPerSwitch;
++    const uint32_t minReadsPerSwitch;
+     uint32_t writesThisTime;
+     uint32_t readsThisTime;
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,32 @@
+From 73da4d794c952154de5db8d1efb5383af48b081a Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 12:02:48 -0700
+Subject: [PATCH 729/757] stdlib: Update the resources.json version to v22.0
+
+This is used to ensure the stdlib obtains the resources for v22.0.
+
+Change-Id: Ib38e331dcc96cd2d50922dfeeb7edfee3f19d321
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60531
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/resources/downloader.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/python/gem5/resources/downloader.py b/src/python/gem5/resources/downloader.py
+index 7f44801..3481c9d 100644
+--- a/src/python/gem5/resources/downloader.py
++++ b/src/python/gem5/resources/downloader.py
+@@ -54,7 +54,7 @@ def _resources_json_version_required() -> str:
+     """
+     Specifies the version of resources.json to obtain.
+     """
+-    return "develop"
++    return "22.0"
+ 
+ def _get_resources_json_uri() -> str:
+     return "https://resources.gem5.org/resources.json"
+-- 
+1.8.3.1
+

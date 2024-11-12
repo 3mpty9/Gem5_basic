@@ -1,0 +1,141 @@
+From 19bf5c4f335fa190fd4563cd0d11475cd16bdfd2 Mon Sep 17 00:00:00 2001
+From: Cui Jin <cuijinbird@gmail.com>
+Date: Wed, 30 Mar 2022 16:45:54 +0800
+Subject: [PATCH 537/757] cpu-o3: Resolve circular buffer issue for LSQ
+
+--since int is only 4 bytes, while ssize_t is 8 bytes in 64bit
+  system. so 0x80000000 is regarded as negative value.
+
+Jira Issue:: https://gem5.atlassian.net/browse/GEM5-1203
+
+Change-Id: I74b3785b29751f777f5e154692fa60bf62b37b9f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58649
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/o3/lsq.cc      |  4 ++--
+ src/cpu/o3/lsq.hh      |  4 ++--
+ src/cpu/o3/lsq_unit.cc | 10 +++++-----
+ src/cpu/o3/lsq_unit.hh |  6 +++---
+ 4 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/src/cpu/o3/lsq.cc b/src/cpu/o3/lsq.cc
+index 375093a..752298a 100644
+--- a/src/cpu/o3/lsq.cc
++++ b/src/cpu/o3/lsq.cc
+@@ -1432,7 +1432,7 @@ LSQ::UnsquashableDirectRequest::finish(const Fault &fault,
+ }
+ 
+ Fault
+-LSQ::read(LSQRequest* request, int load_idx)
++LSQ::read(LSQRequest* request, ssize_t load_idx)
+ {
+     assert(request->req()->contextId() == request->contextId());
+     ThreadID tid = cpu->contextToThread(request->req()->contextId());
+@@ -1441,7 +1441,7 @@ LSQ::read(LSQRequest* request, int load_idx)
+ }
+ 
+ Fault
+-LSQ::write(LSQRequest* request, uint8_t *data, int store_idx)
++LSQ::write(LSQRequest* request, uint8_t *data, ssize_t store_idx)
+ {
+     ThreadID tid = cpu->contextToThread(request->req()->contextId());
+ 
+diff --git a/src/cpu/o3/lsq.hh b/src/cpu/o3/lsq.hh
+index 1d4ecfd..5f6ec50 100644
+--- a/src/cpu/o3/lsq.hh
++++ b/src/cpu/o3/lsq.hh
+@@ -832,12 +832,12 @@ class LSQ
+     /** Executes a read operation, using the load specified at the load
+      * index.
+      */
+-    Fault read(LSQRequest* request, int load_idx);
++    Fault read(LSQRequest* request, ssize_t load_idx);
+ 
+     /** Executes a store operation, using the store specified at the store
+      * index.
+      */
+-    Fault write(LSQRequest* request, uint8_t *data, int store_idx);
++    Fault write(LSQRequest* request, uint8_t *data, ssize_t store_idx);
+ 
+     /**
+      * Retry the previous send that failed.
+diff --git a/src/cpu/o3/lsq_unit.cc b/src/cpu/o3/lsq_unit.cc
+index 856cef3..5fe9c5f 100644
+--- a/src/cpu/o3/lsq_unit.cc
++++ b/src/cpu/o3/lsq_unit.cc
+@@ -660,7 +660,7 @@ LSQUnit::executeStore(const DynInstPtr &store_inst)
+     // Make sure that a store exists.
+     assert(storeQueue.size() != 0);
+ 
+-    int store_idx = store_inst->sqIdx;
++    ssize_t store_idx = store_inst->sqIdx;
+ 
+     DPRINTF(LSQUnit, "Executing store PC %s [sn:%lli]\n",
+             store_inst->pcState(), store_inst->seqNum);
+@@ -1046,7 +1046,7 @@ LSQUnit::storePostSend()
+     if (isStalled() &&
+         storeWBIt->instruction()->seqNum == stallingStoreIsn) {
+         DPRINTF(LSQUnit, "Unstalling, stalling store [sn:%lli] "
+-                "load idx:%i\n",
++                "load idx:%li\n",
+                 stallingStoreIsn, stallingLoadIdx);
+         stalled = false;
+         stallingStoreIsn = 0;
+@@ -1172,7 +1172,7 @@ LSQUnit::completeStore(typename StoreQueue::iterator store_idx)
+     if (isStalled() &&
+         store_inst->seqNum == stallingStoreIsn) {
+         DPRINTF(LSQUnit, "Unstalling, stalling store [sn:%lli] "
+-                "load idx:%i\n",
++                "load idx:%li\n",
+                 stallingStoreIsn, stallingLoadIdx);
+         stalled = false;
+         stallingStoreIsn = 0;
+@@ -1282,7 +1282,7 @@ LSQUnit::cacheLineSize()
+ }
+ 
+ Fault
+-LSQUnit::read(LSQRequest *request, int load_idx)
++LSQUnit::read(LSQRequest *request, ssize_t load_idx)
+ {
+     LQEntry& load_entry = loadQueue[load_idx];
+     const DynInstPtr& load_inst = load_entry.instruction();
+@@ -1567,7 +1567,7 @@ LSQUnit::read(LSQRequest *request, int load_idx)
+ }
+ 
+ Fault
+-LSQUnit::write(LSQRequest *request, uint8_t *data, int store_idx)
++LSQUnit::write(LSQRequest *request, uint8_t *data, ssize_t store_idx)
+ {
+     assert(storeQueue[store_idx].valid());
+ 
+diff --git a/src/cpu/o3/lsq_unit.hh b/src/cpu/o3/lsq_unit.hh
+index e68cb53..a2db53d 100644
+--- a/src/cpu/o3/lsq_unit.hh
++++ b/src/cpu/o3/lsq_unit.hh
+@@ -485,7 +485,7 @@ class LSQUnit
+      */
+     InstSeqNum stallingStoreIsn;
+     /** The index of the above store. */
+-    int stallingLoadIdx;
++    ssize_t stallingLoadIdx;
+ 
+     /** The packet that needs to be retried. */
+     PacketPtr retryPkt;
+@@ -539,10 +539,10 @@ class LSQUnit
+ 
+   public:
+     /** Executes the load at the given index. */
+-    Fault read(LSQRequest *request, int load_idx);
++    Fault read(LSQRequest *request, ssize_t load_idx);
+ 
+     /** Executes the store at the given index. */
+-    Fault write(LSQRequest *request, uint8_t *data, int store_idx);
++    Fault write(LSQRequest *requst, uint8_t *data, ssize_t store_idx);
+ 
+     /** Returns the index of the head load instruction. */
+     int getLoadHead() { return loadQueue.head(); }
+-- 
+1.8.3.1
+

@@ -1,0 +1,469 @@
+From a52f92dccb6fe4962124df4a67d94739fe4cbb09 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 16:29:31 -0700
+Subject: [PATCH 702/757] arch: Remove plumbing for an op_idx value in ISA
+ operands.
+
+Now that op_idx is trivial to calculate (just src_reg_idx or
+dest_reg_idx), there's no need to have the indirection and extra
+mechanism to funnel a precalculated value around.
+
+Change-Id: I37daeb646b85e050c4b832af28d054ecc3c338b1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49750
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/isa/operands.isa        |  52 +++++++-------
+ src/arch/isa_parser/operand_types.py | 127 +++++++++++++++++------------------
+ src/arch/x86/isa/operands.isa        |   8 +--
+ 3 files changed, 95 insertions(+), 92 deletions(-)
+
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index f0a4c62..6e3db63 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -109,18 +109,19 @@ let {{
+ 
+     class IntReg(IntRegNPC):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             '''Maybe PC read'''
+             return f'{self.base_name} = ({self.reg_spec} == PCReg) ? ' \
+-                   f'readPC(xc) : xc->getRegOperand(this, {op_idx});\n'
++                   f'readPC(xc) : xc->getRegOperand(' \
++                   f'this, {self.src_reg_idx});\n'
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''Maybe PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg)
+                 setNextPC(xc, {self.base_name});
+             else
+-                xc->setRegOperand(this, {op_idx}, {self.base_name});
++                xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name});
+             if (traceData)
+                 traceData->setData({self.base_name});
+             '''
+@@ -131,28 +132,28 @@ let {{
+ 
+     class IntRegAPC(IntReg):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             '''Maybe aligned PC read'''
+             return f'{self.base_name} = ({self.reg_spec} == PCReg) ? ' \
+                    f'(roundDown(readPC(xc), 4)) : ' \
+-                   f'xc->getRegOperand(this, {op_idx});\n'
++                   f'xc->getRegOperand(this, {self.src_reg_idx});\n'
+ 
+     class IntRegIWPC(IntReg):
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''Maybe interworking PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg)
+                 setIWNextPC(xc, {self.base_name});
+             else
+-                xc->setRegOperand(this, {op_idx}, {self.base_name});
++                xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name});
+             if (traceData)
+                 traceData->setData({self.base_name});
+             '''
+ 
+     class IntRegAIWPC(IntReg):
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''Maybe aligned interworking PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg) {"{"}
+@@ -161,7 +162,7 @@ let {{
+                 else
+                     setIWNextPC(xc, {self.base_name});
+             {"}"} else {"{"}
+-                xc->setRegOperand(this, {op_idx}, {self.base_name});
++                xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name});
+             {"}"}
+             if (traceData)
+                 traceData->setData({self.base_name});
+@@ -173,15 +174,16 @@ let {{
+             return f'gem5::ArmISA::couldBeZero({self.reg_spec}) ? RegId() : ' \
+                    f'RegId({self.reg_class}, {self.reg_spec})'
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             '''aarch64 read'''
+             return f'{self.base_name} = ' \
+-                   f'(xc->getRegOperand(this, {op_idx})) & mask(intWidth);\n'
++                   f'(xc->getRegOperand(this, {self.src_reg_idx})) & ' \
++                   f'mask(intWidth);\n'
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''aarch64 write'''
+             return f'''
+-            xc->setRegOperand(this, {op_idx}, {self.base_name} &
++            xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name} &
+                 mask(intWidth));
+             if (traceData)
+                 traceData->setData({self.base_name});
+@@ -191,16 +193,16 @@ let {{
+ 
+     class IntRegX64(IntReg64):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             '''Maybe masked to 32 bit read'''
+             return f'{self.base_name} = ' \
+-                   f'(xc->getRegOperand(this, {op_idx}) & ' \
++                   f'(xc->getRegOperand(this, {self.src_reg_idx}) & ' \
+                     'mask(aarch64 ? 64 : 32));\n'
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''Maybe masked to 32 bit write'''
+             return f'''
+-            xc->setRegOperand(this, {op_idx}, {self.base_name} &
++            xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name} &
+                     mask(aarch64 ? 64 : 32));
+             if (traceData)
+                 traceData->setData({self.base_name});
+@@ -208,15 +210,17 @@ let {{
+ 
+     class IntRegW64(IntReg64):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             '''Masked to 32 bit read'''
+             return f'{self.base_name} = ' \
+-                   f'(xc->getRegOperand(this, {op_idx})) & mask(32);\n'
++                   f'(xc->getRegOperand(this, {self.src_reg_idx})) & ' \
++                   f'mask(32);\n'
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             '''Masked to 32 bit write'''
+             return f'''
+-            xc->setRegOperand(this, {op_idx}, {self.base_name} & mask(32));
++            xc->setRegOperand(this, {self.dest_reg_idx}, {self.base_name} &
++                    mask(32));
+             if (traceData)
+                 traceData->setData({self.base_name});
+             '''
+@@ -235,11 +239,11 @@ let {{
+ 
+     class CntrlNsBankedReg(CntrlReg):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             return f'{self.base_name} = ' \
+                    f'xc->readMiscReg(snsBankedIndex(op1, xc->tcBase()));\n'
+         @overrideInOperand
+-        def makeWrite(self, op_idx):
++        def makeWrite(self):
+             return f'''
+             xc->setMiscReg(snsBankedIndex(dest, xc->tcBase()),
+                            {self.base_name});
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 4de7121..b699025 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -148,22 +148,14 @@ class Operand(object):
+         self.op_decl = self.makeDecl()
+ 
+         if self.is_src:
+-            if hasattr(self, 'src_reg_idx'):
+-                op_idx = str(self.src_reg_idx)
+-            else:
+-                op_idx = None
+-            self.op_rd = self.makeRead(op_idx)
++            self.op_rd = self.makeRead()
+             self.op_src_decl = self.makeDecl()
+         else:
+             self.op_rd = ''
+             self.op_src_decl = ''
+ 
+         if self.is_dest:
+-            if hasattr(self, 'dest_reg_idx'):
+-                op_idx = str(self.dest_reg_idx)
+-            else:
+-                op_idx = None
+-            self.op_wb = self.makeWrite(op_idx)
++            self.op_wb = self.makeWrite()
+             self.op_dest_decl = self.makeDecl()
+         else:
+             self.op_wb = ''
+@@ -214,8 +206,8 @@ class RegOperand(Operand):
+         return c_src + c_dest
+ 
+ class RegValOperand(RegOperand):
+-    def makeRead(self, op_idx):
+-        reg_val = f'xc->getRegOperand(this, {op_idx})'
++    def makeRead(self):
++        reg_val = f'xc->getRegOperand(this, {self.src_reg_idx})'
+ 
+         if self.ctype == 'float':
+             reg_val = f'bitsToFloat32({reg_val})'
+@@ -224,7 +216,7 @@ class RegValOperand(RegOperand):
+ 
+         return f'{self.base_name} = {reg_val};\n'
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         reg_val = self.base_name
+ 
+         if self.ctype == 'float':
+@@ -235,9 +227,10 @@ class RegValOperand(RegOperand):
+         return f'''
+         {{
+             RegVal final_val = {reg_val};
+-            xc->setRegOperand(this, {op_idx}, final_val);
+-            if (traceData)
++            xc->setRegOperand(this, {self.dest_reg_idx}, final_val);
++            if (traceData) {{
+                 traceData->setData(final_val);
++            }}
+         }}'''
+ 
+ class RegOperandDesc(OperandDesc):
+@@ -302,16 +295,18 @@ class VecRegOperand(RegOperand):
+                   (ctype, elem_name, self.base_name, elem_spec)
+         return c_read
+ 
+-    def makeReadW(self, op_idx):
+-        c_readw = f'\t\tauto &tmp_d{op_idx} = \n' \
++    def makeReadW(self):
++        tmp_name = f'tmp_d{self.dest_reg_idx}'
++        c_readw = f'\t\tauto &{tmp_name} = \n' \
+                   f'\t\t    *({self.parser.namespace}::VecRegContainer *)\n' \
+-                  f'\t\t    xc->getWritableRegOperand(this, {op_idx});\n'
++                  f'\t\t    xc->getWritableRegOperand(\n' \
++                  f'\t\t        this, {self.dest_reg_idx});\n'
+         if self.elemExt:
+-            c_readw += '\t\tauto %s = tmp_d%s.as<%s>();\n' % (self.base_name,
+-                        op_idx, self.parser.operandTypeMap[self.elemExt])
++            ext = f'{self.parser.operandTypeMap[self.elemExt]}'
++            c_readw += f'\t\tauto {self.base_name} = {tmp_name}.as<{ext}>();\n'
+         if self.ext:
+-            c_readw += '\t\tauto %s = tmp_d%s.as<%s>();\n' % (self.base_name,
+-                        op_idx, self.parser.operandTypeMap[self.ext])
++            ext = f'{self.parser.operandTypeMap[self.ext]}'
++            c_readw += f'\t\tauto {self.base_name} = {tmp_name}.as<{ext}>();\n'
+         if hasattr(self, 'active_elems'):
+             if self.active_elems:
+                 for elem in self.active_elems:
+@@ -332,40 +327,41 @@ class VecRegOperand(RegOperand):
+                   (elem_name, name, elem_spec)
+         return c_read
+ 
+-    def makeRead(self, op_idx):
++    def makeRead(self):
+         name = self.base_name
+         if self.is_dest and self.is_src:
+             name += '_merger'
+ 
++        tmp_name = f'tmp_s{self.src_reg_idx}'
+         c_read = f'\t\t{self.parser.namespace}::VecRegContainer ' \
+-                 f'\t\t        tmp_s{op_idx};\n' \
+-                 f'\t\txc->getRegOperand(this, {op_idx}, &tmp_s{op_idx});\n'
++                 f'{tmp_name};\n' \
++                 f'\t\txc->getRegOperand(this, {self.src_reg_idx},\n' \
++                 f'\t\t    &{tmp_name});\n'
+         # If the parser has detected that elements are being access, create
+         # the appropriate view
+         if self.elemExt:
+-            c_read += '\t\tauto %s = tmp_s%s.as<%s>();\n' % \
+-                 (name, op_idx, self.parser.operandTypeMap[self.elemExt])
++            ext = f'{self.parser.operandTypeMap[self.elemExt]}'
++            c_read += f'\t\tauto {name} = {tmp_name}.as<{ext}>();\n'
+         if self.ext:
+-            c_read += '\t\tauto %s = tmp_s%s.as<%s>();\n' % \
+-                 (name, op_idx, self.parser.operandTypeMap[self.ext])
++            ext = f'{self.parser.operandTypeMap[self.ext]}'
++            c_read += f'\t\tauto {name} = {tmp_name}.as<{ext}>();\n'
+         if hasattr(self, 'active_elems'):
+             if self.active_elems:
+                 for elem in self.active_elems:
+                     c_read += self.makeReadElem(elem, name)
+         return c_read
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         return f'''
+         if (traceData) {{
+-            traceData->setData(tmp_d{op_idx});
++            traceData->setData(tmp_d{self.dest_reg_idx});
+         }}
+         '''
+ 
+     def finalize(self):
+         super().finalize()
+         if self.is_dest:
+-            op_idx = str(self.dest_reg_idx)
+-            self.op_rd = self.makeReadW(op_idx) + self.op_rd
++            self.op_rd = self.makeReadW() + self.op_rd
+ 
+ class VecRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+@@ -377,39 +373,39 @@ class VecPredRegOperand(RegOperand):
+     def makeDecl(self):
+         return ''
+ 
+-    def makeRead(self, op_idx):
+-        c_read =  f'\t\t{self.parser.namespace}::VecPredRegContainer ' \
+-                  f'\t\t        tmp_s{op_idx}; ' \
+-                  f'xc->getRegOperand(this, {op_idx}, &tmp_s{op_idx});\n'
++    def makeRead(self):
++        tmp_name = f'tmp_s{self.src_reg_idx}'
++        c_read =  f'\t\t{self.parser.namespace}::VecPredRegContainer \n' \
++                  f'\t\t        {tmp_name};\n' \
++                  f'xc->getRegOperand(this, {self.src_reg_idx}, ' \
++                  f'&{tmp_name});\n'
+         if self.ext:
+-            c_read += f'\t\tauto {self.base_name} = ' \
+-                      f'tmp_s{op_idx}.as<' \
++            c_read += f'\t\tauto {self.base_name} = {tmp_name}.as<' \
+                       f'{self.parser.operandTypeMap[self.ext]}>();\n'
+         return c_read
+ 
+-    def makeReadW(self, op_idx):
+-        c_readw = f'\t\tauto &tmp_d{op_idx} = \n' \
++    def makeReadW(self):
++        tmp_name = f'tmp_d{self.dest_reg_idx}'
++        c_readw = f'\t\tauto &{tmp_name} = \n' \
+                   f'\t\t    *({self.parser.namespace}::' \
+                   f'VecPredRegContainer *)xc->getWritableRegOperand(' \
+-                  f'this, {op_idx});\n'
++                  f'this, {self.dest_reg_idx});\n'
+         if self.ext:
+-            c_readw += '\t\tauto %s = tmp_d%s.as<%s>();\n' % (
+-                    self.base_name, op_idx,
+-                    self.parser.operandTypeMap[self.ext])
++            c_readw += f'\t\tauto {self.base_name} = {tmp_name}.as<' \
++                       f'{self.parser.operandTypeMap[self.ext]}>();\n'
+         return c_readw
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         return f'''
+         if (traceData) {{
+-            traceData->setData(tmp_d{op_idx});
++            traceData->setData(tmp_d{self.dest_reg_idx});
+         }}
+         '''
+ 
+     def finalize(self):
+         super().finalize()
+         if self.is_dest:
+-            op_idx = str(self.dest_reg_idx)
+-            self.op_rd = self.makeReadW(op_idx) + self.op_rd
++            self.op_rd = self.makeReadW() + self.op_rd
+ 
+ class VecPredRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+@@ -436,21 +432,24 @@ class ControlRegOperand(Operand):
+ 
+         return c_src + c_dest
+ 
+-    def makeRead(self, op_idx):
++    def makeRead(self):
+         bit_select = 0
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to read control register as FP')
+ 
+-        return '%s = xc->readMiscRegOperand(this, %s);\n' % \
+-            (self.base_name, op_idx)
++        return f'{self.base_name} = ' \
++               f'xc->readMiscRegOperand(this, {self.src_reg_idx});\n'
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to write control register as FP')
+-        wb = 'xc->setMiscRegOperand(this, %s, %s);\n' % \
+-             (op_idx, self.base_name)
+-        wb += 'if (traceData) { traceData->setData(%s); }' % \
+-              self.base_name
++        wb = f'xc->setMiscRegOperand(this, ' \
++             f'{self.dest_reg_idx}, {self.base_name});\n'
++        wb += f'''
++        if (traceData) {{
++            traceData->setData({self.base_name});
++        }}
++        '''
+ 
+         return wb
+ 
+@@ -467,12 +466,12 @@ class MemOperand(Operand):
+ 
+     def makeDecl(self):
+         # Declare memory data variable.
+-        return '%s %s = {};\n' % (self.ctype, self.base_name)
++        return f'{self.ctype} {self.base_name} = {{}};\n'
+ 
+-    def makeRead(self, op_idx):
++    def makeRead(self):
+         return ''
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         return ''
+ 
+ class MemOperandDesc(OperandDesc):
+@@ -487,17 +486,17 @@ class PCStateOperand(Operand):
+     def makeConstructor(self):
+         return ''
+ 
+-    def makeRead(self, op_idx):
++    def makeRead(self):
+         if self.reg_spec:
+             # A component of the PC state.
+-            return '%s = __parserAutoPCState.%s();\n' % \
+-                (self.base_name, self.reg_spec)
++            return f'{self.base_name} = ' \
++                    f'__parserAutoPCState.{self.reg_spec}();\n'
+         else:
+             # The whole PC state itself.
+             return f'{self.base_name} = ' \
+                     f'xc->pcState().as<{self.parser.namespace}::PCState>();\n'
+ 
+-    def makeWrite(self, op_idx):
++    def makeWrite(self):
+         if self.reg_spec:
+             # A component of the PC state.
+             return '__parserAutoPCState.%s(%s);\n' % \
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index be39b7d..d48d4a1 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -65,9 +65,9 @@ let {{
+ 
+     class PickedReg(IntReg):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             return f'{self.base_name} = pick(xc->getRegOperand(' \
+-                        f'this, {op_idx}), {self.reg_spec}, ' \
++                        f'this, {self.src_reg_idx}), {self.reg_spec}, ' \
+                         f'{self.data_size});\n'
+ 
+         def __init__(self, idx, id, data_size='dataSize'):
+@@ -75,9 +75,9 @@ let {{
+ 
+     class SignedPickedReg(IntReg):
+         @overrideInOperand
+-        def makeRead(self, op_idx):
++        def makeRead(self):
+             return f'{self.base_name} = signedPick(xc->getRegOperand(' \
+-                        f'this, {op_idx}), {self.reg_spec}, ' \
++                        f'this, {self.src_reg_idx}), {self.reg_spec}, ' \
+                         f'{self.data_size});\n'
+ 
+         def __init__(self, idx, id, data_size='dataSize'):
+-- 
+1.8.3.1
+

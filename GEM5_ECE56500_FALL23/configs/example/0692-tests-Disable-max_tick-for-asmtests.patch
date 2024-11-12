@@ -1,0 +1,50 @@
+From f2a7a46db0fad4d0dd8ed3213f2a19c5f4a6be3f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 1 Jun 2022 11:50:03 -0700
+Subject: [PATCH 692/757] tests: Disable max_tick for asmtests
+
+These tests are very short and do not need to be limited by a set number
+of ticks. They should be ran to completion.
+
+Change-Id: I0ea2193efe01e5ed01afd10d8e5934512a4027c6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60251
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/asmtest/tests.py | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/tests/gem5/asmtest/tests.py b/tests/gem5/asmtest/tests.py
+index dfd6cd1..cd473b0 100755
+--- a/tests/gem5/asmtest/tests.py
++++ b/tests/gem5/asmtest/tests.py
+@@ -40,7 +40,7 @@ from testlib import *
+ def asm_test(test, #The full path of the test
+              cpu_type,
+              num_cpus=4,
+-             max_tick=10000000000,
++             max_tick=None,
+              ruby=False,
+              debug_flags=None, # Debug flags passed to gem5
+              full_system = False
+@@ -58,10 +58,10 @@ def asm_test(test, #The full path of the test
+     if not debug_flags is None:
+         gem5_args += ['--debug-flags', str(debug_flags)]
+ 
+-    config_args = [
+-        '-m', str(max_tick),
+-        '--cpu-type', cpu_type,
+-    ]
++    config_args = ['--cpu-type', cpu_type]
++
++    if max_tick:
++        config_args += ['-m', str(max_tick) ]
+ 
+     if full_system:
+         config_args += [
+-- 
+1.8.3.1
+

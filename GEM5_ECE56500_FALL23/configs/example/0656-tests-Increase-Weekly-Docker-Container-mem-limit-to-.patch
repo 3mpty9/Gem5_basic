@@ -1,0 +1,66 @@
+From 041cc658995014bec5926583ea8366b8354d296d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 25 May 2022 11:11:29 -0700
+Subject: [PATCH 656/757] tests: Increase Weekly Docker Container mem limit to
+ 24GB
+
+The following weekly tests were failing:
+https://jenkins.gem5.org/job/weekly/53
+
+This appears to be due to the "lulesh" tests failing with the docker
+container running out of memory. This can be recreated with:
+
+```
+git clone -b develop https://gem5.googlesource.com/public/gem5
+
+cd gem5
+
+git clone -b develop https://gem5.googlesource.com/public/gem5-resources
+
+docker pull gcr.io/gem5-test/gcn-gpu:latest
+docker build -t hacc-test-weekly gem5-resources/src/gpu/halo-finder
+
+docker run --rm -u $UID:$GID --volume $(pwd):$(pwd) -w \
+    $(pwd) --memory="18g" hacc-test-weekly bash -c \
+    "scons build/GCN3_X86/gem5.opt -j`nproc`"
+
+docker run --rm --volume $(pwd):$(pwd) -w \
+       "$(pwd)/gem5-resources/src/gpu/lulesh" \
+       -u $UID:$GID --memory="18g" hacc-test-weekly make
+
+docker run --rm -u $UID:$GID --volume "$(pwd)":"$(pwd)" -w \
+    "$(pwd)" --memory="18g" \
+    hacc-test-weekly build/GCN3_X86/gem5.opt configs/example/apu_se.py -n3 \
+    --mem-size=8GB --reg-alloc-policy=dynamic \
+    --benchmark-root="$(pwd)/gem5-resources/src/gpu/lulesh/bin" -c lulesh
+```
+
+It is currently unknown as to why this process consumes so much memory
+or how it can be reduced, but increasing the docker container limit to
+24GB for the Weekly tests does appear to fix the issue.
+
+Change-Id: Ifcd65d4ab8bf6a12ddf7a45d61c779e691619072
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60009
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/weekly.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index b88e3ed..98bc47e 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -33,7 +33,7 @@ dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+ gem5_root="${dir}/.."
+ 
+ # The per-container Docker memory limit.
+-docker_mem_limit="18g"
++docker_mem_limit="24g"
+ 
+ # We assume the first two arguments are the number of threads followed by the
+ # GPU ISA to test. These default to 1 and GCN3_X86 is no argument is given.
+-- 
+1.8.3.1
+

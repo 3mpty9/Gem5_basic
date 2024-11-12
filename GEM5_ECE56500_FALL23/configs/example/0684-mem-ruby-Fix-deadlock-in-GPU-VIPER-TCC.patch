@@ -1,0 +1,39 @@
+From f876e60bc264ab05cd49a1f444460bdbd5fd05fe Mon Sep 17 00:00:00 2001
+From: Kyle Roarty <kyleroarty1716@gmail.com>
+Date: Wed, 4 May 2022 14:46:57 -0500
+Subject: [PATCH 684/757] mem-ruby: Fix deadlock in GPU VIPER TCC
+
+A deadlock occured where we got a RdBlk while in W,
+which put us in WI while we wait for a writeback to complete.
+
+This would cause the request to be stalled while the writeback
+was occuring, but when the writeback completed (WBAck), we never
+woke up the requests and thus never completed the RdBlk.
+
+This commit adds a wakeup when we receive a WBAck while in WI.
+
+Change-Id: I01edf1d7a47757b4f680baf9f33a1a6aa37e7e25
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59352
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/GPU_VIPER-TCC.sm | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/mem/ruby/protocol/GPU_VIPER-TCC.sm b/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
+index 0d92565..032a64c 100644
+--- a/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
++++ b/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
+@@ -801,6 +801,7 @@ transition(I, Atomic, A) {TagArrayRead} {
+ 
+   transition(WI, WBAck,I) {
+     dt_deallocateTBE;
++    wada_wakeUpAllDependentsAddr;
+     pr_popResponseQueue;
+   }
+ }
+-- 
+1.8.3.1
+

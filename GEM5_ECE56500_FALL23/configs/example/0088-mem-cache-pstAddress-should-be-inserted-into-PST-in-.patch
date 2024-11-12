@@ -1,0 +1,57 @@
+From 66e6e5966672bc78030a73e78f1dde44a4dab431 Mon Sep 17 00:00:00 2001
+From: Jiasen Huang <jiasen.hjs@alibaba-inc.com>
+Date: Fri, 31 Dec 2021 15:55:45 +0800
+Subject: [PATCH 088/757] mem-cache: pstAddress should be inserted into PST in
+ STeMS
+
+Change-Id: Ib2c4c5fb0fec32e63947d3ee8dcb5c3d7e2555ab
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55084
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+index 6030096..f610288 100644
+--- a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
++++ b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+@@ -74,6 +74,7 @@ STeMS::checkForActiveGenerationsEnd()
+         if (agt_entry.isValid()) {
+             bool generation_ended = false;
+             bool sr_is_secure = agt_entry.isSecure();
++            Addr pst_addr = 0;
+             for (auto &seq_entry : agt_entry.sequence) {
+                 if (seq_entry.counter > 0) {
+                     Addr cache_addr =
+@@ -81,6 +82,8 @@ STeMS::checkForActiveGenerationsEnd()
+                     if (!inCache(cache_addr, sr_is_secure) &&
+                             !inMissQueue(cache_addr, sr_is_secure)) {
+                         generation_ended = true;
++                        pst_addr = (agt_entry.pc << spatialRegionSizeBits)
++                                    + seq_entry.offset;
+                         break;
+                     }
+                 }
+@@ -88,13 +91,13 @@ STeMS::checkForActiveGenerationsEnd()
+             if (generation_ended) {
+                 // PST is indexed using the PC (secure bit is unused)
+                 ActiveGenerationTableEntry *pst_entry =
+-                    patternSequenceTable.findEntry(agt_entry.pc,
++                    patternSequenceTable.findEntry(pst_addr,
+                                                    false /*unused*/);
+                 if (pst_entry == nullptr) {
+                     // Tipically an entry will not exist
+-                    pst_entry = patternSequenceTable.findVictim(agt_entry.pc);
++                    pst_entry = patternSequenceTable.findVictim(pst_addr);
+                     assert(pst_entry != nullptr);
+-                    patternSequenceTable.insertEntry(agt_entry.pc,
++                    patternSequenceTable.insertEntry(pst_addr,
+                             false /*unused*/, pst_entry);
+                 } else {
+                     patternSequenceTable.accessEntry(pst_entry);
+-- 
+1.8.3.1
+

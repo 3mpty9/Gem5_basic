@@ -1,0 +1,35 @@
+From 4978bf8d5a77ef0cf6bec78197e34125175daad9 Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Wed, 30 Mar 2022 19:34:49 -0700
+Subject: [PATCH 552/757] scons: Fix bug in error message
+
+The variable p doesn't exist in the context. Just remove the extra
+print. Even without the specific variable printed the error message is
+pretty helpful.
+
+Change-Id: If681d686c228c1362b8cc46cb14a94d7302f3793
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58429
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/sim_object_param_struct_hh.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build_tools/sim_object_param_struct_hh.py b/build_tools/sim_object_param_struct_hh.py
+index ff525ee..261ac9b 100644
+--- a/build_tools/sim_object_param_struct_hh.py
++++ b/build_tools/sim_object_param_struct_hh.py
+@@ -73,7 +73,7 @@ ports = sim_object._ports.local
+ try:
+     ptypes = [p.ptype for p in params]
+ except:
+-    print(sim_object, p, p.ptype_str)
++    print(sim_object)
+     print(params)
+     raise
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,344 @@
+From 6dac25a7f4efdf125a314233ea46452d7b3b6566 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:50:39 +0000
+Subject: [PATCH 541/757] cpu: Handle external TLBI Sync requests in O3CPU
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I02e55a42e0f717211b481e65d59900fc3d05f061
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57292
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/o3/lsq.cc      | 95 ++++++++++++++++++++++++++++++++++++++++++++++++--
+ src/cpu/o3/lsq.hh      | 20 ++++++++++-
+ src/cpu/o3/lsq_unit.cc | 35 ++++++++++++++++++-
+ src/cpu/o3/lsq_unit.hh |  6 +++-
+ 4 files changed, 151 insertions(+), 5 deletions(-)
+
+diff --git a/src/cpu/o3/lsq.cc b/src/cpu/o3/lsq.cc
+index 752298a..654fd67 100644
+--- a/src/cpu/o3/lsq.cc
++++ b/src/cpu/o3/lsq.cc
+@@ -73,6 +73,8 @@ LSQ::LSQ(CPU *cpu_ptr, IEW *iew_ptr, const BaseO3CPUParams &params)
+       _cacheBlocked(false),
+       cacheStorePorts(params.cacheStorePorts), usedStorePorts(0),
+       cacheLoadPorts(params.cacheLoadPorts), usedLoadPorts(0),
++      waitingForStaleTranslation(false),
++      staleTranslationWaitTxnId(0),
+       lsqPolicy(params.smtLSQPolicy),
+       LQEntries(params.LQEntries),
+       SQEntries(params.SQEntries),
+@@ -431,6 +433,10 @@ LSQ::recvTimingResp(PacketPtr pkt)
+     // Update the LSQRequest state (this may delete the request)
+     request->packetReplied();
+ 
++    if (waitingForStaleTranslation) {
++        checkStaleTranslations();
++    }
++
+     return true;
+ }
+ 
+@@ -447,6 +453,19 @@ LSQ::recvTimingSnoopReq(PacketPtr pkt)
+         for (ThreadID tid = 0; tid < numThreads; tid++) {
+             thread[tid].checkSnoop(pkt);
+         }
++    } else if (pkt->req && pkt->req->isTlbiExtSync()) {
++        DPRINTF(LSQ, "received TLBI Ext Sync\n");
++        assert(!waitingForStaleTranslation);
++
++        waitingForStaleTranslation = true;
++        staleTranslationWaitTxnId = pkt->req->getExtraData();
++
++        for (auto& unit : thread) {
++            unit.startStaleTranslationFlush();
++        }
++
++        // In case no units have pending ops, just go ahead
++        checkStaleTranslations();
+     }
+ }
+ 
+@@ -1048,7 +1067,8 @@ LSQ::LSQRequest::LSQRequest(
+ LSQ::LSQRequest::LSQRequest(
+         LSQUnit *port, const DynInstPtr& inst, bool isLoad,
+         const Addr& addr, const uint32_t& size, const Request::Flags& flags_,
+-           PacketDataPtr data, uint64_t* res, AtomicOpFunctorPtr amo_op)
++        PacketDataPtr data, uint64_t* res, AtomicOpFunctorPtr amo_op,
++        bool stale_translation)
+     : _state(State::NotIssued),
+     numTranslatedFragments(0),
+     numInTranslationFragments(0),
+@@ -1056,7 +1076,8 @@ LSQ::LSQRequest::LSQRequest(
+     _res(res), _addr(addr), _size(size),
+     _flags(flags_),
+     _numOutstandingPackets(0),
+-    _amo_op(std::move(amo_op))
++    _amo_op(std::move(amo_op)),
++    _hasStaleTranslation(stale_translation)
+ {
+     flags.set(Flag::IsLoad, isLoad);
+     flags.set(Flag::WriteBackToRegister,
+@@ -1134,6 +1155,36 @@ LSQ::LSQRequest::sendFragmentToTranslation(int i)
+             this, isLoad() ? BaseMMU::Read : BaseMMU::Write);
+ }
+ 
++void
++LSQ::SingleDataRequest::markAsStaleTranslation()
++{
++    // If this element has been translated and is currently being requested,
++    // then it may be stale
++    if ((!flags.isSet(Flag::Complete)) &&
++        (!flags.isSet(Flag::Discarded)) &&
++        (flags.isSet(Flag::TranslationStarted))) {
++        _hasStaleTranslation = true;
++    }
++
++    DPRINTF(LSQ, "SingleDataRequest %d 0x%08x isBlocking:%d\n",
++        (int)_state, (uint32_t)flags, _hasStaleTranslation);
++}
++
++void
++LSQ::SplitDataRequest::markAsStaleTranslation()
++{
++    // If this element has been translated and is currently being requested,
++    // then it may be stale
++    if ((!flags.isSet(Flag::Complete)) &&
++        (!flags.isSet(Flag::Discarded)) &&
++        (flags.isSet(Flag::TranslationStarted))) {
++        _hasStaleTranslation = true;
++    }
++
++    DPRINTF(LSQ, "SplitDataRequest %d 0x%08x isBlocking:%d\n",
++        (int)_state, (uint32_t)flags, _hasStaleTranslation);
++}
++
+ bool
+ LSQ::SingleDataRequest::recvTimingResp(PacketPtr pkt)
+ {
+@@ -1141,6 +1192,7 @@ LSQ::SingleDataRequest::recvTimingResp(PacketPtr pkt)
+     flags.set(Flag::Complete);
+     assert(pkt == _packets.front());
+     _port.completeDataAccess(pkt);
++    _hasStaleTranslation = false;
+     return true;
+ }
+ 
+@@ -1166,6 +1218,7 @@ LSQ::SplitDataRequest::recvTimingResp(PacketPtr pkt)
+         _port.completeDataAccess(resp);
+         delete resp;
+     }
++    _hasStaleTranslation = false;
+     return true;
+ }
+ 
+@@ -1424,6 +1477,14 @@ LSQ::UnsquashableDirectRequest::initiateTranslation()
+ }
+ 
+ void
++LSQ::UnsquashableDirectRequest::markAsStaleTranslation()
++{
++    // HTM/TLBI operations do not translate,
++    // so cannot have stale translations
++    _hasStaleTranslation = false;
++}
++
++void
+ LSQ::UnsquashableDirectRequest::finish(const Fault &fault,
+         const RequestPtr &req, gem5::ThreadContext* tc,
+         BaseMMU::Mode mode)
+@@ -1431,6 +1492,36 @@ LSQ::UnsquashableDirectRequest::finish(const Fault &fault,
+     panic("unexpected behaviour - finish()");
+ }
+ 
++void
++LSQ::checkStaleTranslations()
++{
++    assert(waitingForStaleTranslation);
++
++    DPRINTF(LSQ, "Checking pending TLBI sync\n");
++    // Check if all thread queues are complete
++    for (const auto& unit : thread) {
++        if (unit.checkStaleTranslations())
++            return;
++    }
++    DPRINTF(LSQ, "No threads have blocking TLBI sync\n");
++
++    // All thread queues have committed their sync operations
++    // => send a RubyRequest to the sequencer
++    auto req = Request::createMemManagement(
++        Request::TLBI_EXT_SYNC_COMP,
++        cpu->dataRequestorId());
++    req->setExtraData(staleTranslationWaitTxnId);
++    PacketPtr pkt = Packet::createRead(req);
++
++    // TODO - reserve some credit for these responses?
++    if (!dcachePort.sendTimingReq(pkt)) {
++        panic("Couldn't send TLBI_EXT_SYNC_COMP message");
++    }
++
++    waitingForStaleTranslation = false;
++    staleTranslationWaitTxnId = 0;
++}
++
+ Fault
+ LSQ::read(LSQRequest* request, ssize_t load_idx)
+ {
+diff --git a/src/cpu/o3/lsq.hh b/src/cpu/o3/lsq.hh
+index 5f6ec50..130c347 100644
+--- a/src/cpu/o3/lsq.hh
++++ b/src/cpu/o3/lsq.hh
+@@ -257,6 +257,7 @@ class LSQ
+         std::vector<bool> _byteEnable;
+         uint32_t _numOutstandingPackets;
+         AtomicOpFunctorPtr _amo_op;
++        bool _hasStaleTranslation;
+ 
+       protected:
+         LSQUnit* lsqUnit() { return &_port; }
+@@ -264,7 +265,8 @@ class LSQ
+         LSQRequest(LSQUnit* port, const DynInstPtr& inst, bool isLoad,
+                 const Addr& addr, const uint32_t& size,
+                 const Request::Flags& flags_, PacketDataPtr data=nullptr,
+-                uint64_t* res=nullptr, AtomicOpFunctorPtr amo_op=nullptr);
++                uint64_t* res=nullptr, AtomicOpFunctorPtr amo_op=nullptr,
++                bool stale_translation=false);
+ 
+         bool
+         isLoad() const
+@@ -331,6 +333,10 @@ class LSQ
+ 
+         const DynInstPtr& instruction() { return _inst; }
+ 
++        bool hasStaleTranslation() const { return _hasStaleTranslation; }
++
++        virtual void markAsStaleTranslation() = 0;
++
+         /** Set up virtual request.
+          * For a previously allocated Request objects.
+          */
+@@ -571,6 +577,7 @@ class LSQ
+                        std::move(amo_op)) {}
+ 
+         virtual ~SingleDataRequest() {}
++        virtual void markAsStaleTranslation();
+         virtual void initiateTranslation();
+         virtual void finish(const Fault &fault, const RequestPtr &req,
+                 gem5::ThreadContext* tc, BaseMMU::Mode mode);
+@@ -594,6 +601,7 @@ class LSQ
+                 const Request::Flags& flags_);
+         inline virtual ~UnsquashableDirectRequest() {}
+         virtual void initiateTranslation();
++        virtual void markAsStaleTranslation();
+         virtual void finish(const Fault &fault, const RequestPtr &req,
+                 gem5::ThreadContext* tc, BaseMMU::Mode mode);
+         virtual std::string
+@@ -635,6 +643,7 @@ class LSQ
+                 _mainPacket = nullptr;
+             }
+         }
++        virtual void markAsStaleTranslation();
+         virtual void finish(const Fault &fault, const RequestPtr &req,
+                 gem5::ThreadContext* tc, BaseMMU::Mode mode);
+         virtual bool recvTimingResp(PacketPtr pkt);
+@@ -839,6 +848,11 @@ class LSQ
+      */
+     Fault write(LSQRequest* request, uint8_t *data, ssize_t store_idx);
+ 
++    /** Checks if queues have any marked operations left,
++     * and sends the appropriate Sync Completion message if not.
++     */
++    void checkStaleTranslations();
++
+     /**
+      * Retry the previous send that failed.
+      */
+@@ -889,6 +903,10 @@ class LSQ
+     /** The number of used cache ports in this cycle by loads. */
+     int usedLoadPorts;
+ 
++    /** If the LSQ is currently waiting for stale translations */
++    bool waitingForStaleTranslation;
++    /** The ID if the transaction that made translations stale */
++    Addr staleTranslationWaitTxnId;
+ 
+     /** The LSQ policy for SMT mode. */
+     SMTQueuePolicy lsqPolicy;
+diff --git a/src/cpu/o3/lsq_unit.cc b/src/cpu/o3/lsq_unit.cc
+index 5fe9c5f..52cf8cb 100644
+--- a/src/cpu/o3/lsq_unit.cc
++++ b/src/cpu/o3/lsq_unit.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010-2014, 2017-2020 ARM Limited
++ * Copyright (c) 2010-2014, 2017-2021 ARM Limited
+  * Copyright (c) 2013 Advanced Micro Devices, Inc.
+  * All rights reserved
+  *
+@@ -1239,6 +1239,39 @@ LSQUnit::trySendPacket(bool isLoad, PacketPtr data_pkt)
+ }
+ 
+ void
++LSQUnit::startStaleTranslationFlush()
++{
++    DPRINTF(LSQUnit, "Unit %p marking stale translations %d %d\n", this,
++        storeQueue.size(), loadQueue.size());
++    for (auto& entry : storeQueue) {
++        if (entry.valid() && entry.hasRequest())
++            entry.request()->markAsStaleTranslation();
++    }
++    for (auto& entry : loadQueue) {
++        if (entry.valid() && entry.hasRequest())
++            entry.request()->markAsStaleTranslation();
++    }
++}
++
++bool
++LSQUnit::checkStaleTranslations() const
++{
++    DPRINTF(LSQUnit, "Unit %p checking stale translations\n", this);
++    for (auto& entry : storeQueue) {
++        if (entry.valid() && entry.hasRequest()
++            && entry.request()->hasStaleTranslation())
++            return true;
++    }
++    for (auto& entry : loadQueue) {
++        if (entry.valid() && entry.hasRequest()
++            && entry.request()->hasStaleTranslation())
++            return true;
++    }
++    DPRINTF(LSQUnit, "Unit %p found no stale translations\n", this);
++    return false;
++}
++
++void
+ LSQUnit::recvRetry()
+ {
+     if (isStoreBlocked) {
+diff --git a/src/cpu/o3/lsq_unit.hh b/src/cpu/o3/lsq_unit.hh
+index a2db53d..c0899ba 100644
+--- a/src/cpu/o3/lsq_unit.hh
++++ b/src/cpu/o3/lsq_unit.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2014,2017-2018,2020 ARM Limited
++ * Copyright (c) 2012-2014,2017-2018,2020-2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -317,6 +317,10 @@ class LSQUnit
+         lastRetiredHtmUid = htm_uid;
+     }
+ 
++    // Stale translation checks
++    void startStaleTranslationFlush();
++    bool checkStaleTranslations() const;
++
+     /** Returns if either the LQ or SQ is full. */
+     bool isFull() { return lqFull() || sqFull(); }
+ 
+-- 
+1.8.3.1
+

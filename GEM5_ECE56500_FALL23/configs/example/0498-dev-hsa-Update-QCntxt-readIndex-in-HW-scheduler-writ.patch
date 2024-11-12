@@ -1,0 +1,41 @@
+From 2af227c32a6a2976a07d206d349f23e5a3d95ff4 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 15 Mar 2022 12:34:56 -0500
+Subject: [PATCH 498/757] dev-hsa: Update QCntxt readIndex in HW scheduler
+ write
+
+The QCntxt is reused when a queue is unmapped and mapped again. This is
+fairly common in GPU full system. If this is not done the readIndex on
+the queue context is reset to 1, causing getCommandsFromHost to read
+from the wrong slot which is typically an old dispatch packet or an
+invalid packet. This causes simulation to stall as the incorrect
+completion signal is eventually written.
+
+Change-Id: I65541e559fe04f5eb44b936ca37e3f802262fe6a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57670
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/hsa/hw_scheduler.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/dev/hsa/hw_scheduler.cc b/src/dev/hsa/hw_scheduler.cc
+index 91779ae..a0f1e87 100644
+--- a/src/dev/hsa/hw_scheduler.cc
++++ b/src/dev/hsa/hw_scheduler.cc
+@@ -335,6 +335,11 @@ HWScheduler::write(Addr db_addr, uint64_t doorbell_reg)
+     uint32_t al_idx = dbMap[db_addr];
+     // Modify the write pointer
+     activeList[al_idx].qDesc->writeIndex = doorbell_reg;
++    // If a queue is unmapped and remapped (common in full system) the qDesc
++    // gets reused. Keep the readIndex up to date so that when the HSA packet
++    // processor gets commands from host, the correct entry is read after
++    // remapping.
++    activeList[al_idx].qDesc->readIndex = doorbell_reg - 1;
+     DPRINTF(HSAPacketProcessor, "queue %d qDesc->writeIndex %d\n",
+             al_idx, activeList[al_idx].qDesc->writeIndex);
+     // If this queue is mapped, then start DMA to fetch the
+-- 
+1.8.3.1
+

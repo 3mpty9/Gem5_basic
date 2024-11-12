@@ -1,0 +1,371 @@
+From c28feb20f2e455470cdbce8fb8cb151ae1e116b7 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 10 Dec 2021 15:52:40 +0000
+Subject: [PATCH 193/757] arch-arm: Templatize MuxingKvmGic to support flexible
+ hierarchy
+
+By templatizing the MuxingKvmGic we decouple it from the GicV2
+class, unlocking non GICv2 (e.g. GICv3) KVM and guest implementations
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I26838903fa7c9f8b9de40678021329cb3390cc74
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55611
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/KvmGic.py  |   9 ++--
+ src/arch/arm/kvm/SConscript |   3 +-
+ src/arch/arm/kvm/gic.cc     | 106 ++++++++++++++++++++++++--------------------
+ src/arch/arm/kvm/gic.hh     |  31 ++++++++-----
+ src/dev/arm/RealView.py     |   4 +-
+ 5 files changed, 88 insertions(+), 65 deletions(-)
+
+diff --git a/src/arch/arm/kvm/KvmGic.py b/src/arch/arm/kvm/KvmGic.py
+index c435f44..166d261 100644
+--- a/src/arch/arm/kvm/KvmGic.py
++++ b/src/arch/arm/kvm/KvmGic.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2015, 2017 ARM Limited
++# Copyright (c) 2015, 2017, 2021 Arm Limited
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -38,10 +38,11 @@ from m5.proxy import *
+ 
+ from m5.objects.Gic import GicV2
+ 
+-class MuxingKvmGic(GicV2):
+-    type = 'MuxingKvmGic'
++class MuxingKvmGicV2(GicV2):
++    type = 'MuxingKvmGicV2'
+     cxx_header = "arch/arm/kvm/gic.hh"
+-    cxx_class = 'gem5::MuxingKvmGic'
++    cxx_class = 'gem5::MuxingKvmGic<gem5::GicV2Types>'
++    cxx_template_params = [ 'class Types' ]
+ 
+     simulate_gic = Param.Bool(False,
+         "Forcing the simulation to use the gem5 GIC instead of the host GIC")
+diff --git a/src/arch/arm/kvm/SConscript b/src/arch/arm/kvm/SConscript
+index 44134a4..d06501f 100644
+--- a/src/arch/arm/kvm/SConscript
++++ b/src/arch/arm/kvm/SConscript
+@@ -43,7 +43,8 @@ host_isa = platform.machine()
+ if not (env['USE_KVM'] and env['KVM_ISA'] == 'arm'):
+     Return()
+ 
+-SimObject('KvmGic.py', sim_objects=['MuxingKvmGic'], tags='arm isa')
++SimObject('KvmGic.py',
++    sim_objects=['MuxingKvmGicV2'], tags='arm isa')
+ Source('gic.cc', tags='arm isa')
+ 
+ SimObject('BaseArmKvmCPU.py', sim_objects=['BaseArmKvmCPU'], tags='arm isa')
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index 100f256..7d8ef75 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -42,7 +42,7 @@
+ #include "arch/arm/kvm/base_cpu.hh"
+ #include "debug/GIC.hh"
+ #include "debug/Interrupt.hh"
+-#include "params/MuxingKvmGic.hh"
++#include "params/MuxingKvmGicV2.hh"
+ 
+ namespace gem5
+ {
+@@ -101,16 +101,16 @@ KvmKernelGic::setIntState(unsigned type, unsigned vcpu, unsigned irq,
+     vm.setIRQLine(line, high);
+ }
+ 
+-KvmKernelGicV2::KvmKernelGicV2(KvmVM &_vm, Addr cpu_addr, Addr dist_addr,
+-                               unsigned it_lines)
+-    : KvmKernelGic(_vm, KVM_DEV_TYPE_ARM_VGIC_V2, it_lines),
+-      cpuRange(RangeSize(cpu_addr, KVM_VGIC_V2_CPU_SIZE)),
+-      distRange(RangeSize(dist_addr, KVM_VGIC_V2_DIST_SIZE))
++KvmKernelGicV2::KvmKernelGicV2(KvmVM &_vm,
++                               const MuxingKvmGicV2Params &p)
++    : KvmKernelGic(_vm, KVM_DEV_TYPE_ARM_VGIC_V2, p.it_lines),
++      cpuRange(RangeSize(p.cpu_addr, KVM_VGIC_V2_CPU_SIZE)),
++      distRange(RangeSize(p.dist_addr, KVM_VGIC_V2_DIST_SIZE))
+ {
+     kdev.setAttr<uint64_t>(
+-        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_DIST, dist_addr);
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_DIST, p.dist_addr);
+     kdev.setAttr<uint64_t>(
+-        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_CPU, cpu_addr);
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_CPU, p.cpu_addr);
+ }
+ 
+ uint32_t
+@@ -169,27 +169,24 @@ KvmKernelGicV2::writeCpu(ContextID ctx, Addr daddr, uint32_t data)
+     setGicReg(KVM_DEV_ARM_VGIC_GRP_CPU_REGS, vcpu, daddr, data);
+ }
+ 
+-MuxingKvmGic::MuxingKvmGic(const MuxingKvmGicParams &p)
+-    : GicV2(p),
+-      system(*p.system),
+-      kernelGic(nullptr),
+-      usingKvm(false)
++template <class Types>
++MuxingKvmGic<Types>::MuxingKvmGic(const Params &p)
++  : SimGic(p),
++    system(*p.system),
++    kernelGic(nullptr),
++    usingKvm(false)
+ {
+     auto vm = system.getKvmVM();
+     if (vm && !p.simulate_gic) {
+-        kernelGic = new KvmKernelGicV2(*vm, p.cpu_addr, p.dist_addr,
+-                                       p.it_lines);
++        kernelGic = new KvmGic(*vm, p);
+     }
+ }
+ 
+-MuxingKvmGic::~MuxingKvmGic()
+-{
+-}
+-
++template <class Types>
+ void
+-MuxingKvmGic::startup()
++MuxingKvmGic<Types>::startup()
+ {
+-    GicV2::startup();
++    SimGic::startup();
+ 
+     KvmVM *vm = system.getKvmVM();
+     usingKvm = kernelGic && vm && vm->validEnvironment();
+@@ -197,18 +194,20 @@ MuxingKvmGic::startup()
+         fromGicToKvm();
+ }
+ 
++template <class Types>
+ DrainState
+-MuxingKvmGic::drain()
++MuxingKvmGic<Types>::drain()
+ {
+     if (usingKvm)
+         fromKvmToGic();
+-    return GicV2::drain();
++    return SimGic::drain();
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::drainResume()
++MuxingKvmGic<Types>::drainResume()
+ {
+-    GicV2::drainResume();
++    SimGic::drainResume();
+ 
+     KvmVM *vm = system.getKvmVM();
+     bool use_kvm = kernelGic && vm && vm->validEnvironment();
+@@ -222,65 +221,72 @@ MuxingKvmGic::drainResume()
+     }
+ }
+ 
++template <class Types>
+ Tick
+-MuxingKvmGic::read(PacketPtr pkt)
++MuxingKvmGic<Types>::read(PacketPtr pkt)
+ {
+     if (!usingKvm)
+-        return GicV2::read(pkt);
++        return SimGic::read(pkt);
+ 
+     panic("MuxingKvmGic: PIO from gem5 is currently unsupported\n");
+ }
+ 
++template <class Types>
+ Tick
+-MuxingKvmGic::write(PacketPtr pkt)
++MuxingKvmGic<Types>::write(PacketPtr pkt)
+ {
+     if (!usingKvm)
+-        return GicV2::write(pkt);
++        return SimGic::write(pkt);
+ 
+     panic("MuxingKvmGic: PIO from gem5 is currently unsupported\n");
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::sendInt(uint32_t num)
++MuxingKvmGic<Types>::sendInt(uint32_t num)
+ {
+     if (!usingKvm)
+-        return GicV2::sendInt(num);
++        return SimGic::sendInt(num);
+ 
+     DPRINTF(Interrupt, "Set SPI %d\n", num);
+     kernelGic->setSPI(num);
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::clearInt(uint32_t num)
++MuxingKvmGic<Types>::clearInt(uint32_t num)
+ {
+     if (!usingKvm)
+-        return GicV2::clearInt(num);
++        return SimGic::clearInt(num);
+ 
+     DPRINTF(Interrupt, "Clear SPI %d\n", num);
+     kernelGic->clearSPI(num);
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::sendPPInt(uint32_t num, uint32_t cpu)
++MuxingKvmGic<Types>::sendPPInt(uint32_t num, uint32_t cpu)
+ {
+     if (!usingKvm)
+-        return GicV2::sendPPInt(num, cpu);
++        return SimGic::sendPPInt(num, cpu);
+     DPRINTF(Interrupt, "Set PPI %d:%d\n", cpu, num);
+     kernelGic->setPPI(cpu, num);
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::clearPPInt(uint32_t num, uint32_t cpu)
++MuxingKvmGic<Types>::clearPPInt(uint32_t num, uint32_t cpu)
+ {
+     if (!usingKvm)
+-        return GicV2::clearPPInt(num, cpu);
++        return SimGic::clearPPInt(num, cpu);
+ 
+     DPRINTF(Interrupt, "Clear PPI %d:%d\n", cpu, num);
+     kernelGic->clearPPI(cpu, num);
+ }
+ 
++template <class Types>
+ bool
+-MuxingKvmGic::blockIntUpdate() const
++MuxingKvmGic<Types>::blockIntUpdate() const
+ {
+     // During Kvm->Gic state transfer, writes to the Gic will call
+     // updateIntState() which can post an interrupt.  Since we're only
+@@ -289,27 +295,33 @@ MuxingKvmGic::blockIntUpdate() const
+     return usingKvm;
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::fromGicToKvm()
++MuxingKvmGic<Types>::fromGicToKvm()
+ {
+-    copyGicState(static_cast<GicV2*>(this),
+-                 static_cast<KvmKernelGicV2*>(kernelGic));
++    this->copyGicState(static_cast<SimGic*>(this),
++                       static_cast<KvmGic*>(kernelGic));
+ }
+ 
++template <class Types>
+ void
+-MuxingKvmGic::fromKvmToGic()
++MuxingKvmGic<Types>::fromKvmToGic()
+ {
+-    copyGicState(static_cast<KvmKernelGicV2*>(kernelGic),
+-                 static_cast<GicV2*>(this));
++    this->copyGicState(static_cast<KvmGic*>(kernelGic),
++                       static_cast<SimGic*>(this));
+ 
+     // the values read for the Interrupt Priority Mask Register (PMR)
+     // have been shifted by three bits due to its having been emulated by
+     // a VGIC with only 5 PMR bits in its VMCR register.  Presently the
+     // Linux kernel does not repair this inaccuracy, so we correct it here.
+-    for (int cpu = 0; cpu < system.threads.size(); ++cpu) {
+-       cpuPriority[cpu] <<= 3;
+-       assert((cpuPriority[cpu] & ~0xff) == 0);
++    if constexpr(std::is_same<SimGic, GicV2>::value) {
++        for (int cpu = 0; cpu < system.threads.size(); ++cpu) {
++           this->cpuPriority[cpu] <<= 3;
++           assert((this->cpuPriority[cpu] & ~0xff) == 0);
++        }
+     }
+ }
+ 
++template class MuxingKvmGic<GicV2Types>;
++
+ } // namespace gem5
+diff --git a/src/arch/arm/kvm/gic.hh b/src/arch/arm/kvm/gic.hh
+index af52079..9a4edd5 100644
+--- a/src/arch/arm/kvm/gic.hh
++++ b/src/arch/arm/kvm/gic.hh
+@@ -44,6 +44,8 @@
+ #include "dev/arm/gic_v2.hh"
+ #include "dev/platform.hh"
+ 
++#include "params/MuxingKvmGicV2.hh"
++
+ namespace gem5
+ {
+ 
+@@ -135,18 +137,16 @@ class KvmKernelGicV2 : public KvmKernelGic, public GicV2Registers
+ {
+   public:
+     /**
+-     * Instantiate a KVM in-kernel GIC model.
++     * Instantiate a KVM in-kernel GICv2 model.
+      *
+-     * This constructor instantiates an in-kernel GIC model and wires
++     * This constructor instantiates an in-kernel GICv2 model and wires
+      * it up to the virtual memory system.
+      *
+      * @param vm KVM VM representing this system
+-     * @param cpu_addr GIC CPU interface base address
+-     * @param dist_addr GIC distributor base address
+-     * @param it_lines Number of interrupt lines to support
++     * @param params MuxingKvmGicV2 params
+      */
+-    KvmKernelGicV2(KvmVM &vm, Addr cpu_addr, Addr dist_addr,
+-                   unsigned it_lines);
++    KvmKernelGicV2(KvmVM &vm,
++                   const MuxingKvmGicV2Params &params);
+ 
+   public: // GicV2Registers
+     uint32_t readDistributor(ContextID ctx, Addr daddr) override;
+@@ -184,13 +184,22 @@ class KvmKernelGicV2 : public KvmKernelGic, public GicV2Registers
+     const AddrRange distRange;
+ };
+ 
+-struct MuxingKvmGicParams;
++struct GicV2Types
++{
++    using SimGic = GicV2;
++    using KvmGic = KvmKernelGicV2;
++    using Params = MuxingKvmGicV2Params;
++};
+ 
+-class MuxingKvmGic : public GicV2
++template <class Types>
++class MuxingKvmGic : public Types::SimGic
+ {
++    using SimGic = typename Types::SimGic;
++    using KvmGic = typename Types::KvmGic;
++    using Params = typename Types::Params;
++
+   public: // SimObject / Serializable / Drainable
+-    MuxingKvmGic(const MuxingKvmGicParams &p);
+-    ~MuxingKvmGic();
++    MuxingKvmGic(const Params &p);
+ 
+     void startup() override;
+     DrainState drain() override;
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 3229983..6cb28dd 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -73,8 +73,8 @@ from m5.objects.CfiMemory import CfiMemory
+ # emulation. Use a GIC model that automatically switches between
+ # gem5's GIC model and KVM's GIC model if KVM is available.
+ try:
+-    from m5.objects.KvmGic import MuxingKvmGic
+-    kvm_gicv2_class = MuxingKvmGic
++    from m5.objects.KvmGic import MuxingKvmGicV2
++    kvm_gicv2_class = MuxingKvmGicV2
+ except ImportError:
+     # KVM support wasn't compiled into gem5. Fallback to a
+     # software-only GIC.
+-- 
+1.8.3.1
+

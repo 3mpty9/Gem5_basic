@@ -1,0 +1,49 @@
+From 592e00efdd3ca173569affa164a10cf256c881f0 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 19 Apr 2022 11:13:22 -0700
+Subject: [PATCH 580/757] tests: Add the 'vega_x86_tag' to testlib
+
+This allows us to test ./build/VEGA_X86/gem5.opt targets.
+
+Change-Id: I4d8309f928317d03b63e07e5ebb43de68cded9f2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59010
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+---
+ ext/testlib/configuration.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/ext/testlib/configuration.py b/ext/testlib/configuration.py
+index c6b02eb..fd47e3b 100644
+--- a/ext/testlib/configuration.py
++++ b/ext/testlib/configuration.py
+@@ -233,6 +233,7 @@ def define_constants(constants):
+     constants.isa_tag_type = 'isa'
+     constants.x86_tag = 'X86'
+     constants.gcn3_x86_tag = 'GCN3_X86'
++    constants.vega_x86_tag = 'VEGA_X86'
+     constants.sparc_tag = 'SPARC'
+     constants.riscv_tag = 'RISCV'
+     constants.arm_tag = 'ARM'
+@@ -261,6 +262,7 @@ def define_constants(constants):
+         constants.isa_tag_type : (
+             constants.x86_tag,
+             constants.gcn3_x86_tag,
++            constants.vega_x86_tag,
+             constants.sparc_tag,
+             constants.riscv_tag,
+             constants.arm_tag,
+@@ -291,6 +293,7 @@ def define_constants(constants):
+         constants.arm_tag   : (constants.host_arm_tag,),
+         constants.x86_tag   : (constants.host_x86_64_tag,),
+         constants.gcn3_x86_tag : (constants.host_x86_64_tag,),
++        constants.vega_x86_tag : (constants.host_x86_64_tag,),
+         constants.sparc_tag : (constants.host_x86_64_tag,),
+         constants.riscv_tag : (constants.host_x86_64_tag,),
+         constants.mips_tag  : (constants.host_x86_64_tag,),
+-- 
+1.8.3.1
+

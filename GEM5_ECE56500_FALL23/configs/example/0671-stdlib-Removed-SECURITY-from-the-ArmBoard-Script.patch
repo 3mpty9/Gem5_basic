@@ -1,0 +1,84 @@
+From c6299cbe8e016575e6919f4977eaa36bd3052dbe Mon Sep 17 00:00:00 2001
+From: Kaustav Goswami <kggoswami@ucdavis.edu>
+Date: Tue, 31 May 2022 17:44:34 -0700
+Subject: [PATCH 671/757] stdlib: Removed SECURITY from the ArmBoard Script
+
+The ARM Board does not support SECURITY extension at the moment.
+This change removes the extension from the config script so that
+the board functions properly.
+
+Change-Id: I12a5bdf48803e86739967830204a9eef6057bd36
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60209
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/arm-ubuntu-boot-exit.py | 13 ++++++++-----
+ src/python/gem5/components/boards/arm_board.py       |  1 +
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/configs/example/gem5_library/arm-ubuntu-boot-exit.py b/configs/example/gem5_library/arm-ubuntu-boot-exit.py
+index 7125e48..163f45a 100644
+--- a/configs/example/gem5_library/arm-ubuntu-boot-exit.py
++++ b/configs/example/gem5_library/arm-ubuntu-boot-exit.py
+@@ -41,7 +41,6 @@ scons build/ARM/gem5.opt -j<NUM_CPUS>
+ 
+ """
+ 
+-import os
+ from gem5.isas import ISA
+ from m5.objects import ArmDefaultRelease
+ from gem5.utils.requires import requires
+@@ -51,7 +50,6 @@ from m5.objects import VExpress_GEM5_Foundation
+ from gem5.components.boards.arm_board import ArmBoard
+ from gem5.components.memory import DualChannelDDR4_2400
+ from gem5.components.processors.cpu_types import CPUTypes
+-from gem5.resources.resource import CustomDiskImageResource
+ from gem5.components.processors.simple_processor import SimpleProcessor
+ 
+ # This runs a check to ensure the gem5 binary is compiled for ARM.
+@@ -90,10 +88,15 @@ processor = SimpleProcessor(
+ 
+ # The ArmBoard requires a `release` to be specified. This adds all the
+ # extensions or features to the system. We are setting this to Armv8
+-# (ArmDefaultRelease) in this example config script.
++# (ArmDefaultRelease) in this example config script. However, the ArmBoard
++# currently does not support SECURITY extension.
+ 
+ release = ArmDefaultRelease()
+ 
++# Removing the SECURITY extension.
++
++release.extensions.remove(release.extensions[2])
++
+ # The platform sets up the memory ranges of all the on-chip and off-chip
+ # devices present on the ARM system.
+ 
+@@ -128,9 +131,9 @@ board.set_kernel_disk_workload(
+ 
+     disk_image = Resource("arm64-ubuntu-18.04-img"),
+ 
+-    # We need to specify the path for the bootloader file `boot.arm64`.
++    # We need to specify the path for the bootloader file.
+ 
+-    bootloader = Resource("arm64-bootloader"),
++    bootloader = Resource("arm64-bootloader-foundation"),
+ 
+     # For the arm64-ubuntu-18.04.img, we need to specify the readfile content
+ 
+diff --git a/src/python/gem5/components/boards/arm_board.py b/src/python/gem5/components/boards/arm_board.py
+index 73002e9..8434658 100644
+--- a/src/python/gem5/components/boards/arm_board.py
++++ b/src/python/gem5/components/boards/arm_board.py
+@@ -75,6 +75,7 @@ class ArmBoard(ArmSystem, AbstractBoard, KernelDiskWorkload):
+     **Limitations**
+     * The board currently does not support ruby caches.
+     * stage2 walker ports are ignored.
++    * This version does not support SECURITY extension.
+     """
+     __metaclass__ = ABCMeta
+ 
+-- 
+1.8.3.1
+

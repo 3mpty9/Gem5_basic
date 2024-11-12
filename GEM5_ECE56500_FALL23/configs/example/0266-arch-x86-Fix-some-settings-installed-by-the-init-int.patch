@@ -1,0 +1,46 @@
+From 6cc3a27e0997096564eabcb584e8a354332f2d0b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 22 Feb 2022 23:45:19 -0800
+Subject: [PATCH 266/757] arch-x86: Fix some settings installed by the init
+ interrupt.
+
+VMX requires that the present bit of the LDT and the TR are set, and
+that the unusable bit of the TR is zero.
+
+Change-Id: I4c4feba38d4fef11ad3b804d41dacb69cc3e6bd5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57051
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/x86/faults.cc | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 09b4d99..209f3e8 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -256,7 +256,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ 
+     SegAttr tslAttr = 0;
+     tslAttr.unusable = 1;
+-    tslAttr.present = 0;
++    tslAttr.present = 1;
+     tslAttr.type = 2; // LDT
+     tc->setMiscReg(MISCREG_TSL, 0);
+     tc->setMiscReg(MISCREG_TSL_BASE, 0);
+@@ -264,8 +264,8 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     tc->setMiscReg(MISCREG_TSL_ATTR, tslAttr);
+ 
+     SegAttr trAttr = 0;
+-    trAttr.unusable = 1;
+-    trAttr.present = 0;
++    trAttr.unusable = 0;
++    trAttr.present = 1;
+     trAttr.type = 3; // Busy 16-bit TSS
+     tc->setMiscReg(MISCREG_TR, 0);
+     tc->setMiscReg(MISCREG_TR_BASE, 0);
+-- 
+1.8.3.1
+

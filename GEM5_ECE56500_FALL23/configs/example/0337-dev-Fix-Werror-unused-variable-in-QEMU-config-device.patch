@@ -1,0 +1,49 @@
+From 650cee911cdf081677f38a6fe7626028160097ef Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 7 Mar 2022 09:47:02 +0000
+Subject: [PATCH 337/757] dev: Fix -Werror=unused-variable in QEMU config
+ device
+
+Same issue as:
+
+https://gem5-review.googlesource.com/c/public/gem5/+/57229
+
+Change-Id: Id33a1131a70136a2435f733295fa97a44ee70496
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57349
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/qemu/fw_cfg.cc | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/dev/qemu/fw_cfg.cc b/src/dev/qemu/fw_cfg.cc
+index 15a442b..09f0efa 100644
+--- a/src/dev/qemu/fw_cfg.cc
++++ b/src/dev/qemu/fw_cfg.cc
+@@ -124,10 +124,10 @@ FwCfg::addItem(FwCfgItem *item)
+ 
+     const std::string &path = item->path();
+     if (path.empty() || path[0] != '.') {
+-        const auto [pit, psuccess] =
++        const auto res =
+             names.insert(std::make_pair(item->path(), item->index()));
+ 
+-        panic_if(!psuccess, "Duplicate firmware config item path %s.",
++        panic_if(!res.second, "Duplicate firmware config item path %s.",
+                 item->path());
+     }
+ }
+@@ -147,7 +147,7 @@ FwCfg::select(uint16_t key)
+         return;
+     }
+ 
+-    auto [index, item] = *iter;
++    auto item = iter->second;
+ 
+     current = item;
+     if (current)
+-- 
+1.8.3.1
+

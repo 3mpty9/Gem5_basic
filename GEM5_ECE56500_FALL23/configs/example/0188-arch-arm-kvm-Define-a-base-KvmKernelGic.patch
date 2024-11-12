@@ -1,0 +1,296 @@
+From 6bbeba8f940cda34767285624edeb5e2aeb9ed77 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 8 Dec 2021 13:55:23 +0000
+Subject: [PATCH 188/757] arch-arm, kvm: Define a base KvmKernelGic
+
+This patch is defining a base KvmKernelGic class to be
+subclassed by post Gicv2 (e.g. Gicv3) implementations.
+
+Change-Id: I1b79d4813208f78f7a0fc311bdc362414e4a3dcc
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55610
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc | 52 +++++++++++++++++----------------
+ src/arch/arm/kvm/gic.hh | 78 ++++++++++++++++++++++++++++++-------------------
+ 2 files changed, 75 insertions(+), 55 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index 4cc49cc..fd3eef7 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -47,56 +47,48 @@
+ namespace gem5
+ {
+ 
+-KvmKernelGicV2::KvmKernelGicV2(KvmVM &_vm, Addr cpu_addr, Addr dist_addr,
+-                               unsigned it_lines)
+-    : cpuRange(RangeSize(cpu_addr, KVM_VGIC_V2_CPU_SIZE)),
+-      distRange(RangeSize(dist_addr, KVM_VGIC_V2_DIST_SIZE)),
+-      vm(_vm),
+-      kdev(vm.createDevice(KVM_DEV_TYPE_ARM_VGIC_V2))
++KvmKernelGic::KvmKernelGic(KvmVM &_vm, uint32_t dev, unsigned it_lines)
++    : vm(_vm),
++      kdev(vm.createDevice(dev))
+ {
+     // Tell the VM that we will emulate the GIC in the kernel. This
+     // disables IRQ and FIQ handling in the KVM CPU model.
+     vm.enableKernelIRQChip();
+ 
+-    kdev.setAttr<uint64_t>(
+-        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_DIST, dist_addr);
+-    kdev.setAttr<uint64_t>(
+-        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_CPU, cpu_addr);
+-
+     kdev.setAttr<uint32_t>(KVM_DEV_ARM_VGIC_GRP_NR_IRQS, 0, it_lines);
+ }
+ 
+-KvmKernelGicV2::~KvmKernelGicV2()
++KvmKernelGic::~KvmKernelGic()
+ {
+ }
+ 
+ void
+-KvmKernelGicV2::setSPI(unsigned spi)
++KvmKernelGic::setSPI(unsigned spi)
+ {
+     setIntState(KVM_ARM_IRQ_TYPE_SPI, 0, spi, true);
+ }
+ 
+ void
+-KvmKernelGicV2::clearSPI(unsigned spi)
++KvmKernelGic::clearSPI(unsigned spi)
+ {
+     setIntState(KVM_ARM_IRQ_TYPE_SPI, 0, spi, false);
+ }
+ 
+ void
+-KvmKernelGicV2::setPPI(unsigned vcpu, unsigned ppi)
++KvmKernelGic::setPPI(unsigned vcpu, unsigned ppi)
+ {
+     setIntState(KVM_ARM_IRQ_TYPE_PPI, vcpu, ppi, true);
+ }
+ 
+ void
+-KvmKernelGicV2::clearPPI(unsigned vcpu, unsigned ppi)
++KvmKernelGic::clearPPI(unsigned vcpu, unsigned ppi)
+ {
+     setIntState(KVM_ARM_IRQ_TYPE_PPI, vcpu, ppi, false);
+ }
+ 
+ void
+-KvmKernelGicV2::setIntState(unsigned type, unsigned vcpu, unsigned irq,
+-                            bool high)
++KvmKernelGic::setIntState(unsigned type, unsigned vcpu, unsigned irq,
++                          bool high)
+ {
+     assert(type <= KVM_ARM_IRQ_TYPE_MASK);
+     assert(vcpu <= KVM_ARM_IRQ_VCPU_MASK);
+@@ -109,6 +101,18 @@ KvmKernelGicV2::setIntState(unsigned type, unsigned vcpu, unsigned irq,
+     vm.setIRQLine(line, high);
+ }
+ 
++KvmKernelGicV2::KvmKernelGicV2(KvmVM &_vm, Addr cpu_addr, Addr dist_addr,
++                               unsigned it_lines)
++    : KvmKernelGic(_vm, KVM_DEV_TYPE_ARM_VGIC_V2, it_lines),
++      cpuRange(RangeSize(cpu_addr, KVM_VGIC_V2_CPU_SIZE)),
++      distRange(RangeSize(dist_addr, KVM_VGIC_V2_DIST_SIZE))
++{
++    kdev.setAttr<uint64_t>(
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_DIST, dist_addr);
++    kdev.setAttr<uint64_t>(
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V2_ADDR_TYPE_CPU, cpu_addr);
++}
++
+ uint32_t
+ KvmKernelGicV2::getGicReg(unsigned group, unsigned vcpu, unsigned offset)
+ {
+@@ -165,8 +169,6 @@ KvmKernelGicV2::writeCpu(ContextID ctx, Addr daddr, uint32_t data)
+     setGicReg(KVM_DEV_ARM_VGIC_GRP_CPU_REGS, vcpu, daddr, data);
+ }
+ 
+-
+-
+ MuxingKvmGic::MuxingKvmGic(const MuxingKvmGicParams &p)
+     : GicV2(p),
+       system(*p.system),
+@@ -190,14 +192,14 @@ MuxingKvmGic::startup()
+     GicV2::startup();
+     usingKvm = kernelGic && vm && vm->validEnvironment();
+     if (usingKvm)
+-        fromGicV2ToKvm();
++        fromGicToKvm();
+ }
+ 
+ DrainState
+ MuxingKvmGic::drain()
+ {
+     if (usingKvm)
+-        fromKvmToGicV2();
++        fromKvmToGic();
+     return GicV2::drain();
+ }
+ 
+@@ -209,7 +211,7 @@ MuxingKvmGic::drainResume()
+     if (use_kvm != usingKvm) {
+         // Should only occur due to CPU switches
+         if (use_kvm) // from simulation to KVM emulation
+-            fromGicV2ToKvm();
++            fromGicToKvm();
+         // otherwise, drain() already sync'd the state back to the GicV2
+ 
+         usingKvm = use_kvm;
+@@ -284,13 +286,13 @@ MuxingKvmGic::blockIntUpdate() const
+ }
+ 
+ void
+-MuxingKvmGic::fromGicV2ToKvm()
++MuxingKvmGic::fromGicToKvm()
+ {
+     copyGicState(static_cast<GicV2*>(this), kernelGic);
+ }
+ 
+ void
+-MuxingKvmGic::fromKvmToGicV2()
++MuxingKvmGic::fromKvmToGic()
+ {
+     copyGicState(kernelGic, static_cast<GicV2*>(this));
+ 
+diff --git a/src/arch/arm/kvm/gic.hh b/src/arch/arm/kvm/gic.hh
+index a835208..5201f58 100644
+--- a/src/arch/arm/kvm/gic.hh
++++ b/src/arch/arm/kvm/gic.hh
+@@ -54,7 +54,7 @@ namespace gem5
+  * model. It exposes an API that is similar to that of
+  * software-emulated GIC models in gem5.
+  */
+-class KvmKernelGicV2 : public BaseGicRegisters
++class KvmKernelGic : public BaseGicRegisters
+ {
+   public:
+     /**
+@@ -68,14 +68,13 @@ class KvmKernelGicV2 : public BaseGicRegisters
+      * @param dist_addr GIC distributor base address
+      * @param it_lines Number of interrupt lines to support
+      */
+-    KvmKernelGicV2(KvmVM &vm, Addr cpu_addr, Addr dist_addr,
+-                   unsigned it_lines);
+-    virtual ~KvmKernelGicV2();
++    KvmKernelGic(KvmVM &vm, uint32_t dev, unsigned it_lines);
++    virtual ~KvmKernelGic();
+ 
+-    KvmKernelGicV2(const KvmKernelGicV2 &other) = delete;
+-    KvmKernelGicV2(const KvmKernelGicV2 &&other) = delete;
+-    KvmKernelGicV2 &operator=(const KvmKernelGicV2 &&rhs) = delete;
+-    KvmKernelGicV2 &operator=(const KvmKernelGicV2 &rhs) = delete;
++    KvmKernelGic(const KvmKernelGic &other) = delete;
++    KvmKernelGic(const KvmKernelGic &&other) = delete;
++    KvmKernelGic &operator=(const KvmKernelGic &&rhs) = delete;
++    KvmKernelGic &operator=(const KvmKernelGic &rhs) = delete;
+ 
+   public:
+     /**
+@@ -112,19 +111,6 @@ class KvmKernelGicV2 : public BaseGicRegisters
+      */
+     void clearPPI(unsigned vcpu, unsigned ppi);
+ 
+-    /** Address range for the CPU interfaces */
+-    const AddrRange cpuRange;
+-    /** Address range for the distributor interface */
+-    const AddrRange distRange;
+-
+-    /** BaseGicRegisters interface */
+-    uint32_t readDistributor(ContextID ctx, Addr daddr) override;
+-    uint32_t readCpu(ContextID ctx, Addr daddr) override;
+-
+-    void writeDistributor(ContextID ctx, Addr daddr,
+-                          uint32_t data) override;
+-    void writeCpu(ContextID ctx, Addr daddr, uint32_t data) override;
+-
+     /* @} */
+ 
+   protected:
+@@ -138,6 +124,39 @@ class KvmKernelGicV2 : public BaseGicRegisters
+      */
+     void setIntState(unsigned type, unsigned vcpu, unsigned irq, bool high);
+ 
++    /** KVM VM in the parent system */
++    KvmVM &vm;
++
++    /** Kernel interface to the GIC */
++    KvmDevice kdev;
++};
++
++class KvmKernelGicV2 : public KvmKernelGic
++{
++  public:
++    /**
++     * Instantiate a KVM in-kernel GIC model.
++     *
++     * This constructor instantiates an in-kernel GIC model and wires
++     * it up to the virtual memory system.
++     *
++     * @param vm KVM VM representing this system
++     * @param cpu_addr GIC CPU interface base address
++     * @param dist_addr GIC distributor base address
++     * @param it_lines Number of interrupt lines to support
++     */
++    KvmKernelGicV2(KvmVM &vm, Addr cpu_addr, Addr dist_addr,
++                   unsigned it_lines);
++
++  public: // BaseGicRegisters
++    uint32_t readDistributor(ContextID ctx, Addr daddr) override;
++    uint32_t readCpu(ContextID ctx, Addr daddr) override;
++
++    void writeDistributor(ContextID ctx, Addr daddr,
++                          uint32_t data) override;
++    void writeCpu(ContextID ctx, Addr daddr, uint32_t data) override;
++
++  protected:
+     /**
+      * Get value of GIC register "from" a cpu
+      *
+@@ -158,14 +177,13 @@ class KvmKernelGicV2 : public BaseGicRegisters
+     void setGicReg(unsigned group, unsigned vcpu, unsigned offset,
+                    unsigned value);
+ 
+-    /** KVM VM in the parent system */
+-    KvmVM &vm;
+-
+-    /** Kernel interface to the GIC */
+-    KvmDevice kdev;
++  private:
++    /** Address range for the CPU interfaces */
++    const AddrRange cpuRange;
++    /** Address range for the distributor */
++    const AddrRange distRange;
+ };
+ 
+-
+ struct MuxingKvmGicParams;
+ 
+ class MuxingKvmGic : public GicV2
+@@ -197,14 +215,14 @@ class MuxingKvmGic : public GicV2
+     System &system;
+ 
+     /** Kernel GIC device */
+-    KvmKernelGicV2 *kernelGic;
++    KvmKernelGic *kernelGic;
+ 
+   private:
+     bool usingKvm;
+ 
+     /** Multiplexing implementation */
+-    void fromGicV2ToKvm();
+-    void fromKvmToGicV2();
++    void fromGicToKvm();
++    void fromKvmToGic();
+ };
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

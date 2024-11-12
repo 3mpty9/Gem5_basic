@@ -1,0 +1,40 @@
+From ec891adca9c9430b178562ad498c1699026e5906 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Sun, 12 Dec 2021 14:59:27 +0000
+Subject: [PATCH 032/757] arch-arm: Do not squash table walks if translation is
+ partial
+
+As partial translations have been introduced we cannot just
+rely on checking if there is a valid translation when looking
+for translations to squash.
+The translation has to be complete as well.
+
+This is fixing realview-o3-checker regression
+
+Change-Id: I1ad42bd6172207a72f53b7a843c323c0eea88f06
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54043
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/table_walker.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/table_walker.cc b/src/arch/arm/table_walker.cc
+index f94e765..c7b8c3c 100644
+--- a/src/arch/arm/table_walker.cc
++++ b/src/arch/arm/table_walker.cc
+@@ -533,7 +533,8 @@ TableWalker::processWalkWrapper()
+     unsigned num_squashed = 0;
+     ThreadContext *tc = currState->tc;
+     while ((num_squashed < numSquashable) && currState &&
+-           (currState->transState->squashed() || te)) {
++           (currState->transState->squashed() ||
++            (te && !te->partial))) {
+         pendingQueue.pop_front();
+         num_squashed++;
+         stats.squashedBefore++;
+-- 
+1.8.3.1
+

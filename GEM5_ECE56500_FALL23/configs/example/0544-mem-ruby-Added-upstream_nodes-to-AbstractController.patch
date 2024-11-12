@@ -1,0 +1,86 @@
+From 920859e1916120f0fcf9e14fadd5a7c2c98fed00 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Wed, 22 Sep 2021 14:09:45 +0100
+Subject: [PATCH 544/757] mem-ruby: Added upstream_nodes to AbstractController
+
+Added support for an upstream_nodes NetAddr list in AbstractController,
+which will be used in future CHI work.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I30a6d621d7f201d89f0b13dab8ed4dd1f1f6caa3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57296
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/slicc_interface/AbstractController.cc | 8 +++++++-
+ src/mem/ruby/slicc_interface/AbstractController.hh | 5 +++++
+ src/mem/ruby/slicc_interface/Controller.py         | 4 +++-
+ 3 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/ruby/slicc_interface/AbstractController.cc b/src/mem/ruby/slicc_interface/AbstractController.cc
+index 396b128..e11d780 100644
+--- a/src/mem/ruby/slicc_interface/AbstractController.cc
++++ b/src/mem/ruby/slicc_interface/AbstractController.cc
+@@ -108,7 +108,13 @@ AbstractController::init()
+         }
+         downstreamDestinations.add(mid);
+     }
+-
++    // Initialize the addr->upstream machine list.
++    // We do not need to map address -> upstream machine,
++    // so we don't examine the address ranges
++    upstreamDestinations.resize();
++    for (auto abs_cntrl : params().upstream_destinations) {
++        upstreamDestinations.add(abs_cntrl->getMachineID());
++    }
+ }
+ 
+ void
+diff --git a/src/mem/ruby/slicc_interface/AbstractController.hh b/src/mem/ruby/slicc_interface/AbstractController.hh
+index 56c164f..46bd3f8 100644
+--- a/src/mem/ruby/slicc_interface/AbstractController.hh
++++ b/src/mem/ruby/slicc_interface/AbstractController.hh
+@@ -214,8 +214,12 @@ class AbstractController : public ClockedObject, public Consumer
+     MachineID mapAddressToDownstreamMachine(Addr addr,
+                                     MachineType mtype = MachineType_NUM) const;
+ 
++    /** List of downstream destinations (towards memory) */
+     const NetDest& allDownstreamDest() const { return downstreamDestinations; }
+ 
++    /** List of upstream destinations (towards the CPU) */
++    const NetDest& allUpstreamDest() const { return upstreamDestinations; }
++
+   protected:
+     //! Profiles original cache requests including PUTs
+     void profileRequest(const std::string &request);
+@@ -375,6 +379,7 @@ class AbstractController : public ClockedObject, public Consumer
+     AddrRangeMap<AddrMapEntry, 3> downstreamAddrMap;
+ 
+     NetDest downstreamDestinations;
++    NetDest upstreamDestinations;
+ 
+   public:
+     struct ControllerStats : public statistics::Group
+diff --git a/src/mem/ruby/slicc_interface/Controller.py b/src/mem/ruby/slicc_interface/Controller.py
+index 15366de..c73836d 100644
+--- a/src/mem/ruby/slicc_interface/Controller.py
++++ b/src/mem/ruby/slicc_interface/Controller.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2017,2019,2020 ARM Limited
++# Copyright (c) 2017,2019-2021 ARM Limited
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -75,5 +75,7 @@ class RubyController(ClockedObject):
+ 
+     # These can be used by a protocol to enable reuse of the same machine
+     # types to model different levels of the cache hierarchy
++    upstream_destinations = VectorParam.RubyController([],
++                    "Possible destinations for requests sent towards the CPU")
+     downstream_destinations = VectorParam.RubyController([],
+                     "Possible destinations for requests sent towards memory")
+-- 
+1.8.3.1
+

@@ -1,0 +1,71 @@
+From d53f75c1ebc32905db55e541ba81be41ae32837a Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:59:27 -0700
+Subject: [PATCH 275/757] cpu: Eliminate the (read|set)VecPredReg helpers from
+ ThreadContext.
+
+Change-Id: I9f220ba4f28d6a63e4f037388b0431dfe123a8a9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49703
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/cpu/thread_context.cc |  4 ++--
+ src/cpu/thread_context.hh | 19 -------------------
+ 2 files changed, 2 insertions(+), 21 deletions(-)
+
+diff --git a/src/cpu/thread_context.cc b/src/cpu/thread_context.cc
+index aab475b..2c2e248 100644
+--- a/src/cpu/thread_context.cc
++++ b/src/cpu/thread_context.cc
+@@ -231,7 +231,7 @@ serialize(const ThreadContext &tc, CheckpointOut &cp)
+     const size_t numPreds = regClasses.at(VecPredRegClass).numRegs();
+     std::vector<TheISA::VecPredRegContainer> vecPredRegs(numPreds);
+     for (int i = 0; i < numPreds; ++i) {
+-        vecPredRegs[i] = tc.readVecPredRegFlat(i);
++        tc.getRegFlat(RegId(VecPredRegClass, i), &vecPredRegs[i]);
+     }
+     SERIALIZE_CONTAINER(vecPredRegs);
+ 
+@@ -278,7 +278,7 @@ unserialize(ThreadContext &tc, CheckpointIn &cp)
+     std::vector<TheISA::VecPredRegContainer> vecPredRegs(numPreds);
+     UNSERIALIZE_CONTAINER(vecPredRegs);
+     for (int i = 0; i < numPreds; ++i) {
+-        tc.setVecPredRegFlat(i, vecPredRegs[i]);
++        tc.setRegFlat(RegId(VecPredRegClass, i), &vecPredRegs[i]);
+     }
+ 
+     const size_t numInts = regClasses.at(IntRegClass).numRegs();
+diff --git a/src/cpu/thread_context.hh b/src/cpu/thread_context.hh
+index cbbd11c..093d48c 100644
+--- a/src/cpu/thread_context.hh
++++ b/src/cpu/thread_context.hh
+@@ -374,25 +374,6 @@ class ThreadContext : public PCEventScope
+         setRegFlat(RegId(VecElemClass, idx), val);
+     }
+ 
+-    TheISA::VecPredRegContainer
+-    readVecPredRegFlat(RegIndex idx) const
+-    {
+-        TheISA::VecPredRegContainer val;
+-        getRegFlat(RegId(VecPredRegClass, idx), &val);
+-        return val;
+-    }
+-    TheISA::VecPredRegContainer&
+-    getWritableVecPredRegFlat(RegIndex idx)
+-    {
+-        return *(TheISA::VecPredRegContainer *)getWritableRegFlat(
+-                RegId(VecPredRegClass, idx));
+-    }
+-    void
+-    setVecPredRegFlat(RegIndex idx, const TheISA::VecPredRegContainer& val)
+-    {
+-        setRegFlat(RegId(VecPredRegClass, idx), &val);
+-    }
+-
+     RegVal
+     readCCRegFlat(RegIndex idx) const
+     {
+-- 
+1.8.3.1
+

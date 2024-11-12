@@ -1,0 +1,59 @@
+From bfb035354180e0c6f47aa02b02247a6116a11929 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 15 Mar 2022 13:17:21 -0700
+Subject: [PATCH 516/757] tests: Add MinorCPU tests to Hello World tests
+
+At present, only the ARM and RISCV gem5 binaries support the MinorCPU by
+default. Therefore, that is all that is tested for now.
+
+Change-Id: I7cbcd2ee8cae470a3de0d59af20dc2fd911fb2bd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57690
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/configs/simple_binary_run.py | 4 +++-
+ tests/gem5/hello_se/test_hello_se.py    | 4 ++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/tests/gem5/configs/simple_binary_run.py b/tests/gem5/configs/simple_binary_run.py
+index 15e589c..a4e4cf6 100644
+--- a/tests/gem5/configs/simple_binary_run.py
++++ b/tests/gem5/configs/simple_binary_run.py
+@@ -54,7 +54,7 @@ parser.add_argument(
+ parser.add_argument(
+     "cpu",
+     type=str,
+-    choices=("kvm", "timing", "atomic", "o3"),
++    choices=("kvm", "timing", "atomic", "o3", "minor"),
+     help="The CPU type used.",
+ )
+ 
+@@ -84,6 +84,8 @@ def input_to_cputype(input: str) -> CPUTypes:
+         return CPUTypes.ATOMIC
+     elif input == "o3":
+         return CPUTypes.O3
++    elif input == "minor":
++        return CPUTypes.MINOR
+     else:
+         raise NotADirectoryError("Unknown CPU type '{}'.".format(input))
+ 
+diff --git a/tests/gem5/hello_se/test_hello_se.py b/tests/gem5/hello_se/test_hello_se.py
+index 115b396..e1e6aaf 100644
+--- a/tests/gem5/hello_se/test_hello_se.py
++++ b/tests/gem5/hello_se/test_hello_se.py
+@@ -72,9 +72,9 @@ dynamic_progs = {constants.gcn3_x86_tag: ("x86-hello64-dynamic",)}
+ 
+ cpu_types = {
+     constants.gcn3_x86_tag: ("timing", "atomic", "o3"),
+-    constants.arm_tag: ("timing", "atomic", "o3"),
++    constants.arm_tag: ("timing", "atomic", "o3", "minor"),
+     constants.mips_tag: ("timing", "atomic", "o3"),
+-    constants.riscv_tag: ("timing", "atomic", "o3"),
++    constants.riscv_tag: ("timing", "atomic", "o3", "minor"),
+     constants.sparc_tag: ("timing", "atomic"),
+ }
+ 
+-- 
+1.8.3.1
+

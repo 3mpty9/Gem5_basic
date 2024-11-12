@@ -1,0 +1,396 @@
+From 9c7576d8e70c1d1e8f00b04b013cf75c3097739d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 28 Jan 2022 00:07:15 -0800
+Subject: [PATCH 197/757] cpu-kvm,sim: Reverse the relationship between System
+ and KvmVM.
+
+The KvmVM will declare itself to the System object, instead of the other
+way around. This way the System object can just keep an opaque KvmVM
+pointer which does not depend on the KvmVM code even being compiled into
+gem5. If there is a KvmVM object, that can more safely assume there is a
+corresponding System object to attach itself to.
+
+Also move use of the KvmVM pointer out of constructors, since the VM may
+not have registered itself with the System object yet. Those uses can
+happen in the init() method instead.
+
+Change-Id: Ia0842612b101315bc1af0232d7f5ae2b55a15922
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56187
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/arm_cpu.cc  |  4 ++--
+ src/arch/arm/kvm/base_cpu.cc | 12 ++++++------
+ src/arch/x86/kvm/x86_cpu.cc  | 12 +++++++++---
+ src/arch/x86/kvm/x86_cpu.hh  |  1 +
+ src/cpu/kvm/KvmVM.py         |  2 ++
+ src/cpu/kvm/base.cc          | 12 +++++++-----
+ src/cpu/kvm/base.hh          |  6 +++---
+ src/cpu/kvm/vm.cc            | 13 ++-----------
+ src/cpu/kvm/vm.hh            |  5 -----
+ src/sim/System.py            |  4 ----
+ src/sim/system.cc            | 13 -------------
+ src/sim/system.hh            | 10 ++++++++--
+ 12 files changed, 40 insertions(+), 54 deletions(-)
+
+diff --git a/src/arch/arm/kvm/arm_cpu.cc b/src/arch/arm/kvm/arm_cpu.cc
+index ecdc602..33237c9 100644
+--- a/src/arch/arm/kvm/arm_cpu.cc
++++ b/src/arch/arm/kvm/arm_cpu.cc
+@@ -374,12 +374,12 @@ ArmKvmCPU::kvmRun(Tick ticks)
+     if (fiqAsserted != simFIQ) {
+         fiqAsserted = simFIQ;
+         DPRINTF(KvmInt, "KVM: Update FIQ state: %i\n", simFIQ);
+-        vm.setIRQLine(interruptVcpuFiq(vcpuID), simFIQ);
++        vm->setIRQLine(interruptVcpuFiq(vcpuID), simFIQ);
+     }
+     if (irqAsserted != simIRQ) {
+         irqAsserted = simIRQ;
+         DPRINTF(KvmInt, "KVM: Update IRQ state: %i\n", simIRQ);
+-        vm.setIRQLine(interruptVcpuIrq(vcpuID), simIRQ);
++        vm->setIRQLine(interruptVcpuIrq(vcpuID), simIRQ);
+     }
+ 
+     return BaseKvmCPU::kvmRun(ticks);
+diff --git a/src/arch/arm/kvm/base_cpu.cc b/src/arch/arm/kvm/base_cpu.cc
+index fe922a1..f18d697 100644
+--- a/src/arch/arm/kvm/base_cpu.cc
++++ b/src/arch/arm/kvm/base_cpu.cc
+@@ -102,13 +102,13 @@ BaseArmKvmCPU::startup()
+     struct kvm_vcpu_init target_config;
+     memset(&target_config, 0, sizeof(target_config));
+ 
+-    vm.kvmArmPreferredTarget(target_config);
++    vm->kvmArmPreferredTarget(target_config);
+     if (!((ArmSystem *)system)->highestELIs64()) {
+         target_config.features[0] |= (1 << KVM_ARM_VCPU_EL1_32BIT);
+     }
+     kvmArmVCpuInit(target_config);
+ 
+-    if (!vm.hasKernelIRQChip())
++    if (!vm->hasKernelIRQChip())
+         virtTimerPin = static_cast<ArmSystem *>(system)\
+             ->getGenericTimer()->params().int_virt->get(tc);
+ }
+@@ -120,14 +120,14 @@ BaseArmKvmCPU::kvmRun(Tick ticks)
+     const bool simFIQ(interrupt->checkRaw(INT_FIQ));
+     const bool simIRQ(interrupt->checkRaw(INT_IRQ));
+ 
+-    if (!vm.hasKernelIRQChip()) {
++    if (!vm->hasKernelIRQChip()) {
+         if (fiqAsserted != simFIQ) {
+             DPRINTF(KvmInt, "KVM: Update FIQ state: %i\n", simFIQ);
+-            vm.setIRQLine(INTERRUPT_VCPU_FIQ(vcpuID), simFIQ);
++            vm->setIRQLine(INTERRUPT_VCPU_FIQ(vcpuID), simFIQ);
+         }
+         if (irqAsserted != simIRQ) {
+             DPRINTF(KvmInt, "KVM: Update IRQ state: %i\n", simIRQ);
+-            vm.setIRQLine(INTERRUPT_VCPU_IRQ(vcpuID), simIRQ);
++            vm->setIRQLine(INTERRUPT_VCPU_IRQ(vcpuID), simIRQ);
+         }
+     } else {
+         warn_if(simFIQ && !fiqAsserted,
+@@ -144,7 +144,7 @@ BaseArmKvmCPU::kvmRun(Tick ticks)
+ 
+     Tick kvmRunTicks = BaseKvmCPU::kvmRun(ticks);
+ 
+-    if (!vm.hasKernelIRQChip()) {
++    if (!vm->hasKernelIRQChip()) {
+         uint64_t device_irq_level =
+             getKvmRunState()->s.regs.device_irq_level;
+ 
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index 34ac704..af041a5 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -536,8 +536,14 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+ X86KvmCPU::X86KvmCPU(const X86KvmCPUParams &params)
+     : BaseKvmCPU(params),
+       useXSave(params.useXSave)
++{}
++
++void
++X86KvmCPU::init()
+ {
+-    Kvm &kvm(*vm.kvm);
++    BaseKvmCPU::init();
++
++    Kvm &kvm = *vm->kvm;
+ 
+     if (!kvm.capSetTSSAddress())
+         panic("KVM: Missing capability (KVM_CAP_SET_TSS_ADDR)\n");
+@@ -667,7 +673,7 @@ X86KvmCPU::dumpVCpuEvents() const
+ void
+ X86KvmCPU::dumpMSRs() const
+ {
+-    const Kvm::MSRIndexVector &supported_msrs(vm.kvm->getSupportedMSRs());
++    const Kvm::MSRIndexVector &supported_msrs = vm->kvm->getSupportedMSRs();
+     auto msrs = newVarStruct<struct kvm_msrs, struct kvm_msr_entry>(
+             supported_msrs.size());
+ 
+@@ -1549,7 +1555,7 @@ const Kvm::MSRIndexVector &
+ X86KvmCPU::getMsrIntersection() const
+ {
+     if (cachedMsrIntersection.empty()) {
+-        const Kvm::MSRIndexVector &kvm_msrs(vm.kvm->getSupportedMSRs());
++        const Kvm::MSRIndexVector &kvm_msrs = vm->kvm->getSupportedMSRs();
+ 
+         DPRINTF(Kvm, "kvm-x86: Updating MSR intersection\n");
+         for (auto it = kvm_msrs.cbegin(); it != kvm_msrs.cend(); ++it) {
+diff --git a/src/arch/x86/kvm/x86_cpu.hh b/src/arch/x86/kvm/x86_cpu.hh
+index ae41b6b..33f58d7 100644
+--- a/src/arch/x86/kvm/x86_cpu.hh
++++ b/src/arch/x86/kvm/x86_cpu.hh
+@@ -56,6 +56,7 @@ class X86KvmCPU : public BaseKvmCPU
+     virtual ~X86KvmCPU();
+ 
+     void startup() override;
++    void init() override;
+ 
+     /** @{ */
+     void dump() const override;
+diff --git a/src/cpu/kvm/KvmVM.py b/src/cpu/kvm/KvmVM.py
+index 29a90a4..aae9d98 100644
+--- a/src/cpu/kvm/KvmVM.py
++++ b/src/cpu/kvm/KvmVM.py
+@@ -45,3 +45,5 @@ class KvmVM(SimObject):
+ 
+     coalescedMMIO = \
+       VectorParam.AddrRange([], "memory ranges for coalesced MMIO")
++
++    system = Param.System(Parent.any, "system this VM belongs to")
+diff --git a/src/cpu/kvm/base.cc b/src/cpu/kvm/base.cc
+index bc0e428..b76bddc 100644
+--- a/src/cpu/kvm/base.cc
++++ b/src/cpu/kvm/base.cc
+@@ -64,14 +64,14 @@ namespace gem5
+ 
+ BaseKvmCPU::BaseKvmCPU(const BaseKvmCPUParams &params)
+     : BaseCPU(params),
+-      vm(*params.system->getKvmVM()),
++      vm(nullptr),
+       _status(Idle),
+       dataPort(name() + ".dcache_port", this),
+       instPort(name() + ".icache_port", this),
+       alwaysSyncTC(params.alwaysSyncTC),
+       threadContextDirty(true),
+       kvmStateDirty(false),
+-      vcpuID(vm.allocVCPUID()), vcpuFD(-1), vcpuMMapSize(0),
++      vcpuID(-1), vcpuFD(-1), vcpuMMapSize(0),
+       _kvmRun(NULL), mmioRing(NULL),
+       pageSize(sysconf(_SC_PAGE_SIZE)),
+       tickEvent([this]{ tick(); }, "BaseKvmCPU tick",
+@@ -108,6 +108,8 @@ BaseKvmCPU::~BaseKvmCPU()
+ void
+ BaseKvmCPU::init()
+ {
++    vm = system->getKvmVM();
++    vcpuID = vm->allocVCPUID();
+     BaseCPU::init();
+     fatal_if(numThreads != 1, "KVM: Multithreading not supported");
+ }
+@@ -118,19 +120,19 @@ BaseKvmCPU::startup()
+     const BaseKvmCPUParams &p =
+         dynamic_cast<const BaseKvmCPUParams &>(params());
+ 
+-    Kvm &kvm(*vm.kvm);
++    Kvm &kvm = *vm->kvm;
+ 
+     BaseCPU::startup();
+ 
+     assert(vcpuFD == -1);
+ 
+     // Tell the VM that a CPU is about to start.
+-    vm.cpuStartup();
++    vm->cpuStartup();
+ 
+     // We can't initialize KVM CPUs in BaseKvmCPU::init() since we are
+     // not guaranteed that the parent KVM VM has initialized at that
+     // point. Initialize virtual CPUs here instead.
+-    vcpuFD = vm.createVCPU(vcpuID);
++    vcpuFD = vm->createVCPU(vcpuID);
+ 
+     // Map the KVM run structure
+     vcpuMMapSize = kvm.getVCPUMMapSize();
+diff --git a/src/cpu/kvm/base.hh b/src/cpu/kvm/base.hh
+index 449c5db..6b4b88a 100644
+--- a/src/cpu/kvm/base.hh
++++ b/src/cpu/kvm/base.hh
+@@ -157,7 +157,7 @@ class BaseKvmCPU : public BaseCPU
+      */
+     ThreadContext *tc;
+ 
+-    KvmVM &vm;
++    KvmVM *vm;
+ 
+   protected:
+     /**
+@@ -444,7 +444,7 @@ class BaseKvmCPU : public BaseCPU
+      * this queue when accessing devices. By convention, devices and
+      * the VM use the same event queue.
+      */
+-    EventQueue *deviceEventQueue() { return vm.eventQueue(); }
++    EventQueue *deviceEventQueue() { return vm->eventQueue(); }
+ 
+     /**
+      * Update the KVM if the thread context is dirty.
+@@ -654,7 +654,7 @@ class BaseKvmCPU : public BaseCPU
+     bool kvmStateDirty;
+ 
+     /** KVM internal ID of the vCPU */
+-    const long vcpuID;
++    long vcpuID;
+ 
+     /** ID of the vCPU thread */
+     pthread_t vcpuThread;
+diff --git a/src/cpu/kvm/vm.cc b/src/cpu/kvm/vm.cc
+index d58439b..fc84594 100644
+--- a/src/cpu/kvm/vm.cc
++++ b/src/cpu/kvm/vm.cc
+@@ -306,12 +306,13 @@ Kvm::createVM()
+ 
+ KvmVM::KvmVM(const KvmVMParams &params)
+     : SimObject(params),
+-      kvm(new Kvm()), system(nullptr),
++      kvm(new Kvm()), system(params.system),
+       vmFD(kvm->createVM()),
+       started(false),
+       _hasKernelIRQChip(false),
+       nextVCPUID(0)
+ {
++    system->setKvmVM(this);
+     maxMemorySlot = kvm->capNumMemSlots();
+     /* If we couldn't determine how memory slots there are, guess 32. */
+     if (!maxMemorySlot)
+@@ -357,7 +358,6 @@ KvmVM::cpuStartup()
+ void
+ KvmVM::delayedStartup()
+ {
+-    assert(system); // set by the system during its construction
+     const std::vector<memory::BackingStoreEntry> &memories(
+         system->getPhysMem().getBackingStore());
+ 
+@@ -553,18 +553,9 @@ KvmVM::validEnvironment() const
+     return true;
+ }
+ 
+-void
+-KvmVM::setSystem(System *s)
+-{
+-    panic_if(system != nullptr, "setSystem() can only be called once");
+-    panic_if(s == nullptr, "setSystem() called with null System*");
+-    system = s;
+-}
+-
+ long
+ KvmVM::contextIdToVCpuId(ContextID ctx) const
+ {
+-    assert(system != nullptr);
+     return dynamic_cast<BaseKvmCPU*>
+         (system->threads[ctx]->getCpuPtr())->getVCpuID();
+ }
+diff --git a/src/cpu/kvm/vm.hh b/src/cpu/kvm/vm.hh
+index 083c2b2..4433672 100644
+--- a/src/cpu/kvm/vm.hh
++++ b/src/cpu/kvm/vm.hh
+@@ -420,11 +420,6 @@ class KvmVM : public SimObject
+     bool validEnvironment() const;
+ 
+     /**
+-     * Initialize system pointer. Invoked by system object.
+-     */
+-    void setSystem(System *s);
+-
+-    /**
+       * Get the VCPUID for a given context
+       */
+     long contextIdToVCpuId(ContextID ctx) const;
+diff --git a/src/sim/System.py b/src/sim/System.py
+index c5b7a82..499cf9b 100644
+--- a/src/sim/System.py
++++ b/src/sim/System.py
+@@ -38,7 +38,6 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from m5.SimObject import *
+-from m5.defines import buildEnv
+ from m5.params import *
+ from m5.proxy import *
+ 
+@@ -126,6 +125,3 @@ class System(SimObject):
+     # ISA specific value in this class directly.
+     m5ops_base = Param.Addr(0, "Base of the 64KiB PA range used for "
+        "memory-mapped m5ops. Set to 0 to disable.")
+-
+-    if buildEnv['USE_KVM']:
+-        kvm_vm = Param.KvmVM(NULL, 'KVM VM (i.e., shared memory domain)')
+diff --git a/src/sim/system.cc b/src/sim/system.cc
+index 4829b58..db8f44c 100644
+--- a/src/sim/system.cc
++++ b/src/sim/system.cc
+@@ -50,10 +50,6 @@
+ #include "base/str.hh"
+ #include "base/trace.hh"
+ #include "config/the_isa.hh"
+-#include "config/use_kvm.hh"
+-#if USE_KVM
+-#include "cpu/kvm/vm.hh"
+-#endif
+ #if !IS_NULL_ISA
+ #include "cpu/base.hh"
+ #endif
+@@ -198,9 +194,6 @@ System::System(const Params &p)
+       init_param(p.init_param),
+       physProxy(_systemPort, p.cache_line_size),
+       workload(p.workload),
+-#if USE_KVM
+-      kvmVM(p.kvm_vm),
+-#endif
+       physmem(name() + ".physmem", p.memories, p.mmap_using_noreserve,
+               p.shared_backstore),
+       ShadowRomRanges(p.shadow_rom_ranges.begin(),
+@@ -221,12 +214,6 @@ System::System(const Params &p)
+     // add self to global system list
+     systemList.push_back(this);
+ 
+-#if USE_KVM
+-    if (kvmVM) {
+-        kvmVM->setSystem(this);
+-    }
+-#endif
+-
+     // check if the cache line size is a value known to work
+     if (_cacheLineSize != 16 && _cacheLineSize != 32 &&
+         _cacheLineSize != 64 && _cacheLineSize != 128) {
+diff --git a/src/sim/system.hh b/src/sim/system.hh
+index de030f0..7dcd1aa 100644
+--- a/src/sim/system.hh
++++ b/src/sim/system.hh
+@@ -334,7 +334,13 @@ class System : public SimObject, public PCEventScope
+      * Get a pointer to the Kernel Virtual Machine (KVM) SimObject,
+      * if present.
+      */
+-    KvmVM *getKvmVM() { return kvmVM; }
++    KvmVM *getKvmVM() const { return kvmVM; }
++
++    /**
++     * Set the pointer to the Kernel Virtual Machine (KVM) SimObject. For use
++     * by that object to declare itself to the system.
++     */
++    void setKvmVM(KvmVM *const vm) { kvmVM = vm; }
+ 
+     /** Get a pointer to access the physical memory of the system */
+     memory::PhysicalMemory& getPhysMem() { return physmem; }
+@@ -395,7 +401,7 @@ class System : public SimObject, public PCEventScope
+ 
+   protected:
+ 
+-    KvmVM *const kvmVM = nullptr;
++    KvmVM *kvmVM = nullptr;
+ 
+     memory::PhysicalMemory physmem;
+ 
+-- 
+1.8.3.1
+

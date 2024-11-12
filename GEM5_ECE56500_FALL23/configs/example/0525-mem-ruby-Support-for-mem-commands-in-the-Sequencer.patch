@@ -1,0 +1,36 @@
+From 38fe886ee35b6f9a9946433239f73c92d4f25aa8 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 1 Apr 2022 12:43:26 +0100
+Subject: [PATCH 525/757] mem-ruby: Support for mem commands in the Sequencer
+
+The isPhysMemAddress checks if a valid memory address
+refers to physical memory. This can't be used for memory
+commands a they don't hold a valid address/size
+
+Change-Id: Ib39c759aa90ab50ffe2036b5f0ae17627f57e5f5
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58510
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/system/RubyPort.cc | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/mem/ruby/system/RubyPort.cc b/src/mem/ruby/system/RubyPort.cc
+index 37c34c5..c52ee58 100644
+--- a/src/mem/ruby/system/RubyPort.cc
++++ b/src/mem/ruby/system/RubyPort.cc
+@@ -268,8 +268,7 @@ RubyPort::MemResponsePort::recvTimingReq(PacketPtr pkt)
+     // Check for pio requests and directly send them to the dedicated
+     // pio port.
+     if (pkt->cmd != MemCmd::MemSyncReq) {
+-        if (!isPhysMemAddress(pkt)) {
+-            assert(!pkt->req->isHTMCmd());
++        if (!pkt->req->isMemMgmt() && !isPhysMemAddress(pkt)) {
+             assert(ruby_port->memRequestPort.isConnected());
+             DPRINTF(RubyPort, "Request address %#x assumed to be a "
+                     "pio address\n", pkt->getAddr());
+-- 
+1.8.3.1
+

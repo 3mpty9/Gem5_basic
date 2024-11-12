@@ -1,0 +1,240 @@
+From 2390cd114332e9fd6fc020c21070e00b0b9a8dc4 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 2 Sep 2021 09:55:03 -0500
+Subject: [PATCH 441/757] dev-amdgpu: Add SystemHub for GPU load/store to host
+
+In a dGPU configuration, vector and scalar loads/stores can either be
+requests to device memory or host memory depending on if the system bit
+is set in the PTE when the request's virtual address is translated. This
+object is used to send/receive those requests to the host via DMA.
+
+This object will be used in a later changeset by the compute unit and
+fetch units to issue data and instruction loads from the GPU which
+translate to physical addresses on the host/cpu memory.
+
+Change-Id: I4537059f90ebc03f3b2e6b8b631b4c452841f83f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/51851
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/AMDGPU.py     |  5 +++
+ src/dev/amdgpu/SConscript    |  4 ++-
+ src/dev/amdgpu/system_hub.cc | 82 ++++++++++++++++++++++++++++++++++++++++++++
+ src/dev/amdgpu/system_hub.hh | 82 ++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 172 insertions(+), 1 deletion(-)
+ create mode 100644 src/dev/amdgpu/system_hub.cc
+ create mode 100644 src/dev/amdgpu/system_hub.hh
+
+diff --git a/src/dev/amdgpu/AMDGPU.py b/src/dev/amdgpu/AMDGPU.py
+index 0956e47..be568b1 100644
+--- a/src/dev/amdgpu/AMDGPU.py
++++ b/src/dev/amdgpu/AMDGPU.py
+@@ -95,3 +95,8 @@ class AMDGPUInterruptHandler(DmaDevice):
+     type = 'AMDGPUInterruptHandler'
+     cxx_header = "dev/amdgpu/interrupt_handler.hh"
+     cxx_class = 'gem5::AMDGPUInterruptHandler'
++
++class AMDGPUSystemHub(DmaDevice):
++    type = 'AMDGPUSystemHub'
++    cxx_class = 'gem5::AMDGPUSystemHub'
++    cxx_header = "dev/amdgpu/system_hub.hh"
+diff --git a/src/dev/amdgpu/SConscript b/src/dev/amdgpu/SConscript
+index 09ee7f6..dd80bd2 100644
+--- a/src/dev/amdgpu/SConscript
++++ b/src/dev/amdgpu/SConscript
+@@ -34,12 +34,14 @@ if not env['BUILD_GPU']:
+ 
+ # Controllers
+ SimObject('AMDGPU.py', sim_objects=['AMDGPUDevice', 'AMDGPUInterruptHandler',
+-                                    'AMDGPUMemoryManager'], tags='x86 isa')
++                                    'AMDGPUMemoryManager', 'AMDGPUSystemHub'],
++                                    tags='x86 isa')
+ 
+ Source('amdgpu_device.cc', tags='x86 isa')
+ Source('interrupt_handler.cc', tags='x86 isa')
+ Source('memory_manager.cc', tags='x86 isa')
+ Source('mmio_reader.cc', tags='x86 isa')
++Source('system_hub.cc', tags='x86 isa')
+ 
+ DebugFlag('AMDGPUDevice', tags='x86 isa')
+ DebugFlag('AMDGPUMem', tags='x86 isa')
+diff --git a/src/dev/amdgpu/system_hub.cc b/src/dev/amdgpu/system_hub.cc
+new file mode 100644
+index 0000000..b55cc52
+--- /dev/null
++++ b/src/dev/amdgpu/system_hub.cc
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/amdgpu/system_hub.hh"
++
++#include "mem/port.hh"
++
++namespace gem5
++{
++
++void
++AMDGPUSystemHub::sendRequest(PacketPtr pkt, Event *callback)
++{
++    ResponseEvent *dmaRespEvent = new ResponseEvent(pkt, callback);
++    Tick delay = 0;
++
++    // Assuming read XOR write (i.e., not an atomic).
++    assert(pkt->isRead() ^ pkt->isWrite());
++
++    if (pkt->isRead()) {
++        dmaRead(pkt->getAddr(), pkt->getSize(), dmaRespEvent,
++                pkt->getPtr<uint8_t>(), 0, 0, delay);
++    } else {
++        dmaWrite(pkt->getAddr(), pkt->getSize(), dmaRespEvent,
++                 pkt->getPtr<uint8_t>(), 0, 0, delay);
++    }
++}
++
++void
++AMDGPUSystemHub::dmaResponse(PacketPtr pkt)
++{
++}
++
++AMDGPUSystemHub::ResponseEvent::ResponseEvent(PacketPtr pkt, Event *_callback)
++    : reqPkt(pkt), callback(_callback)
++{
++    // Delete this event after process is called
++    setFlags(Event::AutoDelete);
++}
++
++void
++AMDGPUSystemHub::ResponseEvent::process()
++{
++    callback->process();
++}
++
++AddrRangeList
++AMDGPUSystemHub::getAddrRanges() const
++{
++    AddrRangeList ranges;
++    return ranges;
++}
++
++} // namespace gem5
+diff --git a/src/dev/amdgpu/system_hub.hh b/src/dev/amdgpu/system_hub.hh
+new file mode 100644
+index 0000000..2de627f
+--- /dev/null
++++ b/src/dev/amdgpu/system_hub.hh
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_GPU_SYSTEM_HUB_HH__
++#define __DEV_GPU_SYSTEM_HUB_HH__
++
++#include "dev/dma_device.hh"
++#include "params/AMDGPUSystemHub.hh"
++
++namespace gem5
++{
++
++class RequestPort;
++
++/**
++ * This class handles reads from the system/host memory space from the shader.
++ * It is meant to handle requests to memory which translation to system
++ * addresses. This can occur in fetch, scalar read/write, or vector memory
++ * read/write. It is a very basic interface to convert read packets to DMA
++ * requests and respond to the caller using an event.
++ */
++class AMDGPUSystemHub : public DmaDevice
++{
++  public:
++    AMDGPUSystemHub(const AMDGPUSystemHubParams &p) : DmaDevice(p) { }
++
++    void sendRequest(PacketPtr pkt, Event *callback);
++    void dmaResponse(PacketPtr pkt);
++
++    /**
++     * Inherited methods.
++     */
++    Tick write(PacketPtr pkt) override { return 0; }
++    Tick read(PacketPtr pkt) override { return 0; }
++    AddrRangeList getAddrRanges() const override;
++
++  private:
++
++    class ResponseEvent : public Event
++    {
++       PacketPtr reqPkt;
++       Event *callback;
++
++       public:
++        ResponseEvent(PacketPtr pkt, Event *_callback);
++
++        void process();
++
++    };
++};
++
++} // namespace gem5
++
++#endif /* __DEV_GPU_SYSTEM_HUB_HH__ */
+-- 
+1.8.3.1
+

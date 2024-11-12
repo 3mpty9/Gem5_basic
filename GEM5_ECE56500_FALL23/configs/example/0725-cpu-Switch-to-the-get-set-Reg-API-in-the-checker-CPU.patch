@@ -1,0 +1,76 @@
+From 9e821b323334bf6611e10559cbfe29d231f0fdc6 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 29 Aug 2021 00:43:39 -0700
+Subject: [PATCH 725/757] cpu: Switch to the (get|set)Reg API in the checker
+ CPU.
+
+Change-Id: I7ab1319ae6fc6d0d5bc62322fbe92c7131ce6403
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49777
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/checker/cpu_impl.hh | 34 ++++++++++++++--------------------
+ 1 file changed, 14 insertions(+), 20 deletions(-)
+
+diff --git a/src/cpu/checker/cpu_impl.hh b/src/cpu/checker/cpu_impl.hh
+index 61128e1..a68b6f4 100644
+--- a/src/cpu/checker/cpu_impl.hh
++++ b/src/cpu/checker/cpu_impl.hh
+@@ -584,19 +584,16 @@ Checker<DynInstPtr>::copyResult(
+           case InvalidRegClass:
+             break;
+           case IntRegClass:
+-            thread->setIntReg(idx.index(), mismatch_val.as<RegVal>());
+-            break;
+           case FloatRegClass:
+-            thread->setFloatReg(idx.index(), mismatch_val.as<RegVal>());
+-            break;
+-          case VecRegClass:
+-            thread->setVecReg(idx, mismatch_val.as<TheISA::VecRegContainer>());
+-            break;
+           case VecElemClass:
+-            thread->setVecElem(idx, mismatch_val.as<RegVal>());
+-            break;
+           case CCRegClass:
+-            thread->setCCReg(idx.index(), mismatch_val.as<RegVal>());
++            thread->setReg(idx, mismatch_val.as<RegVal>());
++            break;
++          case VecRegClass:
++            {
++                auto val = mismatch_val.as<TheISA::VecRegContainer>();
++                thread->setReg(idx, &val);
++            }
+             break;
+           case MiscRegClass:
+             thread->setMiscReg(idx.index(), mismatch_val.as<RegVal>());
+@@ -614,19 +611,16 @@ Checker<DynInstPtr>::copyResult(
+           case InvalidRegClass:
+             break;
+           case IntRegClass:
+-            thread->setIntReg(idx.index(), res.as<RegVal>());
+-            break;
+           case FloatRegClass:
+-            thread->setFloatReg(idx.index(), res.as<RegVal>());
+-            break;
+-          case VecRegClass:
+-            thread->setVecReg(idx, res.as<TheISA::VecRegContainer>());
+-            break;
+           case VecElemClass:
+-            thread->setVecElem(idx, res.as<RegVal>());
+-            break;
+           case CCRegClass:
+-            thread->setCCReg(idx.index(), res.as<RegVal>());
++            thread->setReg(idx, res.as<RegVal>());
++            break;
++          case VecRegClass:
++            {
++                auto val = res.as<TheISA::VecRegContainer>();
++                thread->setReg(idx, &val);
++            }
+             break;
+           case MiscRegClass:
+             // Try to get the proper misc register index for ARM here...
+-- 
+1.8.3.1
+

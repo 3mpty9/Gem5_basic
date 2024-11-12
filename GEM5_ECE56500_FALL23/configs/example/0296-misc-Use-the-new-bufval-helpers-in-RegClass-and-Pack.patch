@@ -1,0 +1,145 @@
+From 001e17890c4c031beb23a73fa6bed8fc9db0bcd9 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 25 Feb 2022 05:01:09 -0800
+Subject: [PATCH 296/757] misc: Use the new bufval helpers in RegClass and
+ Packet.
+
+Those makes generally useful mechanisms are now available to any code
+that wants to use it, and are covered by a unit test.
+
+Change-Id: If918eba3b81443019c5789ab132de45c65f93072
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57150
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/reg_class.cc | 43 +++++++++----------------------------------
+ src/mem/packet.cc    | 36 +++++++-----------------------------
+ 2 files changed, 16 insertions(+), 63 deletions(-)
+
+diff --git a/src/cpu/reg_class.cc b/src/cpu/reg_class.cc
+index 51b607a..444d1ff 100644
+--- a/src/cpu/reg_class.cc
++++ b/src/cpu/reg_class.cc
+@@ -43,6 +43,8 @@
+ #include <sstream>
+ 
+ #include "base/cprintf.hh"
++#include "sim/bufval.hh"
++#include "sim/byteswap.hh"
+ 
+ namespace gem5
+ {
+@@ -58,42 +60,15 @@ RegClassOps::valString(const void *val, size_t size) const
+ {
+     // If this is just a RegVal, or could be interpreted as one, print it
+     // that way.
+-    if (size == sizeof(uint64_t))
+-        return csprintf("0x%016x", *(const uint64_t *)val);
+-    else if (size == sizeof(uint32_t))
+-        return csprintf("0x%08x", *(const uint32_t *)val);
+-    else if (size == sizeof(uint16_t))
+-        return csprintf("0x%04x", *(const uint16_t *)val);
+-    else if (size == sizeof(uint8_t))
+-        return csprintf("0x%02x", *(const uint8_t *)val);
++    auto [reg_val_str, reg_val_success] = printUintX(val, size, HostByteOrder);
++    if (reg_val_success)
++        return reg_val_str;
+ 
+-    // Otherwise, print it as a sequence of bytes, 4 in a chunk, separated by
+-    // spaces, and all surrounded by []s.
++    // Otherwise, print it as a sequence of bytes. Use big endian order so
++    // that the most significant bytes are printed first, like digits in a
++    // regular number.
+ 
+-    std::stringstream out;
+-    ccprintf(out, "[");
+-
+-    constexpr size_t chunk_size = 4;
+-    const uint8_t *bytes = (const uint8_t *)val;
+-
+-    while (size >= chunk_size) {
+-        size -= chunk_size;
+-        if (size) {
+-            ccprintf(out, "%02x%02x%02x%02x ", bytes[0], bytes[1], bytes[2],
+-                    bytes[3]);
+-        } else {
+-            ccprintf(out, "%02x%02x%02x%02x", bytes[0], bytes[1], bytes[2],
+-                    bytes[3]);
+-        }
+-        bytes += chunk_size;
+-    }
+-
+-    while (size--)
+-        ccprintf(out, "%02x", *bytes++);
+-
+-    ccprintf(out, "]");
+-
+-    return out.str();
++    return printByteBuf(val, size, ByteOrder::big);
+ }
+ 
+ const char *RegId::regClassStrings[] = {
+diff --git a/src/mem/packet.cc b/src/mem/packet.cc
+index 5b23f13..24c3d9c 100644
+--- a/src/mem/packet.cc
++++ b/src/mem/packet.cc
+@@ -57,6 +57,7 @@
+ #include "base/logging.hh"
+ #include "base/trace.hh"
+ #include "mem/packet_access.hh"
++#include "sim/bufval.hh"
+ 
+ namespace gem5
+ {
+@@ -345,40 +346,17 @@ Packet::popSenderState()
+ uint64_t
+ Packet::getUintX(ByteOrder endian) const
+ {
+-    switch(getSize()) {
+-      case 1:
+-        return (uint64_t)get<uint8_t>(endian);
+-      case 2:
+-        return (uint64_t)get<uint16_t>(endian);
+-      case 4:
+-        return (uint64_t)get<uint32_t>(endian);
+-      case 8:
+-        return (uint64_t)get<uint64_t>(endian);
+-      default:
+-        panic("%i isn't a supported word size.\n", getSize());
+-    }
++    auto [val, success] =
++        gem5::getUintX(getConstPtr<void>(), getSize(), endian);
++    panic_if(!success, "%i isn't a supported word size.\n", getSize());
++    return val;
+ }
+ 
+ void
+ Packet::setUintX(uint64_t w, ByteOrder endian)
+ {
+-    switch(getSize()) {
+-      case 1:
+-        set<uint8_t>((uint8_t)w, endian);
+-        break;
+-      case 2:
+-        set<uint16_t>((uint16_t)w, endian);
+-        break;
+-      case 4:
+-        set<uint32_t>((uint32_t)w, endian);
+-        break;
+-      case 8:
+-        set<uint64_t>((uint64_t)w, endian);
+-        break;
+-      default:
+-        panic("%i isn't a supported word size.\n", getSize());
+-    }
+-
++    bool success = gem5::setUintX(w, getPtr<void>(), getSize(), endian);
++    panic_if(!success, "%i isn't a supported word size.\n", getSize());
+ }
+ 
+ void
+-- 
+1.8.3.1
+

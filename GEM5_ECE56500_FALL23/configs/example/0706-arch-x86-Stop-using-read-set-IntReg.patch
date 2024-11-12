@@ -1,0 +1,381 @@
+From b836e6a495665e382f28e231bff8c978c6aad07c Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 21:13:18 -0700
+Subject: [PATCH 706/757] arch-x86: Stop using (read|set)IntReg.
+
+These accessors just translate a RegIndex x into a RegId(IntRegClass, x)
+and then does (get|set)Reg. Instead, we can just do (get|set)Reg
+directly, since all the integer register named constants are just RegIds
+now.
+
+Change-Id: I9e7551ed66a6979e83c745f2891c452ded1eff0e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49755
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/faults.cc            | 10 ++--
+ src/arch/x86/isa.cc               | 10 ++--
+ src/arch/x86/kvm/x86_cpu.cc       |  4 +-
+ src/arch/x86/linux/fs_workload.cc |  2 +-
+ src/arch/x86/linux/linux.hh       |  4 +-
+ src/arch/x86/linux/se_workload.cc |  2 +-
+ src/arch/x86/nativetrace.cc       | 32 ++++++-------
+ src/arch/x86/process.cc           |  2 +-
+ src/arch/x86/pseudo_inst_abi.hh   |  6 +--
+ src/arch/x86/remote_gdb.cc        | 96 +++++++++++++++++++--------------------
+ 10 files changed, 85 insertions(+), 83 deletions(-)
+
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index d864fb4..f31f605 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -78,9 +78,9 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+         else
+             entry = extern_label_legacyModeInterrupt;
+     }
+-    tc->setIntReg(intRegMicro(1), vector);
++    tc->setReg(intRegMicro(1), vector);
+     Addr cs_base = tc->readMiscRegNoEffect(MISCREG_CS_EFF_BASE);
+-    tc->setIntReg(intRegMicro(7), pc.pc() - cs_base);
++    tc->setReg(intRegMicro(7), pc.pc() - cs_base);
+     if (errorCode != (uint64_t)(-1)) {
+         if (m5reg.mode == LongMode) {
+             entry = extern_label_longModeInterruptWithError;
+@@ -88,7 +88,7 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+             panic("Legacy mode interrupts with error codes "
+                     "aren't implemented.");
+         }
+-        tc->setIntReg(intRegMicro(15), errorCode);
++        tc->setReg(intRegMicro(15), errorCode);
+     }
+     pc.upc(romMicroPC(entry));
+     pc.nupc(romMicroPC(entry) + 1);
+@@ -184,7 +184,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     DPRINTF(Faults, "Init interrupt.\n");
+     // The otherwise unmodified integer registers should be set to 0.
+     for (int index = 0; index < int_reg::NumArchRegs; index++) {
+-        tc->setIntReg(index, 0);
++        tc->setReg(RegId(IntRegClass, index), (RegVal)0);
+     }
+ 
+     CR0 cr0 = tc->readMiscReg(MISCREG_CR0);
+@@ -275,7 +275,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     // This value should be the family/model/stepping of the processor.
+     // (page 418). It should be consistent with the value from CPUID, but
+     // the actual value probably doesn't matter much.
+-    tc->setIntReg(int_reg::Rdx, 0);
++    tc->setReg(int_reg::Rdx, (RegVal)0);
+ 
+     tc->setMiscReg(MISCREG_DR0, 0);
+     tc->setMiscReg(MISCREG_DR1, 0);
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index 3766aac..b33913a 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -181,14 +181,16 @@ void
+ ISA::copyRegsFrom(ThreadContext *src)
+ {
+     //copy int regs
+-    for (int i = 0; i < int_reg::NumRegs; ++i)
+-         tc->setIntRegFlat(i, src->readIntRegFlat(i));
++    for (int i = 0; i < int_reg::NumRegs; ++i) {
++        RegId reg(IntRegClass, i);
++        tc->setRegFlat(reg, src->getRegFlat(reg));
++    }
+     //copy float regs
+     for (int i = 0; i < NumFloatRegs; ++i)
+-         tc->setFloatRegFlat(i, src->readFloatRegFlat(i));
++        tc->setFloatRegFlat(i, src->readFloatRegFlat(i));
+     //copy condition-code regs
+     for (int i = 0; i < NUM_CCREGS; ++i)
+-         tc->setCCRegFlat(i, src->readCCRegFlat(i));
++        tc->setCCRegFlat(i, src->readCCRegFlat(i));
+     copyMiscRegs(src, tc);
+     tc->pcState(src->pcState());
+ }
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index 6004b58..6b488d9 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -707,7 +707,7 @@ X86KvmCPU::updateKvmStateRegs()
+ {
+     struct kvm_regs regs;
+ 
+-#define APPLY_IREG(kreg, mreg) regs.kreg = tc->readIntReg(mreg)
++#define APPLY_IREG(kreg, mreg) regs.kreg = tc->getReg(mreg)
+     FOREACH_IREG();
+ #undef APPLY_IREG
+ 
+@@ -985,7 +985,7 @@ void
+ X86KvmCPU::updateThreadContextRegs(const struct kvm_regs &regs,
+                                    const struct kvm_sregs &sregs)
+ {
+-#define APPLY_IREG(kreg, mreg) tc->setIntReg(mreg, regs.kreg)
++#define APPLY_IREG(kreg, mreg) tc->setReg(mreg, regs.kreg)
+ 
+     FOREACH_IREG();
+ 
+diff --git a/src/arch/x86/linux/fs_workload.cc b/src/arch/x86/linux/fs_workload.cc
+index 7b794e6..d30eca3 100644
+--- a/src/arch/x86/linux/fs_workload.cc
++++ b/src/arch/x86/linux/fs_workload.cc
+@@ -126,7 +126,7 @@ FsLinux::initState()
+      * Pass the location of the real mode data structure to the kernel
+      * using register %esi. We'll use %rsi which should be equivalent.
+      */
+-    system->threads[0]->setIntReg(int_reg::Rsi, realModeData);
++    system->threads[0]->setReg(int_reg::Rsi, realModeData);
+ }
+ 
+ } // namespace X86ISA
+diff --git a/src/arch/x86/linux/linux.hh b/src/arch/x86/linux/linux.hh
+index e937ca5..8d3b3c4 100644
+--- a/src/arch/x86/linux/linux.hh
++++ b/src/arch/x86/linux/linux.hh
+@@ -71,7 +71,7 @@ class X86Linux : public Linux
+         }
+ 
+         if (stack)
+-            ctc->setIntReg(X86ISA::int_reg::Rsp, stack);
++            ctc->setReg(X86ISA::int_reg::Rsp, stack);
+     }
+ 
+     class SyscallABI {};
+@@ -88,7 +88,7 @@ struct Result<ABI, SyscallReturn,
+     static void
+     store(ThreadContext *tc, const SyscallReturn &ret)
+     {
+-        tc->setIntReg(X86ISA::int_reg::Rax, ret.encodedValue());
++        tc->setReg(X86ISA::int_reg::Rax, ret.encodedValue());
+     }
+ };
+ 
+diff --git a/src/arch/x86/linux/se_workload.cc b/src/arch/x86/linux/se_workload.cc
+index 93086ee..1486786 100644
+--- a/src/arch/x86/linux/se_workload.cc
++++ b/src/arch/x86/linux/se_workload.cc
+@@ -115,7 +115,7 @@ EmuLinux::syscall(ThreadContext *tc)
+     // This will move into the base SEWorkload function at some point.
+     process->Process::syscall(tc);
+ 
+-    RegVal rax = tc->readIntReg(int_reg::Rax);
++    RegVal rax = tc->getReg(int_reg::Rax);
+     if (dynamic_cast<X86_64Process *>(process)) {
+         syscallDescs64.get(rax)->doSyscall(tc);
+     } else if (auto *proc32 = dynamic_cast<I386Process *>(process)) {
+diff --git a/src/arch/x86/nativetrace.cc b/src/arch/x86/nativetrace.cc
+index 5851d27..809e19b 100644
+--- a/src/arch/x86/nativetrace.cc
++++ b/src/arch/x86/nativetrace.cc
+@@ -72,22 +72,22 @@ X86NativeTrace::ThreadState::update(NativeTrace *parent)
+ void
+ X86NativeTrace::ThreadState::update(ThreadContext *tc)
+ {
+-    rax = tc->readIntReg(X86ISA::int_reg::Rax);
+-    rcx = tc->readIntReg(X86ISA::int_reg::Rcx);
+-    rdx = tc->readIntReg(X86ISA::int_reg::Rdx);
+-    rbx = tc->readIntReg(X86ISA::int_reg::Rbx);
+-    rsp = tc->readIntReg(X86ISA::int_reg::Rsp);
+-    rbp = tc->readIntReg(X86ISA::int_reg::Rbp);
+-    rsi = tc->readIntReg(X86ISA::int_reg::Rsi);
+-    rdi = tc->readIntReg(X86ISA::int_reg::Rdi);
+-    r8 = tc->readIntReg(X86ISA::int_reg::R8);
+-    r9 = tc->readIntReg(X86ISA::int_reg::R9);
+-    r10 = tc->readIntReg(X86ISA::int_reg::R10);
+-    r11 = tc->readIntReg(X86ISA::int_reg::R11);
+-    r12 = tc->readIntReg(X86ISA::int_reg::R12);
+-    r13 = tc->readIntReg(X86ISA::int_reg::R13);
+-    r14 = tc->readIntReg(X86ISA::int_reg::R14);
+-    r15 = tc->readIntReg(X86ISA::int_reg::R15);
++    rax = tc->getReg(X86ISA::int_reg::Rax);
++    rcx = tc->getReg(X86ISA::int_reg::Rcx);
++    rdx = tc->getReg(X86ISA::int_reg::Rdx);
++    rbx = tc->getReg(X86ISA::int_reg::Rbx);
++    rsp = tc->getReg(X86ISA::int_reg::Rsp);
++    rbp = tc->getReg(X86ISA::int_reg::Rbp);
++    rsi = tc->getReg(X86ISA::int_reg::Rsi);
++    rdi = tc->getReg(X86ISA::int_reg::Rdi);
++    r8 = tc->getReg(X86ISA::int_reg::R8);
++    r9 = tc->getReg(X86ISA::int_reg::R9);
++    r10 = tc->getReg(X86ISA::int_reg::R10);
++    r11 = tc->getReg(X86ISA::int_reg::R11);
++    r12 = tc->getReg(X86ISA::int_reg::R12);
++    r13 = tc->getReg(X86ISA::int_reg::R13);
++    r14 = tc->getReg(X86ISA::int_reg::R14);
++    r15 = tc->getReg(X86ISA::int_reg::R15);
+     rip = tc->pcState().as<X86ISA::PCState>().npc();
+     //This should be expanded if x87 registers are considered
+     for (int i = 0; i < 8; i++)
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index 56510c4..504afea 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -994,7 +994,7 @@ X86Process::argsInit(int pageSize,
+ 
+     ThreadContext *tc = system->threads[contextIds[0]];
+     // Set the stack pointer register
+-    tc->setIntReg(int_reg::Rsp, stack_min);
++    tc->setReg(int_reg::Rsp, stack_min);
+ 
+     // There doesn't need to be any segment base added in since we're dealing
+     // with the flat segmentation model.
+diff --git a/src/arch/x86/pseudo_inst_abi.hh b/src/arch/x86/pseudo_inst_abi.hh
+index 386b8a4..05bf66f 100644
+--- a/src/arch/x86/pseudo_inst_abi.hh
++++ b/src/arch/x86/pseudo_inst_abi.hh
+@@ -59,7 +59,7 @@ struct Result<X86PseudoInstABI, T>
+         // This assumes that all pseudo ops have their return value set
+         // by the pseudo op instruction. This may need to be revisited if we
+         // modify the pseudo op ABI in util/m5/m5op_x86.S
+-        tc->setIntReg(X86ISA::int_reg::Rax, ret);
++        tc->setReg(X86ISA::int_reg::Rax, ret);
+     }
+ };
+ 
+@@ -76,12 +76,12 @@ struct Argument<X86PseudoInstABI, uint64_t>
+ 
+         using namespace X86ISA;
+ 
+-        constexpr RegIndex int_reg_map[] = {
++        constexpr RegId int_reg_map[] = {
+             int_reg::Rdi, int_reg::Rsi, int_reg::Rdx,
+             int_reg::Rcx, int_reg::R8, int_reg::R9
+         };
+ 
+-        return tc->readIntReg(int_reg_map[state++]);
++        return tc->getReg(int_reg_map[state++]);
+     }
+ };
+ 
+diff --git a/src/arch/x86/remote_gdb.cc b/src/arch/x86/remote_gdb.cc
+index 3ce8b91..55ed32c 100644
+--- a/src/arch/x86/remote_gdb.cc
++++ b/src/arch/x86/remote_gdb.cc
+@@ -125,22 +125,22 @@ void
+ RemoteGDB::AMD64GdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+-    r.rax = context->readIntReg(int_reg::Rax);
+-    r.rbx = context->readIntReg(int_reg::Rbx);
+-    r.rcx = context->readIntReg(int_reg::Rcx);
+-    r.rdx = context->readIntReg(int_reg::Rdx);
+-    r.rsi = context->readIntReg(int_reg::Rsi);
+-    r.rdi = context->readIntReg(int_reg::Rdi);
+-    r.rbp = context->readIntReg(int_reg::Rbp);
+-    r.rsp = context->readIntReg(int_reg::Rsp);
+-    r.r8 = context->readIntReg(int_reg::R8);
+-    r.r9 = context->readIntReg(int_reg::R9);
+-    r.r10 = context->readIntReg(int_reg::R10);
+-    r.r11 = context->readIntReg(int_reg::R11);
+-    r.r12 = context->readIntReg(int_reg::R12);
+-    r.r13 = context->readIntReg(int_reg::R13);
+-    r.r14 = context->readIntReg(int_reg::R14);
+-    r.r15 = context->readIntReg(int_reg::R15);
++    r.rax = context->getReg(int_reg::Rax);
++    r.rbx = context->getReg(int_reg::Rbx);
++    r.rcx = context->getReg(int_reg::Rcx);
++    r.rdx = context->getReg(int_reg::Rdx);
++    r.rsi = context->getReg(int_reg::Rsi);
++    r.rdi = context->getReg(int_reg::Rdi);
++    r.rbp = context->getReg(int_reg::Rbp);
++    r.rsp = context->getReg(int_reg::Rsp);
++    r.r8 = context->getReg(int_reg::R8);
++    r.r9 = context->getReg(int_reg::R9);
++    r.r10 = context->getReg(int_reg::R10);
++    r.r11 = context->getReg(int_reg::R11);
++    r.r12 = context->getReg(int_reg::R12);
++    r.r13 = context->getReg(int_reg::R13);
++    r.r14 = context->getReg(int_reg::R14);
++    r.r15 = context->getReg(int_reg::R15);
+     r.rip = context->pcState().instAddr();
+     r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+     r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+@@ -155,14 +155,14 @@ void
+ RemoteGDB::X86GdbRegCache::getRegs(ThreadContext *context)
+ {
+     DPRINTF(GDBAcc, "getRegs in remotegdb \n");
+-    r.eax = context->readIntReg(int_reg::Rax);
+-    r.ecx = context->readIntReg(int_reg::Rcx);
+-    r.edx = context->readIntReg(int_reg::Rdx);
+-    r.ebx = context->readIntReg(int_reg::Rbx);
+-    r.esp = context->readIntReg(int_reg::Rsp);
+-    r.ebp = context->readIntReg(int_reg::Rbp);
+-    r.esi = context->readIntReg(int_reg::Rsi);
+-    r.edi = context->readIntReg(int_reg::Rdi);
++    r.eax = context->getReg(int_reg::Rax);
++    r.ecx = context->getReg(int_reg::Rcx);
++    r.edx = context->getReg(int_reg::Rdx);
++    r.ebx = context->getReg(int_reg::Rbx);
++    r.esp = context->getReg(int_reg::Rsp);
++    r.ebp = context->getReg(int_reg::Rbp);
++    r.esi = context->getReg(int_reg::Rsi);
++    r.edi = context->getReg(int_reg::Rdi);
+     r.eip = context->pcState().instAddr();
+     r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+     r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+@@ -177,22 +177,22 @@ void
+ RemoteGDB::AMD64GdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+-    context->setIntReg(int_reg::Rax, r.rax);
+-    context->setIntReg(int_reg::Rbx, r.rbx);
+-    context->setIntReg(int_reg::Rcx, r.rcx);
+-    context->setIntReg(int_reg::Rdx, r.rdx);
+-    context->setIntReg(int_reg::Rsi, r.rsi);
+-    context->setIntReg(int_reg::Rdi, r.rdi);
+-    context->setIntReg(int_reg::Rbp, r.rbp);
+-    context->setIntReg(int_reg::Rsp, r.rsp);
+-    context->setIntReg(int_reg::R8, r.r8);
+-    context->setIntReg(int_reg::R9, r.r9);
+-    context->setIntReg(int_reg::R10, r.r10);
+-    context->setIntReg(int_reg::R11, r.r11);
+-    context->setIntReg(int_reg::R12, r.r12);
+-    context->setIntReg(int_reg::R13, r.r13);
+-    context->setIntReg(int_reg::R14, r.r14);
+-    context->setIntReg(int_reg::R15, r.r15);
++    context->setReg(int_reg::Rax, r.rax);
++    context->setReg(int_reg::Rbx, r.rbx);
++    context->setReg(int_reg::Rcx, r.rcx);
++    context->setReg(int_reg::Rdx, r.rdx);
++    context->setReg(int_reg::Rsi, r.rsi);
++    context->setReg(int_reg::Rdi, r.rdi);
++    context->setReg(int_reg::Rbp, r.rbp);
++    context->setReg(int_reg::Rsp, r.rsp);
++    context->setReg(int_reg::R8, r.r8);
++    context->setReg(int_reg::R9, r.r9);
++    context->setReg(int_reg::R10, r.r10);
++    context->setReg(int_reg::R11, r.r11);
++    context->setReg(int_reg::R12, r.r12);
++    context->setReg(int_reg::R13, r.r13);
++    context->setReg(int_reg::R14, r.r14);
++    context->setReg(int_reg::R15, r.r15);
+     context->pcState(r.rip);
+     context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+     if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
+@@ -213,14 +213,14 @@ void
+ RemoteGDB::X86GdbRegCache::setRegs(ThreadContext *context) const
+ {
+     DPRINTF(GDBAcc, "setRegs in remotegdb \n");
+-    context->setIntReg(int_reg::Rax, r.eax);
+-    context->setIntReg(int_reg::Rcx, r.ecx);
+-    context->setIntReg(int_reg::Rdx, r.edx);
+-    context->setIntReg(int_reg::Rbx, r.ebx);
+-    context->setIntReg(int_reg::Rsp, r.esp);
+-    context->setIntReg(int_reg::Rbp, r.ebp);
+-    context->setIntReg(int_reg::Rsi, r.esi);
+-    context->setIntReg(int_reg::Rdi, r.edi);
++    context->setReg(int_reg::Rax, r.eax);
++    context->setReg(int_reg::Rcx, r.ecx);
++    context->setReg(int_reg::Rdx, r.edx);
++    context->setReg(int_reg::Rbx, r.ebx);
++    context->setReg(int_reg::Rsp, r.esp);
++    context->setReg(int_reg::Rbp, r.ebp);
++    context->setReg(int_reg::Rsi, r.esi);
++    context->setReg(int_reg::Rdi, r.edi);
+     context->pcState(r.eip);
+     context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+     if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
+-- 
+1.8.3.1
+

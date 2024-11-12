@@ -1,0 +1,188 @@
+From 06d455ec4e6168ea25973bb91e97432b4ad4571d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 02:39:36 -0700
+Subject: [PATCH 207/757] cpu: Add generalized register accessors setReg and
+ getReg.
+
+These will read registers of any type, as described by a RegId. These
+currently have default implementations which just delegate to the
+existing, register type specific accessors.
+
+Change-Id: I980ca15b3acd9a5a796c977276201d64c69398b8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49107
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/thread_context.cc | 121 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/cpu/thread_context.hh |  14 ++++++
+ 2 files changed, 135 insertions(+)
+
+diff --git a/src/cpu/thread_context.cc b/src/cpu/thread_context.cc
+index 6203547..228f193 100644
+--- a/src/cpu/thread_context.cc
++++ b/src/cpu/thread_context.cc
+@@ -153,6 +153,127 @@ ThreadContext::quiesceTick(Tick resume)
+     getSystemPtr()->threads.quiesceTick(contextId(), resume);
+ }
+ 
++RegVal
++ThreadContext::getReg(const RegId &reg) const
++{
++    return getRegFlat(flattenRegId(reg));
++}
++
++void *
++ThreadContext::getWritableReg(const RegId &reg)
++{
++    return getWritableRegFlat(flattenRegId(reg));
++}
++
++void
++ThreadContext::setReg(const RegId &reg, RegVal val)
++{
++    setRegFlat(flattenRegId(reg), val);
++}
++
++void
++ThreadContext::getReg(const RegId &reg, void *val) const
++{
++    getRegFlat(flattenRegId(reg), val);
++}
++
++void
++ThreadContext::setReg(const RegId &reg, const void *val)
++{
++    setRegFlat(flattenRegId(reg), val);
++}
++
++RegVal
++ThreadContext::getRegFlat(const RegId &reg) const
++{
++    RegVal val;
++    getRegFlat(reg, &val);
++    return val;
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, RegVal val)
++{
++    setRegFlat(reg, &val);
++}
++
++void
++ThreadContext::getRegFlat(const RegId &reg, void *val) const
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        *(RegVal *)val = readIntRegFlat(idx);
++        break;
++      case FloatRegClass:
++        *(RegVal *)val = readFloatRegFlat(idx);
++        break;
++      case VecRegClass:
++        *(TheISA::VecRegContainer *)val = readVecRegFlat(idx);
++        break;
++      case VecElemClass:
++        *(RegVal *)val = readVecElemFlat(idx);
++        break;
++      case VecPredRegClass:
++        *(TheISA::VecPredRegContainer *)val = readVecPredRegFlat(idx);
++        break;
++      case CCRegClass:
++        *(RegVal *)val = readCCRegFlat(idx);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void *
++ThreadContext::getWritableRegFlat(const RegId &reg)
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case VecRegClass:
++        return &getWritableVecRegFlat(idx);
++      case VecPredRegClass:
++        return &getWritableVecPredRegFlat(idx);
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
++void
++ThreadContext::setRegFlat(const RegId &reg, const void *val)
++{
++    const RegIndex idx = reg.index();
++    const RegClassType type = reg.classValue();
++    switch (type) {
++      case IntRegClass:
++        setIntRegFlat(idx, *(RegVal *)val);
++        break;
++      case FloatRegClass:
++        setFloatRegFlat(idx, *(RegVal *)val);
++        break;
++      case VecRegClass:
++        setVecRegFlat(idx, *(TheISA::VecRegContainer *)val);
++        break;
++      case VecElemClass:
++        setVecElemFlat(idx, *(RegVal *)val);
++        break;
++      case VecPredRegClass:
++        setVecPredRegFlat(idx, *(TheISA::VecPredRegContainer *)val);
++        break;
++      case CCRegClass:
++        setCCRegFlat(idx, *(RegVal *)val);
++        break;
++      case MiscRegClass:
++        panic("MiscRegs should not be read with getReg.");
++      default:
++        panic("Unrecognized register class type %d.", type);
++    }
++}
++
+ void
+ serialize(const ThreadContext &tc, CheckpointOut &cp)
+ {
+diff --git a/src/cpu/thread_context.hh b/src/cpu/thread_context.hh
+index c1bae18..3d2d546 100644
+--- a/src/cpu/thread_context.hh
++++ b/src/cpu/thread_context.hh
+@@ -193,6 +193,13 @@ class ThreadContext : public PCEventScope
+     //
+     // New accessors for new decoder.
+     //
++    virtual RegVal getReg(const RegId &reg) const;
++    virtual void getReg(const RegId &reg, void *val) const;
++    virtual void *getWritableReg(const RegId &reg);
++
++    virtual void setReg(const RegId &reg, RegVal val);
++    virtual void setReg(const RegId &reg, const void *val);
++
+     virtual RegVal readIntReg(RegIndex reg_idx) const = 0;
+ 
+     virtual RegVal readFloatReg(RegIndex reg_idx) const = 0;
+@@ -272,6 +279,13 @@ class ThreadContext : public PCEventScope
+      * serialization code to access all registers.
+      */
+ 
++    virtual RegVal getRegFlat(const RegId &reg) const;
++    virtual void getRegFlat(const RegId &reg, void *val) const;
++    virtual void *getWritableRegFlat(const RegId &reg);
++
++    virtual void setRegFlat(const RegId &reg, RegVal val);
++    virtual void setRegFlat(const RegId &reg, const void *val);
++
+     virtual RegVal readIntRegFlat(RegIndex idx) const = 0;
+     virtual void setIntRegFlat(RegIndex idx, RegVal val) = 0;
+ 
+-- 
+1.8.3.1
+

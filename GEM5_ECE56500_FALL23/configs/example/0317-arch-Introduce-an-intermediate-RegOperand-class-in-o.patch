@@ -1,0 +1,120 @@
+From d8e04d25a6861c1e0d3a97c9ed20b84cf360c073 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 21:43:57 -0700
+Subject: [PATCH 317/757] arch: Introduce an intermediate RegOperand class in
+ operand_types.py.
+
+There are a number of operand types which are registers. Define a
+RegOperand type which they can all inherit from to get register generic
+functionality. This will also become a way to add generic register types
+with malleable properties at the ISA level.
+
+Change-Id: I01a1d5d133d8f64106d005a744631f64e6808e57
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49719
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 35 ++++++++++-------------------------
+ 1 file changed, 10 insertions(+), 25 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index e4d56c0..3a1e5a4 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -170,13 +170,13 @@ class Operand(object):
+         # to avoid 'uninitialized variable' errors from the compiler.
+         return self.ctype + ' ' + self.base_name + ' = 0;\n';
+ 
+-
+-class IntRegOperand(Operand):
+-    reg_class = 'IntRegClass'
+-
++class RegOperand(Operand):
+     def isReg(self):
+         return 1
+ 
++class IntRegOperand(RegOperand):
++    reg_class = 'IntRegClass'
++
+     def isIntReg(self):
+         return 1
+ 
+@@ -243,12 +243,9 @@ class IntRegOperand(Operand):
+ 
+         return wb
+ 
+-class FloatRegOperand(Operand):
++class FloatRegOperand(RegOperand):
+     reg_class = 'FloatRegClass'
+ 
+-    def isReg(self):
+-        return 1
+-
+     def isFloatReg(self):
+         return 1
+ 
+@@ -306,16 +303,13 @@ class FloatRegOperand(Operand):
+         }''' % (self.ctype, self.base_name, wp)
+         return wb
+ 
+-class VecRegOperand(Operand):
++class VecRegOperand(RegOperand):
+     reg_class = 'VecRegClass'
+ 
+     def __init__(self, parser, full_name, ext, is_src, is_dest):
+-        Operand.__init__(self, parser, full_name, ext, is_src, is_dest)
++        super().__init__(parser, full_name, ext, is_src, is_dest)
+         self.elemExt = None
+ 
+-    def isReg(self):
+-        return 1
+-
+     def isVecReg(self):
+         return 1
+ 
+@@ -453,12 +447,9 @@ class VecRegOperand(Operand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class VecElemOperand(Operand):
++class VecElemOperand(RegOperand):
+     reg_class = 'VecElemClass'
+ 
+-    def isReg(self):
+-        return 1
+-
+     def isVecElem(self):
+         return 1
+ 
+@@ -500,12 +491,9 @@ class VecElemOperand(Operand):
+             val = f'floatToBits64({val})'
+         return f'\n\txc->setRegOperand(this, {self.dest_reg_idx}, {val});'
+ 
+-class VecPredRegOperand(Operand):
++class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+ 
+-    def isReg(self):
+-        return 1
+-
+     def isVecPredReg(self):
+         return 1
+ 
+@@ -580,12 +568,9 @@ class VecPredRegOperand(Operand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class CCRegOperand(Operand):
++class CCRegOperand(RegOperand):
+     reg_class = 'CCRegClass'
+ 
+-    def isReg(self):
+-        return 1
+-
+     def isCCReg(self):
+         return 1
+ 
+-- 
+1.8.3.1
+

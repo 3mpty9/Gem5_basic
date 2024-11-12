@@ -1,0 +1,34 @@
+From 293cfab778c7ba677cc9622a84a0b80397f81ec0 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 25 Feb 2022 23:09:39 -0800
+Subject: [PATCH 297/757] arch-x86: Mark a variable as [[maybe_unused]].
+
+This variable is used to hold a new value for the FSW register, and is
+only actually installed if the flag version of the PremFp microop is
+used. Mark it as [[maybe_unused]] so clang doesn't complain.
+
+Change-Id: Ied0e267a1b89884b369cc5f7f043c96ae86d973b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57171
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/microops/fpop.isa | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/microops/fpop.isa b/src/arch/x86/isa/microops/fpop.isa
+index 6fda08c..6c6c5c1 100644
+--- a/src/arch/x86/isa/microops/fpop.isa
++++ b/src/arch/x86/isa/microops/fpop.isa
+@@ -368,7 +368,7 @@ let {{
+ 
+     class PremFp(Fp3Op):
+         code = '''
+-            RegVal new_fsw = FSW;
++            [[maybe_unused]] RegVal new_fsw = FSW;
+             int src1_exp;
+             int src2_exp;
+             std::frexp(FpSrcReg1, &src1_exp);
+-- 
+1.8.3.1
+

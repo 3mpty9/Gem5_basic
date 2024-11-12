@@ -1,0 +1,62 @@
+From bf71a17982627db27d166244d87c75712316b132 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Wed, 1 Jun 2022 02:13:48 +0000
+Subject: [PATCH 670/757] arch-arm: Add several 64-bit syscalls name to
+ se_workload.cc
+
+The names are gathered from [1].
+
+This change also makes syscall 293 (rseq) does nothing
+instead of raising an error.
+
+[1] https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/asm-generic/unistd.h?h=v5.15.44.
+
+Change-Id: Ie0a7221db1cc308316fc0a500c454a23bf6029fd
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60229
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/arm/linux/se_workload.cc | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/src/arch/arm/linux/se_workload.cc b/src/arch/arm/linux/se_workload.cc
+index f0c85ae..9cbae93 100644
+--- a/src/arch/arm/linux/se_workload.cc
++++ b/src/arch/arm/linux/se_workload.cc
+@@ -759,7 +759,29 @@ class SyscallTable64 : public SyscallDescTable<EmuLinux::SyscallABI64>
+         {  base + 269, "sendmmsg" },
+         {  base + 270, "process_vm_readv" },
+         {  base + 271, "process_vm_writev" },
++        {  base + 272, "kcmp" },
++        {  base + 273, "finit_module" },
++        {  base + 274, "sched_setattr"},
++        {  base + 275, "sched_getattr"},
++        {  base + 276, "renameat2"},
++        {  base + 277, "seccomp"},
+         {  base + 278, "getrandom", getrandomFunc<ArmLinux64> },
++        {  base + 279, "memfd_create" },
++        {  base + 280, "bpf" },
++        {  base + 281, "execveat"},
++        {  base + 282, "userfaultfd"},
++        {  base + 283, "membarrier"},
++        {  base + 284, "mlock2"},
++        {  base + 285, "copy_file_range"},
++        {  base + 286, "preadv2"},
++        {  base + 287, "pwritev2"},
++        {  base + 288, "pkey_mprotect"},
++        {  base + 289, "pkey_alloc"},
++        {  base + 290, "pkey_free"},
++        {  base + 291, "statx"},
++        {  base + 292, "io_pgetevents"},
++        {  base + 293, "rseq", ignoreWarnOnceFunc },
++        {  base + 294, "kexec_file_load"},
+         { base + 1024, "open", openFunc<ArmLinux64> },
+         { base + 1025, "link" },
+         { base + 1026, "unlink", unlinkFunc },
+-- 
+1.8.3.1
+

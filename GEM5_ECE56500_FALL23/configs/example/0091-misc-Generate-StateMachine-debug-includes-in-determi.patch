@@ -1,0 +1,57 @@
+From 5ac54aab7e28bf14846bc1c9fc30edbde26d81c7 Mon Sep 17 00:00:00 2001
+From: Alex Richardson <alexrichardson@google.com>
+Date: Wed, 29 Dec 2021 13:16:40 +0000
+Subject: [PATCH 091/757] misc: Generate StateMachine debug includes in
+ deterministic order
+
+Since 3454a4a36e927f483b36fa66baabe2c85ecf3ddc the order of the debug/
+includes is non-deterministic which can result in unnecessary rebuilds.
+
+Change-Id: I583d2caf70632e08fa59ac85073786270991edbc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54983
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/slicc/symbols/StateMachine.py | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/slicc/symbols/StateMachine.py b/src/mem/slicc/symbols/StateMachine.py
+index 5d315e9..a9f7373 100644
+--- a/src/mem/slicc/symbols/StateMachine.py
++++ b/src/mem/slicc/symbols/StateMachine.py
+@@ -105,6 +105,8 @@ class StateMachine(Symbol):
+         self.objects = []
+         self.TBEType   = None
+         self.EntryType = None
++        # Python's sets are not sorted so we have to be careful when using
++        # this to generate deterministic output.
+         self.debug_flags = set()
+         self.debug_flags.add('RubyGenerated')
+         self.debug_flags.add('RubySlicc')
+@@ -516,8 +518,9 @@ void unset_tbe(${{self.TBEType.c_ident}}*& m_tbe_ptr);
+ 
+         code(boolvec_include)
+         code(base_include)
+-
+-        for f in self.debug_flags:
++        # We have to sort self.debug_flags in order to produce deterministic
++        # output and avoid unnecessary rebuilds of the generated files.
++        for f in sorted(self.debug_flags):
+             code('#include "debug/${{f}}.hh"')
+         code('''
+ #include "mem/ruby/network/Network.hh"
+@@ -1246,7 +1249,9 @@ $c_ident::functionalReadBuffers(PacketPtr& pkt, WriteMask &mask)
+ #include "base/logging.hh"
+ 
+ ''')
+-        for f in self.debug_flags:
++        # We have to sort self.debug_flags in order to produce deterministic
++        # output and avoid unnecessary rebuilds of the generated files.
++        for f in sorted(self.debug_flags):
+             code('#include "debug/${{f}}.hh"')
+         code('''
+ #include "mem/ruby/protocol/${ident}_Controller.hh"
+-- 
+1.8.3.1
+

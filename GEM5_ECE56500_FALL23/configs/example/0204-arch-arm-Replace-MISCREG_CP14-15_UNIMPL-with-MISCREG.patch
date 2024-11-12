@@ -1,0 +1,134 @@
+From 24893f090d02eb5dc52c14b9e7d6728479685837 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 2 Feb 2022 16:49:24 +0000
+Subject: [PATCH 204/757] arch-arm: Replace MISCREG_CP14/15_UNIMPL with
+ MISCREG_UNKNOWN
+
+MISCREG_UNKNOWN is the MiscRegIdx of an invalid AArch64 system
+register.  There is no need to define extra ids for AArch32 CP14/CP15
+registers.
+
+We are therefore removing them in favour of MISCREG_UNKNOWN instead
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Ib41813dfcb6a9cad84b7cef9603bc530cf4b593d
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56426
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/formats/misc.isa |  6 +++---
+ src/arch/arm/regs/misc.cc         | 12 +++---------
+ src/arch/arm/regs/misc.hh         |  6 +-----
+ 3 files changed, 7 insertions(+), 17 deletions(-)
+
+diff --git a/src/arch/arm/isa/formats/misc.isa b/src/arch/arm/isa/formats/misc.isa
+index 32fccc8..0a11ba5 100644
+--- a/src/arch/arm/isa/formats/misc.isa
++++ b/src/arch/arm/isa/formats/misc.isa
+@@ -166,7 +166,7 @@ let {{
+         switch (miscReg) {
+           case MISCREG_NOP:
+             return new NopInst(machInst);
+-          case MISCREG_CP14_UNIMPL:
++          case MISCREG_UNKNOWN:
+             return new FailUnimplemented(isRead ? "mrc unknown" : "mcr unknown",
+                     machInst,
+                     csprintf("miscreg crn:%d opc1:%d crm:%d opc2:%d %s unknown",
+@@ -211,7 +211,7 @@ let {{
+           case MISCREG_NOP:
+             return new McrMrcMiscInst(isRead ? "mrc nop" : "mcr nop",
+                                       machInst, iss, MISCREG_NOP);
+-          case MISCREG_CP15_UNIMPL:
++          case MISCREG_UNKNOWN:
+             return new FailUnimplemented(isRead ? "mrc unkown" : "mcr unkown",
+                     machInst,
+                     csprintf("miscreg crn:%d opc1:%d crm:%d opc2:%d %s unknown",
+@@ -301,7 +301,7 @@ let {{
+         const bool isRead = bits(machInst, 20);
+ 
+         switch (miscReg) {
+-          case MISCREG_CP15_UNIMPL:
++          case MISCREG_UNKNOWN:
+             return new FailUnimplemented(isRead ? "mrc" : "mcr", machInst,
+                     csprintf("miscreg crm:%d opc1:%d 64-bit %s unknown",
+                     crm, opc1, isRead ? "read" : "write"));
+diff --git a/src/arch/arm/regs/misc.cc b/src/arch/arm/regs/misc.cc
+index 0e58d93..0a95a55 100644
+--- a/src/arch/arm/regs/misc.cc
++++ b/src/arch/arm/regs/misc.cc
+@@ -333,7 +333,7 @@ decodeCP14Reg(unsigned crn, unsigned opc1, unsigned crm, unsigned opc2)
+     // If we get here then it must be a register that we haven't implemented
+     warn("CP14 unimplemented crn[%d], opc1[%d], crm[%d], opc2[%d]",
+          crn, opc1, crm, opc2);
+-    return MISCREG_CP14_UNIMPL;
++    return MISCREG_UNKNOWN;
+ }
+ 
+ MiscRegIndex
+@@ -1143,7 +1143,7 @@ decodeCP15Reg(unsigned crn, unsigned opc1, unsigned crm, unsigned opc2)
+         return MISCREG_IMPDEF_UNIMPL;
+     }
+     // Unrecognized register
+-    return MISCREG_CP15_UNIMPL;
++    return MISCREG_UNKNOWN;
+ }
+ 
+ MiscRegIndex
+@@ -1202,7 +1202,7 @@ decodeCP15Reg64(unsigned crm, unsigned opc1)
+         break;
+     }
+     // Unrecognized register
+-    return MISCREG_CP15_UNIMPL;
++    return MISCREG_UNKNOWN;
+ }
+ 
+ std::tuple<bool, bool>
+@@ -4545,12 +4545,6 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges();
+     InitReg(MISCREG_RAZ)
+       .allPrivileges().exceptUserMode().writes(0);
+-    InitReg(MISCREG_CP14_UNIMPL)
+-      .unimplemented()
+-      .warnNotFail();
+-    InitReg(MISCREG_CP15_UNIMPL)
+-      .unimplemented()
+-      .warnNotFail();
+     InitReg(MISCREG_UNKNOWN);
+     InitReg(MISCREG_IMPDEF_UNIMPL)
+       .unimplemented()
+diff --git a/src/arch/arm/regs/misc.hh b/src/arch/arm/regs/misc.hh
+index ea58ad2..b70e3fe 100644
+--- a/src/arch/arm/regs/misc.hh
++++ b/src/arch/arm/regs/misc.hh
+@@ -1059,7 +1059,7 @@ namespace ArmISA
+ 
+         // NUM_PHYS_MISCREGS specifies the number of actual physical
+         // registers, not considering the following pseudo-registers
+-        // (dummy registers), like UNKNOWN, CP15_UNIMPL, MISCREG_IMPDEF_UNIMPL.
++        // (dummy registers), like MISCREG_UNKNOWN, MISCREG_IMPDEF_UNIMPL.
+         // Checkpointing should use this physical index when
+         // saving/restoring register values.
+         NUM_PHYS_MISCREGS,
+@@ -1067,8 +1067,6 @@ namespace ArmISA
+         // Dummy registers
+         MISCREG_NOP,
+         MISCREG_RAZ,
+-        MISCREG_CP14_UNIMPL,
+-        MISCREG_CP15_UNIMPL,
+         MISCREG_UNKNOWN,
+ 
+         // Implementation defined register: this represent
+@@ -2206,8 +2204,6 @@ namespace ArmISA
+         // Dummy registers
+         "nop",
+         "raz",
+-        "cp14_unimpl",
+-        "cp15_unimpl",
+         "unknown",
+         "impl_defined",
+         "erridr_el1",
+-- 
+1.8.3.1
+

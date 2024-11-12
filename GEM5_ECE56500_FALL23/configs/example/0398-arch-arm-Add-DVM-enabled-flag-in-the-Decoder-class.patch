@@ -1,0 +1,106 @@
+From ee8279b7190f06be44e65dafa8ccc85945d6e5c0 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 20 Dec 2021 13:43:03 +0000
+Subject: [PATCH 398/757] arch-arm: Add DVM enabled flag in the Decoder class
+
+This is needed as the decoder needs to choose whether to
+instantiate a DVM (treated as IsLoad) instruction when
+decoding a TLBI/DSB Shareable, or to issue a simple system
+instruction in case DVM messages are not modelled in the
+simulated system.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I9f46304dee63851caec809a5c6b8e796d684cc05
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56603
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/ArmDecoder.py | 16 ++++++++++++++++
+ src/arch/arm/decoder.cc    |  6 ++++--
+ src/arch/arm/decoder.hh    |  6 +++++-
+ 3 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/arm/ArmDecoder.py b/src/arch/arm/ArmDecoder.py
+index 9f01af6..a5c16f5 100644
+--- a/src/arch/arm/ArmDecoder.py
++++ b/src/arch/arm/ArmDecoder.py
+@@ -1,3 +1,15 @@
++# Copyright (c) 2021 Arm Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright 2021 Google, Inc.
+ #
+ # Redistribution and use in source and binary forms, with or without
+@@ -23,9 +35,13 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
++from m5.params import *
+ from m5.objects.InstDecoder import InstDecoder
+ 
+ class ArmDecoder(InstDecoder):
+     type = 'ArmDecoder'
+     cxx_class = 'gem5::ArmISA::Decoder'
+     cxx_header = "arch/arm/decoder.hh"
++
++    dvm_enabled = Param.Bool(False,
++        "Does the decoder implement DVM operations")
+diff --git a/src/arch/arm/decoder.cc b/src/arch/arm/decoder.cc
+index 9d90537..18b8c04 100644
+--- a/src/arch/arm/decoder.cc
++++ b/src/arch/arm/decoder.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2014,2018 ARM Limited
++ * Copyright (c) 2012-2014,2018, 2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -55,7 +55,9 @@ namespace ArmISA
+ GenericISA::BasicDecodeCache<Decoder, ExtMachInst> Decoder::defaultCache;
+ 
+ Decoder::Decoder(const ArmDecoderParams &params)
+-    : InstDecoder(params, &data), data(0), fpscrLen(0), fpscrStride(0),
++    : InstDecoder(params, &data),
++      dvmEnabled(params.dvm_enabled),
++      data(0), fpscrLen(0), fpscrStride(0),
+       decoderFlavor(dynamic_cast<ISA *>(params.isa)->decoderFlavor())
+ {
+     reset();
+diff --git a/src/arch/arm/decoder.hh b/src/arch/arm/decoder.hh
+index 62d6f54..fdabe6c 100644
+--- a/src/arch/arm/decoder.hh
++++ b/src/arch/arm/decoder.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2013-2014 ARM Limited
++ * Copyright (c) 2013-2014, 2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -62,6 +62,10 @@ namespace ArmISA
+ class ISA;
+ class Decoder : public InstDecoder
+ {
++  public: // Public decoder parameters
++    /** True if the decoder should emit DVM Ops (treated as Loads) */
++    const bool dvmEnabled;
++
+   protected:
+     //The extended machine instruction being generated
+     ExtMachInst emi;
+-- 
+1.8.3.1
+

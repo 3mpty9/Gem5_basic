@@ -1,0 +1,50 @@
+From e2f7d7bef3141c67e72b529d05ba35c935e8e33c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 11 Mar 2022 17:57:53 -0800
+Subject: [PATCH 513/757] tests: Add the 'constants.all_compiled_tag'
+
+This can be used to write tests which use the 'build/ALL/gem5.opt'
+binary.
+
+Change-Id: I7a94ac74b2e59493fa04f96e7f4c26bbf9772fbb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57509
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/testlib/configuration.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/ext/testlib/configuration.py b/ext/testlib/configuration.py
+index c61a809..c6b02eb 100644
+--- a/ext/testlib/configuration.py
++++ b/ext/testlib/configuration.py
+@@ -239,6 +239,7 @@ def define_constants(constants):
+     constants.mips_tag = 'MIPS'
+     constants.power_tag = 'POWER'
+     constants.null_tag = 'NULL'
++    constants.all_compiled_tag = 'ALL'
+ 
+     constants.variant_tag_type = 'variant'
+     constants.opt_tag = 'opt'
+@@ -266,6 +267,7 @@ def define_constants(constants):
+             constants.mips_tag,
+             constants.power_tag,
+             constants.null_tag,
++            constants.all_compiled_tag,
+             ),
+         constants.variant_tag_type: (
+             constants.opt_tag,
+@@ -293,7 +295,8 @@ def define_constants(constants):
+         constants.riscv_tag : (constants.host_x86_64_tag,),
+         constants.mips_tag  : (constants.host_x86_64_tag,),
+         constants.power_tag : (constants.host_x86_64_tag,),
+-        constants.null_tag  : (None,)
++        constants.null_tag  : (None,),
++        constants.all_compiled_tag: (None,),
+     }
+ 
+     constants.supported_isas = constants.supported_tags['isa']
+-- 
+1.8.3.1
+

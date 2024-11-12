@@ -1,0 +1,100 @@
+From 667308ae7fc52cc996223c716117ad4849c93ebf Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Thu, 10 Mar 2022 15:48:41 +0800
+Subject: [PATCH 411/757] mem: Add option to remove shared memory at the end
+
+Add a new option `auto_unlink_shared_backstore` to System so it will
+remove the shared backstore used in physical memories when the System is
+getting destructed. This will prevent unintended memory leak.
+
+If the shared memory is designed to live through multiple round of
+simulations, you may set the option to false to prevent the removal.
+
+Test: Run a simulation with shared_backstore set, and see whether there
+    is anything left in /dev/shm/ after simulation ends.
+Change-Id: I0267b643bd24e62cb7571674fe98f831c13a586d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57469
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/physical.cc | 9 ++++++++-
+ src/mem/physical.hh | 3 ++-
+ src/sim/System.py   | 3 +++
+ src/sim/system.cc   | 2 +-
+ 4 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/physical.cc b/src/mem/physical.cc
+index a7e261f..08707eb 100644
+--- a/src/mem/physical.cc
++++ b/src/mem/physical.cc
+@@ -55,6 +55,7 @@
+ #include "debug/Checkpoint.hh"
+ #include "mem/abstract_mem.hh"
+ #include "sim/serialize.hh"
++#include "sim/sim_exit.hh"
+ 
+ /**
+  * On Linux, MAP_NORESERVE allow us to simulate a very large memory
+@@ -77,10 +78,16 @@ namespace memory
+ PhysicalMemory::PhysicalMemory(const std::string& _name,
+                                const std::vector<AbstractMemory*>& _memories,
+                                bool mmap_using_noreserve,
+-                               const std::string& shared_backstore) :
++                               const std::string& shared_backstore,
++                               bool auto_unlink_shared_backstore) :
+     _name(_name), size(0), mmapUsingNoReserve(mmap_using_noreserve),
+     sharedBackstore(shared_backstore), sharedBackstoreSize(0)
+ {
++    // Register cleanup callback if requested.
++    if (auto_unlink_shared_backstore && !sharedBackstore.empty()) {
++        registerExitCallback([=]() { shm_unlink(shared_backstore.c_str()); });
++    }
++
+     if (mmap_using_noreserve)
+         warn("Not reserving swap space. May cause SIGSEGV on actual usage\n");
+ 
+diff --git a/src/mem/physical.hh b/src/mem/physical.hh
+index bb90664..ff0dc61 100644
+--- a/src/mem/physical.hh
++++ b/src/mem/physical.hh
+@@ -174,7 +174,8 @@ class PhysicalMemory : public Serializable
+     PhysicalMemory(const std::string& _name,
+                    const std::vector<AbstractMemory*>& _memories,
+                    bool mmap_using_noreserve,
+-                   const std::string& shared_backstore);
++                   const std::string& shared_backstore,
++                   bool auto_unlink_shared_backstore);
+ 
+     /**
+      * Unmap all the backing store we have used.
+diff --git a/src/sim/System.py b/src/sim/System.py
+index 499cf9b..b5bd5df 100644
+--- a/src/sim/System.py
++++ b/src/sim/System.py
+@@ -87,6 +87,9 @@ class System(SimObject):
+     shared_backstore = Param.String("", "backstore's shmem segment filename, "
+         "use to directly address the backstore from another host-OS process. "
+         "Leave this empty to unset the MAP_SHARED flag.")
++    auto_unlink_shared_backstore = Param.Bool(False, "Automatically remove the "
++        "shmem segment file upon destruction. This is used only if "
++        "shared_backstore is non-empty.")
+ 
+     cache_line_size = Param.Unsigned(64, "Cache line size in bytes")
+ 
+diff --git a/src/sim/system.cc b/src/sim/system.cc
+index d5e5e3f..b7fba8a 100644
+--- a/src/sim/system.cc
++++ b/src/sim/system.cc
+@@ -182,7 +182,7 @@ System::System(const Params &p)
+       physProxy(_systemPort, p.cache_line_size),
+       workload(p.workload),
+       physmem(name() + ".physmem", p.memories, p.mmap_using_noreserve,
+-              p.shared_backstore),
++              p.shared_backstore, p.auto_unlink_shared_backstore),
+       ShadowRomRanges(p.shadow_rom_ranges.begin(),
+                       p.shadow_rom_ranges.end()),
+       memoryMode(p.mem_mode),
+-- 
+1.8.3.1
+

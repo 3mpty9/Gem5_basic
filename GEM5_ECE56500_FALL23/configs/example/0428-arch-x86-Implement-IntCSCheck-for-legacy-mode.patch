@@ -1,0 +1,39 @@
+From 9f0cb266cde8f98235273ca819fa1bc36d207ab7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 26 Jan 2022 08:39:35 -0800
+Subject: [PATCH 428/757] arch-x86: Implement IntCSCheck for legacy mode.
+
+Change-Id: Ic011b796cbccec030ffcb52ee4033ceaee6bf8fa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56324
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/microops/regop.isa | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/x86/isa/microops/regop.isa b/src/arch/x86/isa/microops/regop.isa
+index 556a02c..97ab143 100644
+--- a/src/arch/x86/isa/microops/regop.isa
++++ b/src/arch/x86/isa/microops/regop.isa
+@@ -1533,14 +1533,12 @@ let {{
+                     break;
+                 }
+               case SegIntCSCheck:
+-                if (m5reg.mode == LongMode) {
++                if (desc.type.codeOrData != 1) {
++                    fault = std::make_shared<GeneralProtection>(selector);
++                } else if (m5reg.mode == LongMode) {
+                     if (desc.l != 1 || desc.d != 0) {
+                         fault = std::make_shared<GeneralProtection>(selector);
+                     }
+-                } else {
+-                    fault = std::make_shared<GenericISA::M5PanicFault>(
+-                            "Interrupt CS "
+-                            "checks not implemented in legacy mode.\\n");
+                 }
+                 break;
+               case SegTRCheck:
+-- 
+1.8.3.1
+

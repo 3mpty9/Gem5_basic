@@ -1,0 +1,36 @@
+From 0e0ca633a2b095274d3b9fa17768022808012d51 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 02:49:25 -0700
+Subject: [PATCH 189/757] cpu: Get rid of the unused
+ o3::ThreadContext::readReg.
+
+Change-Id: I5c654240d7ccb09f983b4e87dde15e317fb7d953
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49106
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/cpu/o3/thread_context.hh | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/src/cpu/o3/thread_context.hh b/src/cpu/o3/thread_context.hh
+index 924cddb..86149ee 100644
+--- a/src/cpu/o3/thread_context.hh
++++ b/src/cpu/o3/thread_context.hh
+@@ -178,12 +178,6 @@ class ThreadContext : public gem5::ThreadContext
+ 
+     /** Reads an integer register. */
+     RegVal
+-    readReg(RegIndex reg_idx)
+-    {
+-        return readIntRegFlat(flattenRegId(RegId(IntRegClass,
+-                                                 reg_idx)).index());
+-    }
+-    RegVal
+     readIntReg(RegIndex reg_idx) const override
+     {
+         return readIntRegFlat(flattenRegId(RegId(IntRegClass,
+-- 
+1.8.3.1
+

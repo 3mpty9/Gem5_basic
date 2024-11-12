@@ -1,0 +1,37 @@
+From a0fcc297e3c9485d35c233be4b85844748130935 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 20 Jan 2022 22:12:16 -0800
+Subject: [PATCH 363/757] arch-x86: Subtract the base from the PC when entering
+ faults.
+
+The PC value is put in t7, but for that to be consistent with the way
+microcode usually sees and interacts with the PC, it needs to have the
+CS base value subtracted from it first. Otherwise the base could be
+added into new PC values twice.
+
+Change-Id: I8a8c5bc1befd9a89e6735981fd2fc69a702fdc68
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55690
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/faults.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 2e9b2e5..265ce07 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -79,7 +79,8 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+             entry = extern_label_legacyModeInterrupt;
+     }
+     tc->setIntReg(INTREG_MICRO(1), vector);
+-    tc->setIntReg(INTREG_MICRO(7), pc.pc());
++    Addr cs_base = tc->readMiscRegNoEffect(MISCREG_CS_EFF_BASE);
++    tc->setIntReg(INTREG_MICRO(7), pc.pc() - cs_base);
+     if (errorCode != (uint64_t)(-1)) {
+         if (m5reg.mode == LongMode) {
+             entry = extern_label_longModeInterruptWithError;
+-- 
+1.8.3.1
+

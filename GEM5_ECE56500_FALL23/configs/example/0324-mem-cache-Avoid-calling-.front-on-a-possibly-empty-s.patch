@@ -1,0 +1,37 @@
+From 6de0156cf7869665805017636bfd22f5c833872a Mon Sep 17 00:00:00 2001
+From: Alex Richardson <alexrichardson@google.com>
+Date: Tue, 1 Mar 2022 13:38:12 +0000
+Subject: [PATCH 324/757] mem-cache: Avoid calling .front() on a possibly empty
+ std::list
+
+In the call to MSHR::promoteWritable() the deferredTargets list can be
+empty, so we should check that case before calling .front(). The new logic
+matches MSHR::promoteReadable().
+
+Change-Id: Ic1d05e42f32b2c02226ca88d2155225f592f667f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57249
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/mshr.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/mem/cache/mshr.cc b/src/mem/cache/mshr.cc
+index 8477048..871125a 100644
+--- a/src/mem/cache/mshr.cc
++++ b/src/mem/cache/mshr.cc
+@@ -678,6 +678,9 @@ MSHR::promoteReadable()
+ void
+ MSHR::promoteWritable()
+ {
++    if (deferredTargets.empty()) {
++        return;
++    }
+     PacketPtr def_tgt_pkt = deferredTargets.front().pkt;
+     if (deferredTargets.needsWritable &&
+         !(hasPostInvalidate() || hasPostDowngrade()) &&
+-- 
+1.8.3.1
+

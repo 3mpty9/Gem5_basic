@@ -1,0 +1,117 @@
+From 72a455f9c962c095d9a1785415928ab74c57c3e9 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 14 Jan 2022 02:59:39 -0800
+Subject: [PATCH 284/757] dev: Don't implement the ATAPI_IDENTIFY_DEVICE
+ command.
+
+This command is one of two that should be implemented by ATAPI devices.
+An ATAPI device are essentially optical devices which use SCSI commands
+which are transported over ATA using two special commands, a PACKET
+command which actually sends the SCSI commands, and an IDENTIFY command
+which is basically the same as the ATA IDENTIFY command but which is
+only implemented on ATAPI devices. In order to determine if the device
+connected to an IDE controller is an optical drive or a regular ATA hard
+drive, software can send the ATAPI_IDENTIFY_DEVICE command and see if
+gets an appropriate response.
+
+In gem5, this command was originally not implemented by the IDE disk
+model. If a driver attempted to send it, the gem5 model would panic and
+kill the simulation. To fix that problem, that command was added to the
+list of supported commands and just made a synonym for the ATA IDENTIFY
+command since they have essentially the same response.
+
+Unfortunately, this makes all ATA devices look like ATAPI devices, which
+is not what we have implemented.
+
+Instead, when we get this command, what we *should* do, as far as I can
+tell by reading this:
+
+http://users.utcluj.ro/~baruch/media/siee/labor/ATA-Interface.pdf
+
+is to set the ERR bit in the status register, and then set the ABRT bit
+in the error register to indicate that the command was not implemented.
+
+I've attempted to implement that into the model with this change by
+setting those bits as described, and then setting the "action" member to
+be ACT_CMD_ERROR. I think that action is there primarily to support
+cancelled transfers, but it seems like it has the desired effect(?).
+
+Since the error bits are not really explicitly set or managed by the
+model in most cases, this change also adds a little bit of code at the
+top of startCommand which clears them to zero. These bits are supposed
+to "contain the status of the last command executed", and if we're
+starting a new command, the error bits no longer apply.
+
+I'm confident that conceptually this is how the ATAPI_IDENTIFY_DEVICE
+command should behave in our model, at least unless we decide to
+implement real ATAPI models which actually accept SCSI commands, etc.
+I'm less confident that I've modified the model to actually implement
+that behavior, but as far as I can tell it doesn't seem to have broken
+anything, and now SeaBIOS no longer things our disk model is a CDROM
+drive.
+
+Change-Id: I2c0840e279e9caa89c21a4e7cbdbcaf6bccd92ac
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55523
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/storage/ide_disk.cc | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/src/dev/storage/ide_disk.cc b/src/dev/storage/ide_disk.cc
+index 1416a37..e43437f 100644
+--- a/src/dev/storage/ide_disk.cc
++++ b/src/dev/storage/ide_disk.cc
+@@ -49,6 +49,7 @@
+ #include <deque>
+ #include <string>
+ 
++#include "base/bitfield.hh"
+ #include "base/chunk_generator.hh"
+ #include "base/compiler.hh"
+ #include "base/cprintf.hh" // csprintf
+@@ -613,6 +614,10 @@ IdeDisk::startCommand()
+     uint32_t size = 0;
+     dmaRead = false;
+ 
++    // Clear any existing errors.
++    replaceBits(status, 0, 0);
++    replaceBits(cmdReg.error, 2, 0);
++
+     // Decode commands
+     switch (cmdReg.command) {
+         // Supported non-data commands
+@@ -642,12 +647,19 @@ IdeDisk::startCommand()
+ 
+         // Supported PIO data-in commands
+       case WDCC_IDENTIFY:
+-      case ATAPI_IDENTIFY_DEVICE:
+         cmdBytes = cmdBytesLeft = sizeof(struct ataparams);
+         devState = Prepare_Data_In;
+         action = ACT_DATA_READY;
+         break;
+ 
++      case ATAPI_IDENTIFY_DEVICE:
++        // We're not an ATAPI device, so this command isn't implemented.
++        devState = Command_Execution;
++        action = ACT_CMD_ERROR;
++        replaceBits(cmdReg.error, 2, 1);
++        replaceBits(status, 0, 1);
++        break;
++
+       case WDCC_READMULTI:
+       case WDCC_READ:
+         panic_if(!(cmdReg.drive & DRIVE_LBA_BIT),
+@@ -805,7 +817,7 @@ IdeDisk::updateState(DevAction_t action)
+         break;
+ 
+       case Command_Execution:
+-        if (action == ACT_CMD_COMPLETE) {
++        if (action == ACT_CMD_ERROR || action == ACT_CMD_COMPLETE) {
+             // clear the BSY bit
+             setComplete();
+ 
+-- 
+1.8.3.1
+

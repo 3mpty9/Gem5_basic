@@ -1,0 +1,82 @@
+From c17099467666f7d813d3737767f78bbf337aa8a0 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 18 Apr 2022 12:11:25 -0500
+Subject: [PATCH 605/757] dev-amdgpu: Fix size issue in interrupt handler
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The data allocated for the DMA request used to send an interrupt cookie
+was too large. This was causing the memcpy to occasionally seg fault due
+to reading past the bounds of the source parameter (the interrupt cookie
+struct). Correct the size and add a compile time check to ensure it is
+the correct number of bytes expected by the driver.
+
+Change-Id: Ie9757cb52ce8f72354582c36cfd3a7e8a1525484
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58969
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Alexandru Duțu <alexandru.dutu@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/dev/amdgpu/interrupt_handler.cc | 4 ++--
+ src/dev/amdgpu/interrupt_handler.hh | 5 +++--
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/dev/amdgpu/interrupt_handler.cc b/src/dev/amdgpu/interrupt_handler.cc
+index ea0931f..36c9b04 100644
+--- a/src/dev/amdgpu/interrupt_handler.cc
++++ b/src/dev/amdgpu/interrupt_handler.cc
+@@ -114,7 +114,7 @@ void
+ AMDGPUInterruptHandler::submitWritePointer()
+ {
+     uint8_t *dataPtr = new uint8_t[sizeof(uint32_t)];
+-    regs.IH_Wptr += INTR_COOKIE_SIZE;
++    regs.IH_Wptr += sizeof(AMDGPUInterruptCookie);
+     Addr paddr = regs.WptrAddr;
+     std::memcpy(dataPtr, &regs.IH_Wptr, sizeof(uint32_t));
+ 
+@@ -127,7 +127,7 @@ AMDGPUInterruptHandler::submitInterruptCookie()
+ {
+     assert(!interruptQueue.empty());
+     auto cookie = interruptQueue.front();
+-    size_t cookieSize = INTR_COOKIE_SIZE * sizeof(uint32_t);
++    size_t cookieSize = sizeof(AMDGPUInterruptCookie);
+ 
+     uint8_t *dataPtr = new uint8_t[cookieSize];
+     std::memcpy(dataPtr, cookie, cookieSize);
+diff --git a/src/dev/amdgpu/interrupt_handler.hh b/src/dev/amdgpu/interrupt_handler.hh
+index fcf1076..5e5175f 100644
+--- a/src/dev/amdgpu/interrupt_handler.hh
++++ b/src/dev/amdgpu/interrupt_handler.hh
+@@ -78,6 +78,8 @@ enum ihSourceId
+            drivers/gpu/drm/amd/amdgpu/amdgpu_irq.h#L46
+  *
+  */
++constexpr uint32_t INTR_COOKIE_SIZE = 32; // in bytes
++
+ typedef struct
+ {
+     uint32_t clientId : 8;
+@@ -98,6 +100,7 @@ typedef struct
+     uint32_t source_data_dw3;
+     uint32_t source_data_dw4;
+ } AMDGPUInterruptCookie;
++static_assert(sizeof(AMDGPUInterruptCookie) == INTR_COOKIE_SIZE);
+ 
+ /**
+  * Struct to contain all interrupt handler related registers.
+@@ -116,8 +119,6 @@ typedef struct
+     uint32_t IH_Doorbell;
+ } AMDGPUIHRegs;
+ 
+-constexpr uint32_t INTR_COOKIE_SIZE = 32; // in bytes
+-
+ class AMDGPUInterruptHandler : public DmaDevice
+ {
+   public:
+-- 
+1.8.3.1
+

@@ -1,0 +1,95 @@
+From 77263615db71d2279f59c1ba91d16061589f9abd Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Mon, 25 Oct 2021 16:43:00 +0100
+Subject: [PATCH 322/757] mem: Add TLB invalidation flags to the Request object
+
+Some ISAs implement TLB invalidation across multiple cores (TLB
+shootdown) by broadcasting invalidation messages to every PE in a
+target shareability domain.
+
+These messages originate by specific instructions and can be
+cathegorized in two macro groups
+
+1) TLB Invalidation instructions: generating the invalidation
+request
+
+Example:
+* Arm: TLBI instruction [1]
+* AMD64: INVLPGB instruction [2]
+
+2) TLB Invalidation sync instructions: serialization point, ensuring
+completion of outstanding invalidation requests
+
+Example:
+* Arm: DSB instruction [1]
+* AMD64: TLBSYNC instruction [2]
+
+This patch is introducing TLBI and SYNC operations in the memory
+subsystem by adding the following Request flags:
+
+* TLBI (1)
+* TLBI_SYNC (2)
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+[1]: https://developer.arm.com/documentation/ddi0487/gb/
+[2]: https://www.amd.com/system/files/TechDocs/24594.pdf
+
+Change-Id: Ib5b025d0f6bc0edaf4f11a66593947a72ba32b8f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56596
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 3b884a9..867cbb0 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2013,2017-2020 ARM Limited
++ * Copyright (c) 2012-2013,2017-2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -237,6 +237,12 @@ class Request
+         // This separation is necessary to ensure the disjoint components
+         // of the system work correctly together.
+ 
++        /** The Request is a TLB shootdown */
++        TLBI                        = 0x0000100000000000,
++
++        /** The Request is a TLB shootdown sync */
++        TLBI_SYNC                   = 0x0000200000000000,
++
+         /**
+          * These flags are *not* cleared when a Request object is
+          * reused (assigned a new address).
+@@ -249,6 +255,8 @@ class Request
+     static const FlagsType HTM_CMD = HTM_START | HTM_COMMIT |
+         HTM_CANCEL | HTM_ABORT;
+ 
++    static const FlagsType TLBI_CMD = TLBI | TLBI_SYNC;
++
+     /** Requestor Ids that are statically allocated
+      * @{*/
+     enum : RequestorID
+@@ -975,6 +983,10 @@ class Request
+                 isHTMCancel() || isHTMAbort());
+     }
+ 
++    bool isTlbi() const { return _flags.isSet(TLBI); }
++    bool isTlbiSync() const { return _flags.isSet(TLBI_SYNC); }
++    bool isTlbiCmd() const { return isTlbi() || isTlbiSync(); }
++
+     bool
+     isAtomic() const
+     {
+-- 
+1.8.3.1
+

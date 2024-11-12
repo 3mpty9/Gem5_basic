@@ -1,0 +1,96 @@
+From eaf23bcd9f8d07b5a643e0ce5559b1ef0a96fb28 Mon Sep 17 00:00:00 2001
+From: Daecheol You <daecheol.you@samsung.com>
+Date: Fri, 11 Mar 2022 12:24:11 +0900
+Subject: [PATCH 653/757] mem-ruby: fix sharer update for stale WriteCleanFull
+
+Initiate_CopyBack_Stale removes the requestor from the sharer list.
+However, if CBWrData_SC is the data response of stale WriteCleanFull,
+the requestor should remain in the sharer list.
+Thus, whether to send a Evict or not can be decided after the data
+response arrives. For this, FinishCopyBack_Stale event was added as the
+last event to handle Evict.
+
+Change-Id: Ic3e3a1e4d74b24b9aa328b2ddfa817db44f24e4e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58413
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm     | 16 ++++++++++------
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm |  6 ++++++
+ src/mem/ruby/protocol/chi/CHI-cache.sm             |  1 +
+ 3 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 65182ae..280ae50 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -904,17 +904,18 @@ action(Initiate_CopyBack_Stale, desc="") {
+ 
+   tbe.actions.pushNB(Event:SendCompDBIDRespStale);
+   tbe.actions.pushNB(Event:WriteFEPipe);
++  tbe.actions.push(Event:FinishCopyBack_Stale);
+ 
++  assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
++}
++
++action(Finish_CopyBack_Stale, desc="") {
+   // if it was the last known sharer and we don't have the data do the same
+   // the Initiate_Evict
+-  if ((is_HN == false) && (tbe.dir_sharers.count() == 1) &&
++  if ((is_HN == false) && (tbe.dir_sharers.count() == 0) &&
+       tbe.dir_sharers.isElement(tbe.requestor) && (tbe.dataValid == false)) {
+     tbe.actions.push(Event:SendEvict);
+   }
+-
+-  tbe.dir_sharers.remove(tbe.requestor);
+-  assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
+-
+ }
+ 
+ action(Initiate_Evict, desc="") {
+@@ -1756,7 +1757,10 @@ action(UpdateDirState_FromReqDataResp, desc="") {
+ 
+       } else if (in_msg.type == CHIDataType:CBWrData_SC) {
+         assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != in_msg.responder));
+-        tbe.dir_sharers.remove(in_msg.responder);
++        // Do not remove the responder in case of stale WriteCleanFull
++        if (tbe.reqType != CHIRequestType:WriteCleanFull) {
++          tbe.dir_sharers.remove(in_msg.responder);
++        }
+ 
+       } else if (in_msg.type == CHIDataType:CBWrData_SD_PD) {
+         assert(tbe.dir_ownerExists && (tbe.dir_ownerIsExcl == false) && (tbe.dir_owner == in_msg.responder));
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index 87e5f0b..d591af3 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -1043,6 +1043,12 @@ transition(BUSY_BLKD, FinishCleanUnique) {
+   ProcessNextState_ClearPending;
+ }
+ 
++transition(BUSY_BLKD, FinishCopyBack_Stale) {
++  Pop_TriggerQueue;
++  Finish_CopyBack_Stale;
++  ProcessNextState_ClearPending;
++}
++
+ transition(BUSY_BLKD, CheckUpgrade_FromStore) {
+   Pop_TriggerQueue;
+   Callback_Miss; // note: Callback happens only if tbe.dataValid
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache.sm b/src/mem/ruby/protocol/chi/CHI-cache.sm
+index a69748e..3770382 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache.sm
+@@ -504,6 +504,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     TX_Data, desc="Transmit pending data messages";
+     MaintainCoherence, desc="Queues a WriteBack or Evict before droping the only valid copy of the block";
+     FinishCleanUnique, desc="Sends acks and perform any writeback after a CleanUnique";
++    FinishCopyBack_Stale, desc="Check if a Evict needs to be sent";
+     ActionStalledOnHazard, desc="Stall a trigger action because until finish handling snoop hazard";
+ 
+     // This is triggered once a transaction doesn't have
+-- 
+1.8.3.1
+

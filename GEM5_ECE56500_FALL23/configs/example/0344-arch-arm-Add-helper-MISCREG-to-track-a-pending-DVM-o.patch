@@ -1,0 +1,63 @@
+From 5b76001b5430db8b241edfc19deac24d8c959bd3 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Mon, 25 Oct 2021 16:43:00 +0100
+Subject: [PATCH 344/757] arch-arm: Add helper MISCREG to track a pending DVM
+ operation
+
+We are introducing the MISCREG_TLBINEEDSYNC misc register to track
+the presence of a pending DVM (TLBI) operation.
+
+It will be used by:
+
+* TLBI instructions: setting up the flag to indicate there
+is a pending DVM message
+
+* DSB instruction: clearing the flag indicating the DVM
+messgage has been syncronized
+
+Change-Id: I7a599ada5a6ac6f86ed2260caa872f085c889ab5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56601
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.cc | 2 ++
+ src/arch/arm/regs/misc.hh | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/src/arch/arm/regs/misc.cc b/src/arch/arm/regs/misc.cc
+index ec655c1..5486bbc 100644
+--- a/src/arch/arm/regs/misc.cc
++++ b/src/arch/arm/regs/misc.cc
+@@ -1432,6 +1432,8 @@ ISA::initializeMiscRegMetadata()
+       .allPrivileges();
+     InitReg(MISCREG_SEV_MAILBOX)
+       .allPrivileges();
++    InitReg(MISCREG_TLBINEEDSYNC)
++      .allPrivileges().exceptUserMode();
+ 
+     // AArch32 CP14 registers
+     InitReg(MISCREG_DBGDIDR)
+diff --git a/src/arch/arm/regs/misc.hh b/src/arch/arm/regs/misc.hh
+index d06684a..9b517a7 100644
+--- a/src/arch/arm/regs/misc.hh
++++ b/src/arch/arm/regs/misc.hh
+@@ -90,6 +90,7 @@ namespace ArmISA
+         MISCREG_PMXEVTYPER_PMCCFILTR,
+         MISCREG_SCTLR_RST,
+         MISCREG_SEV_MAILBOX,
++        MISCREG_TLBINEEDSYNC,
+ 
+         // AArch32 CP14 registers (debug/trace/ThumbEE/Jazelle control)
+         MISCREG_DBGDIDR,
+@@ -1302,6 +1303,7 @@ namespace ArmISA
+         "pmxevtyper_pmccfiltr",
+         "sctlr_rst",
+         "sev_mailbox",
++        "tlbi_needsync",
+ 
+         // AArch32 CP14 registers
+         "dbgdidr",
+-- 
+1.8.3.1
+

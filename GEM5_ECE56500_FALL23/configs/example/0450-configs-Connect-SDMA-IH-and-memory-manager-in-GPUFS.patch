@@ -1,0 +1,117 @@
+From e67e02d6576ed3ab8e5a7db199d187fcf16d17c7 Mon Sep 17 00:00:00 2001
+From: Alexandru Dutu <alexandru.dutu@amd.com>
+Date: Fri, 3 Sep 2021 13:51:44 -0500
+Subject: [PATCH 450/757] configs: Connect SDMA, IH, and memory manager in
+ GPUFS
+
+Add the devices that have been added in previous changesets to the
+config file. Forward MMIO writes to the appropriate device based
+on the MMIO address. Connect doorbells and forward rings to the
+appropriate device based on queue type.
+
+Change-Id: I44110c9a24559936102a246c9658abb84a8ce07e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53065
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py | 24 ++++++++++++++++++++++++
+ src/dev/amdgpu/amdgpu_device.cc        | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index d06cd2c..5b26ce6 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -98,14 +98,38 @@ def makeGpuFSSystem(args):
+     shader.dispatcher = dispatcher
+     shader.gpu_cmd_proc = gpu_cmd_proc
+ 
++    # GPU Interrupt Handler
++    device_ih = AMDGPUInterruptHandler()
++    system.pc.south_bridge.gpu.device_ih = device_ih
++
++    # Setup the SDMA engines
++    sdma0_pt_walker = VegaPagetableWalker()
++    sdma1_pt_walker = VegaPagetableWalker()
++
++    sdma0 = SDMAEngine(walker=sdma0_pt_walker)
++    sdma1 = SDMAEngine(walker=sdma1_pt_walker)
++
++    system.pc.south_bridge.gpu.sdma0 = sdma0
++    system.pc.south_bridge.gpu.sdma1 = sdma1
++
++    # GPU data path
++    gpu_mem_mgr = AMDGPUMemoryManager()
++    system.pc.south_bridge.gpu.memory_manager = gpu_mem_mgr
++
+     # GPU, HSAPP, and GPUCommandProc are DMA devices
+     system._dma_ports.append(gpu_hsapp)
+     system._dma_ports.append(gpu_cmd_proc)
+     system._dma_ports.append(system.pc.south_bridge.gpu)
++    system._dma_ports.append(sdma0)
++    system._dma_ports.append(sdma1)
++    system._dma_ports.append(device_ih)
+ 
+     gpu_hsapp.pio = system.iobus.mem_side_ports
+     gpu_cmd_proc.pio = system.iobus.mem_side_ports
+     system.pc.south_bridge.gpu.pio = system.iobus.mem_side_ports
++    sdma0.pio = system.iobus.mem_side_ports
++    sdma1.pio = system.iobus.mem_side_ports
++    device_ih.pio = system.iobus.mem_side_ports
+ 
+     # Create Ruby system using Ruby.py for now
+     Ruby.create_system(args, True, system, system.iobus,
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 40c314d..5265f51 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -227,6 +227,29 @@ void
+ AMDGPUDevice::writeDoorbell(PacketPtr pkt, Addr offset)
+ {
+     DPRINTF(AMDGPUDevice, "Wrote doorbell %#lx\n", offset);
++
++    if (doorbells.find(offset) != doorbells.end()) {
++        QueueType q_type = doorbells[offset];
++        DPRINTF(AMDGPUDevice, "Doorbell offset %p queue: %d\n",
++                              offset, q_type);
++        switch (q_type) {
++          case SDMAGfx: {
++            SDMAEngine *sdmaEng = getSDMAEngine(offset);
++            sdmaEng->processGfx(pkt->getLE<uint64_t>());
++          } break;
++          case SDMAPage: {
++            SDMAEngine *sdmaEng = getSDMAEngine(offset);
++            sdmaEng->processPage(pkt->getLE<uint64_t>());
++          } break;
++          case InterruptHandler:
++            deviceIH->updateRptr(pkt->getLE<uint32_t>());
++            break;
++          default:
++            panic("Write to unkown queue type!");
++        }
++    } else {
++        warn("Unknown doorbell offset: %lx\n", offset);
++    }
+ }
+ 
+ void
+@@ -238,6 +261,15 @@ AMDGPUDevice::writeMMIO(PacketPtr pkt, Addr offset)
+     DPRINTF(AMDGPUDevice, "Wrote MMIO %#lx\n", offset);
+ 
+     switch (aperture) {
++      /* Write a register to the first System DMA. */
++      case SDMA0_BASE:
++        sdma0->writeMMIO(pkt, aperture_offset >> SDMA_OFFSET_SHIFT);
++        break;
++      /* Write a register to the second System DMA. */
++      case SDMA1_BASE:
++        sdma1->writeMMIO(pkt, aperture_offset >> SDMA_OFFSET_SHIFT);
++        break;
++      /* Write a register to the interrupt handler. */
+       case IH_BASE:
+         deviceIH->writeMMIO(pkt, aperture_offset >> IH_OFFSET_SHIFT);
+         break;
+-- 
+1.8.3.1
+

@@ -1,0 +1,40 @@
+From d7f5b705760199b38a80d89d9b787ba586737e43 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 31 May 2022 15:42:30 -0700
+Subject: [PATCH 667/757] tests: Replace multi-isa test GCN3 compilation with
+ VEGA
+
+As of this commit,
+https://gem5-review.googlesource.com/c/public/gem5/+/59012, all GCN3
+tests were replaced with VEGA. However, this commit,
+https://gem5-review.googlesource.com/c/public/gem5/+/57510, was added
+and used GCN3_X86 instead of Vega.
+
+It is likely this is the root cause of recent Kokoro timeouts as
+compiling both GCN3_X86 and VEGA_X86 is costly. This patch fixes this.
+
+Change-Id: Iee2a08189a73283877f5d599191e9d1b105322ca
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60169
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/multi_isa/test_multi_isa.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/gem5/multi_isa/test_multi_isa.py b/tests/gem5/multi_isa/test_multi_isa.py
+index 4c01072..cf11f84 100644
+--- a/tests/gem5/multi_isa/test_multi_isa.py
++++ b/tests/gem5/multi_isa/test_multi_isa.py
+@@ -31,7 +31,7 @@ isa_map = {
+     "mips": constants.mips_tag,
+     "null": constants.null_tag,
+     "arm": constants.arm_tag,
+-    "x86": constants.gcn3_x86_tag,
++    "x86": constants.vega_x86_tag,
+     "power": constants.power_tag,
+     "riscv": constants.riscv_tag,
+ }
+-- 
+1.8.3.1
+

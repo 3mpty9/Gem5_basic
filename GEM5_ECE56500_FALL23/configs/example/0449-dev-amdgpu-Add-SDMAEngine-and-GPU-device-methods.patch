@@ -1,0 +1,2364 @@
+From f1772d35051106d9f0d2b10939604d075d080c3c Mon Sep 17 00:00:00 2001
+From: Alexandru Dutu <alexandru.dutu@amd.com>
+Date: Thu, 2 Sep 2021 10:33:26 -0500
+Subject: [PATCH 449/757] dev-amdgpu: Add SDMAEngine and GPU device methods
+
+SDMAEngine handles copies to device memory. This commit
+updates sdma_packets.hh style as well. Added several methods needed by
+SDMAEngine to GPU device including GART table, various getters, and
+aperture range checkers. Move the MMIO interface from GPUController to
+SDMAEngine. Create an SDMA MMIO and commands header with only the macros
+we use so that we don't need to check in multi-thousand line header
+files from the linux kernel. Keep SOC15 IH client ID macros as that file
+is small.
+
+Change-Id: I986fede90cc1bc16ee56d4e8598cf9283bde034e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53064
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/AMDGPU.py                  |   16 +-
+ src/dev/amdgpu/SConscript                 |    6 +-
+ src/dev/amdgpu/amdgpu_defines.hh          |    1 -
+ src/dev/amdgpu/amdgpu_device.cc           |   22 +-
+ src/dev/amdgpu/amdgpu_device.hh           |   15 +-
+ src/dev/amdgpu/sdma_commands.hh           |   83 +++
+ src/dev/amdgpu/sdma_engine.cc             | 1159 +++++++++++++++++++++++++++++
+ src/dev/amdgpu/sdma_engine.hh             |  268 +++++++
+ src/dev/amdgpu/sdma_mmio.hh               |   61 ++
+ src/dev/amdgpu/sdma_packets.hh            |  441 +++++++++++
+ src/dev/amdgpu/vega10/soc15_ih_clientid.h |   81 ++
+ 11 files changed, 2145 insertions(+), 8 deletions(-)
+ create mode 100644 src/dev/amdgpu/sdma_commands.hh
+ create mode 100644 src/dev/amdgpu/sdma_engine.cc
+ create mode 100644 src/dev/amdgpu/sdma_engine.hh
+ create mode 100644 src/dev/amdgpu/sdma_mmio.hh
+ create mode 100644 src/dev/amdgpu/sdma_packets.hh
+ create mode 100644 src/dev/amdgpu/vega10/soc15_ih_clientid.h
+
+diff --git a/src/dev/amdgpu/AMDGPU.py b/src/dev/amdgpu/AMDGPU.py
+index be568b1..ffe72a6 100644
+--- a/src/dev/amdgpu/AMDGPU.py
++++ b/src/dev/amdgpu/AMDGPU.py
+@@ -31,7 +31,7 @@ from m5.params import *
+ from m5.proxy import *
+ from m5.objects.PciDevice import PciDevice
+ from m5.objects.PciDevice import PciMemBar, PciMemUpperBar, PciLegacyIoBar
+-from m5.objects.Device import DmaDevice
++from m5.objects.Device import DmaDevice, DmaVirtDevice
+ from m5.objects.ClockedObject import ClockedObject
+ 
+ # PCI device model for an AMD Vega 10 based GPU. The PCI codes and BARs
+@@ -75,6 +75,12 @@ class AMDGPUDevice(PciDevice):
+     checkpoint_before_mmios = Param.Bool(False, "Take a checkpoint before the"
+                                                 " device begins sending MMIOs")
+ 
++    # Specific to Vega10: Vega10 has two SDMA engines these do not have any
++    # assigned function and are referenced by ID so they are given the generic
++    # names sdma0, sdma1, ... sdmaN.
++    sdma0 = Param.SDMAEngine("SDMA Engine 0")
++    sdma1 = Param.SDMAEngine("SDMA Engine 1")
++
+     # The cp is needed here to handle certain packets the device may receive.
+     # The config script should not create a new cp here but rather assign the
+     # same cp that is assigned to the Shader SimObject.
+@@ -83,6 +89,14 @@ class AMDGPUDevice(PciDevice):
+     memories = VectorParam.AbstractMemory([], "All memories in the device")
+     device_ih = Param.AMDGPUInterruptHandler("GPU Interrupt handler")
+ 
++class SDMAEngine(DmaVirtDevice):
++    type = 'SDMAEngine'
++    cxx_header = "dev/amdgpu/sdma_engine.hh"
++    cxx_class = 'gem5::SDMAEngine'
++
++    gpu_device = Param.AMDGPUDevice(NULL, 'GPU Controller')
++    walker = Param.VegaPagetableWalker("Page table walker")
++
+ class AMDGPUMemoryManager(ClockedObject):
+     type = 'AMDGPUMemoryManager'
+     cxx_header = 'dev/amdgpu/memory_manager.hh'
+diff --git a/src/dev/amdgpu/SConscript b/src/dev/amdgpu/SConscript
+index faae85a..2177bb5 100644
+--- a/src/dev/amdgpu/SConscript
++++ b/src/dev/amdgpu/SConscript
+@@ -34,15 +34,17 @@ if not env['BUILD_GPU']:
+ 
+ # Controllers
+ SimObject('AMDGPU.py', sim_objects=['AMDGPUDevice', 'AMDGPUInterruptHandler',
+-                                    'AMDGPUMemoryManager', 'AMDGPUSystemHub'],
+-                                    tags='x86 isa')
++                                    'AMDGPUMemoryManager', 'AMDGPUSystemHub',
++                                    'SDMAEngine'], tags='x86 isa')
+ 
+ Source('amdgpu_device.cc', tags='x86 isa')
+ Source('amdgpu_vm.cc', tags='x86 isa')
+ Source('interrupt_handler.cc', tags='x86 isa')
+ Source('memory_manager.cc', tags='x86 isa')
+ Source('mmio_reader.cc', tags='x86 isa')
++Source('sdma_engine.cc', tags='x86 isa')
+ Source('system_hub.cc', tags='x86 isa')
+ 
+ DebugFlag('AMDGPUDevice', tags='x86 isa')
+ DebugFlag('AMDGPUMem', tags='x86 isa')
++DebugFlag('SDMAEngine', tags='x86 isa')
+diff --git a/src/dev/amdgpu/amdgpu_defines.hh b/src/dev/amdgpu/amdgpu_defines.hh
+index 641218b..bc6377f 100644
+--- a/src/dev/amdgpu/amdgpu_defines.hh
++++ b/src/dev/amdgpu/amdgpu_defines.hh
+@@ -94,4 +94,3 @@ static constexpr uint32_t NBIO_SIZE = 0x4280;
+ } // namespace gem5
+ 
+ #endif // __DEV_AMDGPU_AMDGPU_DEFINES_HH__
+-
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 7aaf74c..40c314d 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -36,6 +36,7 @@
+ #include "debug/AMDGPUDevice.hh"
+ #include "dev/amdgpu/amdgpu_vm.hh"
+ #include "dev/amdgpu/interrupt_handler.hh"
++#include "dev/amdgpu/sdma_engine.hh"
+ #include "mem/packet.hh"
+ #include "mem/packet_access.hh"
+ #include "params/AMDGPUDevice.hh"
+@@ -46,7 +47,9 @@ namespace gem5
+ {
+ 
+ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+-    : PciDevice(p), checkpoint_before_mmios(p.checkpoint_before_mmios),
++    : PciDevice(p), gpuMemMgr(p.memory_manager), deviceIH(p.device_ih),
++      sdma0(p.sdma0), sdma1(p.sdma1),
++      checkpoint_before_mmios(p.checkpoint_before_mmios),
+       init_interrupt_count(0)
+ {
+     // Loading the rom binary dumped from hardware.
+@@ -65,6 +68,10 @@ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+         mmioReader.readMMIOTrace(p.trace_file);
+     }
+ 
++    sdma0->setGPUDevice(this);
++    sdma0->setId(0);
++    sdma1->setGPUDevice(this);
++    sdma1->setId(1);
+     deviceIH->setGPUDevice(this);
+ }
+ 
+@@ -220,7 +227,6 @@ void
+ AMDGPUDevice::writeDoorbell(PacketPtr pkt, Addr offset)
+ {
+     DPRINTF(AMDGPUDevice, "Wrote doorbell %#lx\n", offset);
+-    mmioReader.writeFromTrace(pkt, DOORBELL_BAR, offset);
+ }
+ 
+ void
+@@ -316,6 +322,18 @@ AMDGPUDevice::setDoorbellType(uint32_t offset, QueueType qt)
+ }
+ 
+ void
++AMDGPUDevice::setSDMAEngine(Addr offset, SDMAEngine *eng)
++{
++    sdmaEngs[offset] = eng;
++}
++
++SDMAEngine*
++AMDGPUDevice::getSDMAEngine(Addr offset)
++{
++    return sdmaEngs[offset];
++}
++
++void
+ AMDGPUDevice::intrPost()
+ {
+     PciDevice::intrPost();
+diff --git a/src/dev/amdgpu/amdgpu_device.hh b/src/dev/amdgpu/amdgpu_device.hh
+index 7e9bcc9..29b633a 100644
+--- a/src/dev/amdgpu/amdgpu_device.hh
++++ b/src/dev/amdgpu/amdgpu_device.hh
+@@ -47,6 +47,7 @@ namespace gem5
+ {
+ 
+ class AMDGPUInterruptHandler;
++class SDMAEngine;
+ 
+ /**
+  * Device model for an AMD GPU. This models the interface between the PCI bus
+@@ -102,13 +103,15 @@ class AMDGPUDevice : public PciDevice
+      */
+     AMDMMIOReader mmioReader;
+ 
+-    AMDGPUMemoryManager *gpuMemMgr;
+-
+     /**
+      * Blocks of the GPU
+      */
++    AMDGPUMemoryManager *gpuMemMgr;
+     AMDGPUInterruptHandler *deviceIH;
+     AMDGPUVM gpuvm;
++    SDMAEngine *sdma0;
++    SDMAEngine *sdma1;
++    std::unordered_map<uint32_t, SDMAEngine *> sdmaEngs;
+ 
+     /**
+      * Initial checkpoint support variables.
+@@ -121,6 +124,11 @@ class AMDGPUDevice : public PciDevice
+     uint32_t gartBase = 0x0;
+     uint32_t gartSize = 0x0;
+ 
++    // MMHUB aperture. These addresses are set by the GPU. For now we wait
++    // until the driver reads them before setting them.
++    uint64_t mmhubBase = 0x0;
++    uint64_t mmhubTop = 0x0;
++
+   public:
+     AMDGPUDevice(const AMDGPUDeviceParams &p);
+ 
+@@ -147,12 +155,15 @@ class AMDGPUDevice : public PciDevice
+      * Get handles to GPU blocks.
+      */
+     AMDGPUInterruptHandler* getIH() { return deviceIH; }
++    SDMAEngine* getSDMAEngine(Addr offset);
+     AMDGPUVM &getVM() { return gpuvm; }
++    AMDGPUMemoryManager* getMemMgr() { return gpuMemMgr; }
+ 
+     /**
+      * Set handles to GPU blocks.
+      */
+     void setDoorbellType(uint32_t offset, QueueType qt);
++    void setSDMAEngine(Addr offset, SDMAEngine *eng);
+ 
+     /**
+      * Methods related to translations and system/device memory.
+diff --git a/src/dev/amdgpu/sdma_commands.hh b/src/dev/amdgpu/sdma_commands.hh
+new file mode 100644
+index 0000000..c5eebf9
+--- /dev/null
++++ b/src/dev/amdgpu/sdma_commands.hh
+@@ -0,0 +1,83 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_AMDGPU_SDMA_COMMANDS_HH__
++#define __DEV_AMDGPU_SDMA_COMMANDS_HH__
++
++/**
++ * Commands for the SDMA engine. The header files can be found here:
++ *
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ *      drivers/gpu/drm/amd/amdgpu/vega10_sdma_pkt_open.h
++ */
++#define SDMA_OP_NOP  0
++#define SDMA_OP_COPY  1
++#define SDMA_OP_WRITE  2
++#define SDMA_OP_INDIRECT  4
++#define SDMA_OP_FENCE  5
++#define SDMA_OP_TRAP  6
++#define SDMA_OP_SEM  7
++#define SDMA_OP_POLL_REGMEM  8
++#define SDMA_OP_COND_EXE  9
++#define SDMA_OP_ATOMIC  10
++#define SDMA_OP_CONST_FILL  11
++#define SDMA_OP_PTEPDE  12
++#define SDMA_OP_TIMESTAMP  13
++#define SDMA_OP_SRBM_WRITE  14
++#define SDMA_OP_PRE_EXE  15
++#define SDMA_OP_DUMMY_TRAP  16
++#define SDMA_SUBOP_TIMESTAMP_SET  0
++#define SDMA_SUBOP_TIMESTAMP_GET  1
++#define SDMA_SUBOP_TIMESTAMP_GET_GLOBAL  2
++#define SDMA_SUBOP_COPY_LINEAR  0
++#define SDMA_SUBOP_COPY_LINEAR_SUB_WIND  4
++#define SDMA_SUBOP_COPY_TILED  1
++#define SDMA_SUBOP_COPY_TILED_SUB_WIND  5
++#define SDMA_SUBOP_COPY_T2T_SUB_WIND  6
++#define SDMA_SUBOP_COPY_SOA  3
++#define SDMA_SUBOP_COPY_DIRTY_PAGE  7
++#define SDMA_SUBOP_COPY_LINEAR_PHY  8
++#define SDMA_SUBOP_WRITE_LINEAR  0
++#define SDMA_SUBOP_WRITE_TILED  1
++#define SDMA_SUBOP_PTEPDE_GEN  0
++#define SDMA_SUBOP_PTEPDE_COPY  1
++#define SDMA_SUBOP_PTEPDE_RMW  2
++#define SDMA_SUBOP_PTEPDE_COPY_BACKWARDS  3
++#define SDMA_SUBOP_DATA_FILL_MULTI  1
++#define SDMA_SUBOP_POLL_REG_WRITE_MEM  1
++#define SDMA_SUBOP_POLL_DBIT_WRITE_MEM  2
++#define SDMA_SUBOP_POLL_MEM_VERIFY  3
++#define HEADER_AGENT_DISPATCH  4
++#define HEADER_BARRIER  5
++#define SDMA_OP_AQL_COPY  0
++#define SDMA_OP_AQL_BARRIER_OR  0
++
++#endif // __DEV_AMDGPU_SDMA_COMMANDS_HH__
+diff --git a/src/dev/amdgpu/sdma_engine.cc b/src/dev/amdgpu/sdma_engine.cc
+new file mode 100644
+index 0000000..1226c96
+--- /dev/null
++++ b/src/dev/amdgpu/sdma_engine.cc
+@@ -0,0 +1,1159 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/amdgpu/sdma_engine.hh"
++
++#include "arch/amdgpu/vega/pagetable_walker.hh"
++#include "arch/generic/mmu.hh"
++#include "dev/amdgpu/interrupt_handler.hh"
++#include "dev/amdgpu/sdma_commands.hh"
++#include "dev/amdgpu/sdma_mmio.hh"
++#include "dev/amdgpu/vega10/soc15_ih_clientid.h"
++#include "mem/packet.hh"
++#include "mem/packet_access.hh"
++#include "params/SDMAEngine.hh"
++
++namespace gem5
++{
++
++SDMAEngine::SDMAEngine(const SDMAEngineParams &p)
++    : DmaVirtDevice(p), id(0), gfxBase(0), gfxRptr(0),
++      gfxDoorbell(0), gfxDoorbellOffset(0), gfxWptr(0), pageBase(0),
++      pageRptr(0), pageDoorbell(0), pageDoorbellOffset(0),
++      pageWptr(0), gpuDevice(nullptr), walker(p.walker)
++{
++    gfx.ib(&gfxIb);
++    gfxIb.parent(&gfx);
++    gfx.valid(true);
++    gfxIb.valid(true);
++
++    page.ib(&pageIb);
++    pageIb.parent(&page);
++    page.valid(true);
++    pageIb.valid(true);
++
++    rlc0.ib(&rlc0Ib);
++    rlc0Ib.parent(&rlc0);
++
++    rlc1.ib(&rlc1Ib);
++    rlc1Ib.parent(&rlc1);
++}
++
++void
++SDMAEngine::setGPUDevice(AMDGPUDevice *gpu_device)
++{
++    gpuDevice = gpu_device;
++    walker->setDevRequestor(gpuDevice->vramRequestorId());
++}
++
++int
++SDMAEngine::getIHClientId()
++{
++    switch (id) {
++      case 0:
++        return SOC15_IH_CLIENTID_SDMA0;
++      case 1:
++        return SOC15_IH_CLIENTID_SDMA1;
++      default:
++        panic("Unknown SDMA id");
++    }
++}
++
++Addr
++SDMAEngine::getGARTAddr(Addr addr) const
++{
++    if (!gpuDevice->getVM().inAGP(addr)) {
++        Addr low_bits = bits(addr, 11, 0);
++        addr = (((addr >> 12) << 3) << 12) | low_bits;
++    }
++    return addr;
++}
++
++/**
++ * GPUController will perform DMA operations on VAs, and because
++ * page faults are not currently supported for GPUController, we
++ * must be able to find the pages mapped for the process.
++ */
++TranslationGenPtr
++SDMAEngine::translate(Addr vaddr, Addr size)
++{
++    if (gpuDevice->getVM().inAGP(vaddr)) {
++        // Use AGP translation gen
++        return TranslationGenPtr(
++            new AMDGPUVM::AGPTranslationGen(&gpuDevice->getVM(), vaddr, size));
++    } else if (gpuDevice->getVM().inMMHUB(vaddr)) {
++        // Use MMHUB translation gen
++        return TranslationGenPtr(new AMDGPUVM::MMHUBTranslationGen(
++                                            &gpuDevice->getVM(), vaddr, size));
++    }
++
++    // Assume GART otherwise as this is the only other translation aperture
++    // available to the SDMA engine processor.
++    return TranslationGenPtr(
++        new AMDGPUVM::GARTTranslationGen(&gpuDevice->getVM(), vaddr, size));
++}
++
++void
++SDMAEngine::registerRLCQueue(Addr doorbell, Addr rb_base)
++{
++    // Get first free RLC
++    if (!rlc0.valid()) {
++        DPRINTF(SDMAEngine, "Doorbell %lx mapped to RLC0\n", doorbell);
++        rlcMap.insert(std::make_pair(doorbell, 0));
++        rlc0.valid(true);
++        rlc0.base(rb_base);
++        rlc0.rptr(0);
++        rlc0.wptr(0);
++        rlc0.processing(false);
++        // TODO: size - I think pull from MQD 2^rb_cntrl[6:1]-1
++        rlc0.size(1024*1024);
++    } else if (!rlc1.valid()) {
++        DPRINTF(SDMAEngine, "Doorbell %lx mapped to RLC1\n", doorbell);
++        rlcMap.insert(std::make_pair(doorbell, 1));
++        rlc1.valid(true);
++        rlc1.base(rb_base);
++        rlc1.rptr(1);
++        rlc1.wptr(1);
++        rlc1.processing(false);
++        // TODO: size - I think pull from MQD 2^rb_cntrl[6:1]-1
++        rlc1.size(1024*1024);
++    } else {
++        panic("No free RLCs. Check they are properly unmapped.");
++    }
++}
++
++void
++SDMAEngine::unregisterRLCQueue(Addr doorbell)
++{
++    assert(rlcMap.find(doorbell) != rlcMap.end());
++
++    if (rlcMap[doorbell] == 0) {
++        rlc0.valid(false);
++        rlcMap.erase(doorbell);
++    } else if (rlcMap[doorbell] == 1) {
++        rlc1.valid(false);
++        rlcMap.erase(doorbell);
++    } else {
++        panic("Cannot unregister unknown RLC queue: %d\n", rlcMap[doorbell]);
++    }
++}
++
++/* Start decoding packets from the Gfx queue. */
++void
++SDMAEngine::processGfx(Addr wptrOffset)
++{
++    gfx.setWptr(wptrOffset);
++    if (!gfx.processing()) {
++        gfx.processing(true);
++        decodeNext(&gfx);
++    }
++}
++
++/* Start decoding packets from the Page queue. */
++void
++SDMAEngine::processPage(Addr wptrOffset)
++{
++    page.setWptr(wptrOffset);
++    if (!page.processing()) {
++        page.processing(true);
++        decodeNext(&page);
++    }
++}
++
++/* Process RLC queue at given doorbell. */
++void
++SDMAEngine::processRLC(Addr doorbellOffset, Addr wptrOffset)
++{
++    assert(rlcMap.find(doorbellOffset) != rlcMap.end());
++
++    if (rlcMap[doorbellOffset] == 0) {
++        processRLC0(wptrOffset);
++    } else if (rlcMap[doorbellOffset] == 1) {
++        processRLC1(wptrOffset);
++    } else {
++        panic("Cannot process unknown RLC queue: %d\n",
++               rlcMap[doorbellOffset]);
++    }
++}
++
++/* Start decoding packets from the RLC0 queue. */
++void
++SDMAEngine::processRLC0(Addr wptrOffset)
++{
++    assert(rlc0.valid());
++
++    rlc0.setWptr(wptrOffset);
++    if (!rlc0.processing()) {
++        cur_vmid = 1;
++        rlc0.processing(true);
++        decodeNext(&rlc0);
++    }
++}
++
++/* Start decoding packets from the RLC1 queue. */
++void
++SDMAEngine::processRLC1(Addr wptrOffset)
++{
++    assert(rlc1.valid());
++
++    rlc1.setWptr(wptrOffset);
++    if (!rlc1.processing()) {
++        cur_vmid = 1;
++        rlc1.processing(true);
++        decodeNext(&rlc1);
++    }
++}
++
++/* Decoding next packet in the queue. */
++void
++SDMAEngine::decodeNext(SDMAQueue *q)
++{
++    DPRINTF(SDMAEngine, "SDMA decode rptr %p wptr %p\n", q->rptr(), q->wptr());
++
++    if (q->rptr() != q->wptr()) {
++        // We are using lambda functions passed to the DmaVirtCallback objects
++        // which will call the actuall callback method (e.g., decodeHeader).
++        // The dmaBuffer member of the DmaVirtCallback is passed to the lambda
++        // function as header in this case.
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ] (const uint32_t &header)
++                { decodeHeader(q, header); });
++        dmaReadVirt(q->rptr(), sizeof(uint32_t), cb, &cb->dmaBuffer);
++    } else {
++        q->processing(false);
++        if (q->parent()) {
++            DPRINTF(SDMAEngine, "SDMA switching queues\n");
++            decodeNext(q->parent());
++        }
++        cur_vmid = 0;
++    }
++}
++
++/* Decoding the header of a packet. */
++void
++SDMAEngine::decodeHeader(SDMAQueue *q, uint32_t header)
++{
++    q->incRptr(sizeof(header));
++    int opcode = bits(header, 7, 0);
++    int sub_opcode = bits(header, 15, 8);
++
++    DmaVirtCallback<uint64_t> *cb = nullptr;
++    void *dmaBuffer = nullptr;
++
++    DPRINTF(SDMAEngine, "SDMA opcode %p sub-opcode %p\n", opcode, sub_opcode);
++
++    switch(opcode) {
++      case SDMA_OP_NOP: {
++        uint32_t NOP_count = (header >> 16) & 0x3FFF;
++        DPRINTF(SDMAEngine, "SDMA NOP packet with count %d\n", NOP_count);
++        if (NOP_count > 0) q->incRptr(NOP_count * 4);
++        decodeNext(q);
++        } break;
++      case SDMA_OP_COPY: {
++        DPRINTF(SDMAEngine, "SDMA Copy packet\n");
++        switch (sub_opcode) {
++          case SDMA_SUBOP_COPY_LINEAR: {
++            dmaBuffer = new sdmaCopy();
++            cb = new DmaVirtCallback<uint64_t>(
++                [ = ] (const uint64_t &)
++                    { copy(q, (sdmaCopy *)dmaBuffer); });
++            dmaReadVirt(q->rptr(), sizeof(sdmaCopy), cb, dmaBuffer);
++            } break;
++          case SDMA_SUBOP_COPY_LINEAR_SUB_WIND: {
++            panic("SDMA_SUBOP_COPY_LINEAR_SUB_WIND not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_TILED: {
++            panic("SDMA_SUBOP_COPY_TILED not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_TILED_SUB_WIND: {
++            panic("SDMA_SUBOP_COPY_TILED_SUB_WIND not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_T2T_SUB_WIND: {
++            panic("SDMA_SUBOP_COPY_T2T_SUB_WIND not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_SOA: {
++            panic("SDMA_SUBOP_COPY_SOA not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_DIRTY_PAGE: {
++            panic("SDMA_SUBOP_COPY_DIRTY_PAGE not implemented");
++            } break;
++          case SDMA_SUBOP_COPY_LINEAR_PHY: {
++            panic("SDMA_SUBOP_COPY_LINEAR_PHY  not implemented");
++            } break;
++          default: {
++            panic("SDMA unknown copy sub-opcode.");
++            } break;
++        }
++        } break;
++      case SDMA_OP_WRITE: {
++        DPRINTF(SDMAEngine, "SDMA Write packet\n");
++        switch (sub_opcode) {
++          case SDMA_SUBOP_WRITE_LINEAR: {
++            dmaBuffer = new sdmaWrite();
++            cb = new DmaVirtCallback<uint64_t>(
++                [ = ] (const uint64_t &)
++                    { write(q, (sdmaWrite *)dmaBuffer); });
++            dmaReadVirt(q->rptr(), sizeof(sdmaWrite), cb, dmaBuffer);
++            } break;
++          case SDMA_SUBOP_WRITE_TILED: {
++            panic("SDMA_SUBOP_WRITE_TILED not implemented.\n");
++            } break;
++          default:
++            break;
++        }
++        } break;
++      case SDMA_OP_INDIRECT: {
++        DPRINTF(SDMAEngine, "SDMA IndirectBuffer packet\n");
++        dmaBuffer = new sdmaIndirectBuffer();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { indirectBuffer(q, (sdmaIndirectBuffer *)dmaBuffer); });
++        dmaReadVirt(q->rptr(), sizeof(sdmaIndirectBuffer), cb, dmaBuffer);
++        } break;
++      case SDMA_OP_FENCE: {
++        DPRINTF(SDMAEngine, "SDMA Fence packet\n");
++        dmaBuffer = new sdmaFence();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { fence(q, (sdmaFence *)dmaBuffer); });
++        dmaReadVirt(q->rptr(), sizeof(sdmaFence), cb, dmaBuffer);
++        } break;
++      case SDMA_OP_TRAP: {
++        DPRINTF(SDMAEngine, "SDMA Trap packet\n");
++        dmaBuffer = new sdmaTrap();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { trap(q, (sdmaTrap *)dmaBuffer); });
++        dmaReadVirt(q->rptr(), sizeof(sdmaTrap), cb, dmaBuffer);
++        } break;
++      case SDMA_OP_SEM: {
++        q->incRptr(sizeof(sdmaSemaphore));
++        warn("SDMA_OP_SEM not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_POLL_REGMEM: {
++        DPRINTF(SDMAEngine, "SDMA PollRegMem packet\n");
++        sdmaPollRegMemHeader *h = new sdmaPollRegMemHeader();
++        *h = *(sdmaPollRegMemHeader *)&header;
++        dmaBuffer = new sdmaPollRegMem();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { pollRegMem(q, h, (sdmaPollRegMem *)dmaBuffer); });
++        dmaReadVirt(q->rptr(), sizeof(sdmaPollRegMem), cb, dmaBuffer);
++        switch (sub_opcode) {
++          case SDMA_SUBOP_POLL_REG_WRITE_MEM: {
++            panic("SDMA_SUBOP_POLL_REG_WRITE_MEM not implemented");
++            } break;
++          case SDMA_SUBOP_POLL_DBIT_WRITE_MEM: {
++            panic("SDMA_SUBOP_POLL_DBIT_WRITE_MEM not implemented");
++            } break;
++          case SDMA_SUBOP_POLL_MEM_VERIFY: {
++            panic("SDMA_SUBOP_POLL_MEM_VERIFY not implemented");
++            } break;
++          default:
++            break;
++        }
++        } break;
++      case SDMA_OP_COND_EXE: {
++        q->incRptr(sizeof(sdmaCondExec));
++        warn("SDMA_OP_SEM not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_ATOMIC: {
++        q->incRptr(sizeof(sdmaAtomic));
++        warn("SDMA_OP_ATOMIC not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_CONST_FILL: {
++        q->incRptr(sizeof(sdmaConstFill));
++        warn("SDMA_OP_CONST_FILL not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_PTEPDE: {
++        DPRINTF(SDMAEngine, "SDMA PTEPDE packet\n");
++        switch (sub_opcode) {
++          case SDMA_SUBOP_PTEPDE_GEN:
++            DPRINTF(SDMAEngine, "SDMA PTEPDE_GEN sub-opcode\n");
++            dmaBuffer = new sdmaPtePde();
++            cb = new DmaVirtCallback<uint64_t>(
++                [ = ] (const uint64_t &)
++                    { ptePde(q, (sdmaPtePde *)dmaBuffer); });
++            dmaReadVirt(q->rptr(), sizeof(sdmaPtePde), cb, dmaBuffer);
++            break;
++          case SDMA_SUBOP_PTEPDE_COPY:
++            panic("SDMA_SUBOP_PTEPDE_COPY not implemented");
++            break;
++          case SDMA_SUBOP_PTEPDE_COPY_BACKWARDS:
++            panic("SDMA_SUBOP_PTEPDE_COPY not implemented");
++            break;
++          case SDMA_SUBOP_PTEPDE_RMW: {
++            panic("SDMA_SUBOP_PTEPDE_RMW not implemented");
++            } break;
++          default:
++            DPRINTF(SDMAEngine, "Unsupported PTEPDE sub-opcode %d\n",
++                    sub_opcode);
++            decodeNext(q);
++          break;
++        }
++        } break;
++      case SDMA_OP_TIMESTAMP: {
++        q->incRptr(sizeof(sdmaTimestamp));
++        switch (sub_opcode) {
++          case SDMA_SUBOP_TIMESTAMP_SET: {
++            } break;
++          case SDMA_SUBOP_TIMESTAMP_GET: {
++            } break;
++          case SDMA_SUBOP_TIMESTAMP_GET_GLOBAL: {
++            } break;
++          default:
++            break;
++        }
++        warn("SDMA_OP_TIMESTAMP not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_SRBM_WRITE: {
++        DPRINTF(SDMAEngine, "SDMA SRBMWrite packet\n");
++        sdmaSRBMWriteHeader *header = new sdmaSRBMWriteHeader();
++        *header = *(sdmaSRBMWriteHeader *)&header;
++        dmaBuffer = new sdmaSRBMWrite();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { srbmWrite(q, header, (sdmaSRBMWrite *)dmaBuffer); });
++        dmaReadVirt(q->rptr(), sizeof(sdmaSRBMWrite), cb, dmaBuffer);
++        } break;
++      case SDMA_OP_PRE_EXE: {
++        q->incRptr(sizeof(sdmaPredExec));
++        warn("SDMA_OP_PRE_EXE not implemented");
++        decodeNext(q);
++        } break;
++      case SDMA_OP_DUMMY_TRAP: {
++        q->incRptr(sizeof(sdmaDummyTrap));
++        warn("SDMA_OP_DUMMY_TRAP not implemented");
++        decodeNext(q);
++        } break;
++      default: {
++        panic("Invalid SDMA packet.\n");
++        } break;
++    }
++}
++
++/* Implements a write packet. */
++void
++SDMAEngine::write(SDMAQueue *q, sdmaWrite *pkt)
++{
++    q->incRptr(sizeof(sdmaWrite));
++    // count represents the number of dwords - 1 to write
++    pkt->count++;
++    DPRINTF(SDMAEngine, "Write %d dwords to %lx\n", pkt->count, pkt->dest);
++
++    // first we have to read needed data from the SDMA queue
++    uint32_t *dmaBuffer = new uint32_t[pkt->count];
++    auto cb = new DmaVirtCallback<uint64_t>(
++        [ = ] (const uint64_t &) { writeReadData(q, pkt, dmaBuffer); });
++    dmaReadVirt(q->rptr(), sizeof(uint32_t) * pkt->count, cb,
++                (void *)dmaBuffer);
++}
++
++/* Completion of data reading for a write packet. */
++void
++SDMAEngine::writeReadData(SDMAQueue *q, sdmaWrite *pkt, uint32_t *dmaBuffer)
++{
++    int bufferSize = sizeof(uint32_t) * pkt->count;
++    q->incRptr(bufferSize);
++
++    DPRINTF(SDMAEngine, "Write packet data:\n");
++    for (int i = 0; i < pkt->count; ++i) {
++        DPRINTF(SDMAEngine, "%08x\n", dmaBuffer[i]);
++    }
++
++    // lastly we write read data to the destination address
++    if (gpuDevice->getVM().inMMHUB(pkt->dest)) {
++        Addr mmhubAddr = pkt->dest - gpuDevice->getVM().getMMHUBBase();
++        gpuDevice->getMemMgr()->writeRequest(mmhubAddr, (uint8_t *)dmaBuffer,
++                                           bufferSize);
++
++        delete []dmaBuffer;
++        delete pkt;
++        decodeNext(q);
++    } else {
++        // TODO: getGARTAddr?
++        pkt->dest = getGARTAddr(pkt->dest);
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ] (const uint64_t &) { writeDone(q, pkt, dmaBuffer); });
++        dmaWriteVirt(pkt->dest, bufferSize, cb, (void *)dmaBuffer);
++    }
++}
++
++/* Completion of a write packet. */
++void
++SDMAEngine::writeDone(SDMAQueue *q, sdmaWrite *pkt, uint32_t *dmaBuffer)
++{
++    DPRINTF(SDMAEngine, "Write packet completed to %p, %d dwords\n",
++            pkt->dest, pkt->count);
++    delete []dmaBuffer;
++    delete pkt;
++    decodeNext(q);
++}
++
++/* Implements a copy packet. */
++void
++SDMAEngine::copy(SDMAQueue *q, sdmaCopy *pkt)
++{
++    DPRINTF(SDMAEngine, "Copy src: %lx -> dest: %lx count %d\n",
++            pkt->source, pkt->dest, pkt->count);
++    q->incRptr(sizeof(sdmaCopy));
++    // count represents the number of bytes - 1 to be copied
++    pkt->count++;
++    DPRINTF(SDMAEngine, "Getting GART addr for %lx\n", pkt->source);
++    pkt->source = getGARTAddr(pkt->source);
++    DPRINTF(SDMAEngine, "GART addr %lx\n", pkt->source);
++
++    // first we have to read needed data from the source address
++    uint8_t *dmaBuffer = new uint8_t[pkt->count];
++    auto cb = new DmaVirtCallback<uint64_t>(
++        [ = ] (const uint64_t &) { copyReadData(q, pkt, dmaBuffer); });
++    dmaReadVirt(pkt->source, pkt->count, cb, (void *)dmaBuffer);
++}
++
++/* Completion of data reading for a copy packet. */
++void
++SDMAEngine::copyReadData(SDMAQueue *q, sdmaCopy *pkt, uint8_t *dmaBuffer)
++{
++    // lastly we write read data to the destination address
++    DPRINTF(SDMAEngine, "Copy packet data:\n");
++    uint64_t *dmaBuffer64 = new uint64_t[pkt->count/8];
++    memcpy(dmaBuffer64, dmaBuffer, pkt->count);
++    for (int i = 0; i < pkt->count/8; ++i) {
++        DPRINTF(SDMAEngine, "%016lx\n", dmaBuffer64[i]);
++    }
++    delete [] dmaBuffer64;
++
++    // Aperture is unknown until translating. Do a dummy translation.
++    auto tgen = translate(pkt->dest, 64);
++    auto addr_range = *(tgen->begin());
++    Addr tmp_addr = addr_range.paddr;
++    DPRINTF(SDMAEngine, "Tmp addr %#lx -> %#lx\n", pkt->dest, tmp_addr);
++
++    // Writing generated data to the destination address.
++    if ((gpuDevice->getVM().inMMHUB(pkt->dest) && cur_vmid == 0) ||
++        (gpuDevice->getVM().inMMHUB(tmp_addr) && cur_vmid != 0)) {
++        Addr mmhubAddr = 0;
++        if (cur_vmid == 0) {
++            mmhubAddr = pkt->dest - gpuDevice->getVM().getMMHUBBase();
++        } else {
++            mmhubAddr = tmp_addr - gpuDevice->getVM().getMMHUBBase();
++        }
++        DPRINTF(SDMAEngine, "Copying to MMHUB address %#lx\n", mmhubAddr);
++        gpuDevice->getMemMgr()->writeRequest(mmhubAddr, dmaBuffer, pkt->count);
++
++        delete pkt;
++        decodeNext(q);
++    } else {
++        auto cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &) { copyDone(q, pkt, dmaBuffer); });
++        dmaWriteVirt(pkt->dest, pkt->count, cb, (void *)dmaBuffer);
++    }
++}
++
++/* Completion of a copy packet. */
++void
++SDMAEngine::copyDone(SDMAQueue *q, sdmaCopy *pkt, uint8_t *dmaBuffer)
++{
++    DPRINTF(SDMAEngine, "Copy completed to %p, %d dwords\n",
++            pkt->dest, pkt->count);
++    delete []dmaBuffer;
++    delete pkt;
++    decodeNext(q);
++}
++
++/* Implements an indirect buffer packet. */
++void
++SDMAEngine::indirectBuffer(SDMAQueue *q, sdmaIndirectBuffer *pkt)
++{
++    q->ib()->base(getGARTAddr(pkt->base));
++    q->ib()->rptr(0);
++    q->ib()->size(pkt->size * sizeof(uint32_t) + 1);
++    q->ib()->setWptr(pkt->size * sizeof(uint32_t));
++
++    q->incRptr(sizeof(sdmaIndirectBuffer));
++
++    delete pkt;
++    decodeNext(q->ib());
++}
++
++/* Implements a fence packet. */
++void
++SDMAEngine::fence(SDMAQueue *q, sdmaFence *pkt)
++{
++    q->incRptr(sizeof(sdmaFence));
++    pkt->dest = getGARTAddr(pkt->dest);
++
++    // Writing the data from the fence packet to the destination address.
++    auto cb = new DmaVirtCallback<uint32_t>(
++        [ = ] (const uint32_t &) { fenceDone(q, pkt); }, pkt->data);
++    dmaWriteVirt(pkt->dest, sizeof(pkt->data), cb, &cb->dmaBuffer);
++}
++
++/* Completion of a fence packet. */
++void
++SDMAEngine::fenceDone(SDMAQueue *q, sdmaFence *pkt)
++{
++    DPRINTF(SDMAEngine, "Fence completed to %p, data 0x%x\n",
++            pkt->dest, pkt->data);
++    delete pkt;
++    decodeNext(q);
++}
++
++/* Implements a trap packet. */
++void
++SDMAEngine::trap(SDMAQueue *q, sdmaTrap *pkt)
++{
++    q->incRptr(sizeof(sdmaTrap));
++
++    DPRINTF(SDMAEngine, "Trap contextId: %p rbRptr: %p ibOffset: %p\n",
++            pkt->contextId, pkt->rbRptr, pkt->ibOffset);
++
++    gpuDevice->getIH()->prepareInterruptCookie(pkt->contextId, 0,
++            getIHClientId(), TRAP_ID);
++    gpuDevice->getIH()->submitInterruptCookie();
++
++    delete pkt;
++    decodeNext(q);
++}
++
++/* Implements a write SRBM packet. */
++void
++SDMAEngine::srbmWrite(SDMAQueue *q, sdmaSRBMWriteHeader *header,
++                      sdmaSRBMWrite *pkt)
++{
++    q->incRptr(sizeof(sdmaSRBMWrite));
++
++    [[maybe_unused]] uint32_t reg_addr = pkt->regAddr << 2;
++    uint32_t reg_mask = 0x00000000;
++
++    if (header->byteEnable & 0x8) reg_mask |= 0xFF000000;
++    if (header->byteEnable & 0x4) reg_mask |= 0x00FF0000;
++    if (header->byteEnable & 0x2) reg_mask |= 0x0000FF00;
++    if (header->byteEnable & 0x1) reg_mask |= 0x000000FF;
++    pkt->data &= reg_mask;
++
++    DPRINTF(SDMAEngine, "SRBM write to %#x with data %#x\n",
++            reg_addr, pkt->data);
++
++    warn_once("SRBM write not performed, no SRBM model. This needs to be fixed"
++              " if correct system simulation is relying on SRBM registers.");
++
++    delete header;
++    delete pkt;
++    decodeNext(q);
++}
++
++/**
++ * Implements a poll reg/mem packet that polls an SRBM register or a memory
++ * location, compares the retrieved value with a reference value and if
++ * unsuccessfull it retries indefinitely or for a limited number of times.
++ */
++void
++SDMAEngine::pollRegMem(SDMAQueue *q, sdmaPollRegMemHeader *header,
++                       sdmaPollRegMem *pkt)
++{
++    q->incRptr(sizeof(sdmaPollRegMem));
++
++    DPRINTF(SDMAEngine, "POLL_REGMEM: M=%d, func=%d, op=%d, addr=%p, ref=%d, "
++            "mask=%p, retry=%d, pinterval=%d\n", header->mode, header->func,
++            header->op, pkt->address, pkt->ref, pkt->mask, pkt->retryCount,
++            pkt->pollInt);
++
++    bool skip = false;
++
++    if (header->mode == 1) {
++        // polling on a memory location
++        if (header->op == 0) {
++            auto cb = new DmaVirtCallback<uint32_t>(
++                [ = ] (const uint32_t &dma_buffer) {
++                    pollRegMemRead(q, header, pkt, dma_buffer, 0); });
++            dmaReadVirt(pkt->address >> 3, sizeof(uint32_t), cb,
++                        (void *)&cb->dmaBuffer);
++        } else {
++            panic("SDMA poll mem operation not implemented.");
++            skip = true;
++        }
++    } else {
++        warn_once("SDMA poll reg is not implemented. If this is required for "
++                  "correctness, an SRBM model needs to be implemented.");
++        skip = true;
++    }
++
++    if (skip) {
++        delete header;
++        delete pkt;
++        decodeNext(q);
++    }
++}
++
++void
++SDMAEngine::pollRegMemRead(SDMAQueue *q, sdmaPollRegMemHeader *header,
++                           sdmaPollRegMem *pkt, uint32_t dma_buffer, int count)
++{
++    assert(header->mode == 1 && header->op == 0);
++
++    if (!pollRegMemFunc(dma_buffer, pkt->ref, header->func) &&
++        ((count < (pkt->retryCount + 1) && pkt->retryCount != 0xfff) ||
++         pkt->retryCount == 0xfff)) {
++
++        // continue polling on a memory location until reference value is met,
++        // retryCount is met or indefinitelly if retryCount is 0xfff
++        DPRINTF(SDMAEngine, "SDMA polling mem addr %p, val %d ref %d.\n",
++                pkt->address, dma_buffer, pkt->ref);
++
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ] (const uint32_t &dma_buffer) {
++                pollRegMemRead(q, header, pkt, dma_buffer, count + 1); });
++        dmaReadVirt(pkt->address, sizeof(uint32_t), cb,
++                    (void *)&cb->dmaBuffer);
++    } else {
++        DPRINTF(SDMAEngine, "SDMA polling mem addr %p, val %d ref %d done.\n",
++                pkt->address, dma_buffer, pkt->ref);
++
++        delete header;
++        delete pkt;
++        decodeNext(q);
++    }
++}
++
++bool
++SDMAEngine::pollRegMemFunc(uint32_t value, uint32_t reference, uint32_t func)
++{
++    switch (func) {
++      case 0:
++        return true;
++      break;
++      case 1:
++        return value < reference;
++      break;
++      case 2:
++        return value <= reference;
++      break;
++      case 3:
++        return value == reference;
++      break;
++      case 4:
++        return value != reference;
++      break;
++      case 5:
++        return value >= reference;
++      break;
++      case 6:
++        return value > reference;
++      break;
++      default:
++        panic("SDMA POLL_REGMEM unknown comparison function.");
++      break;
++    }
++}
++
++/* Implements a PTE PDE generation packet. */
++void
++SDMAEngine::ptePde(SDMAQueue *q, sdmaPtePde *pkt)
++{
++    q->incRptr(sizeof(sdmaPtePde));
++    pkt->count++;
++
++    DPRINTF(SDMAEngine, "PTEPDE init: %d inc: %d count: %d\n",
++            pkt->initValue, pkt->increment, pkt->count);
++
++    // Generating pkt->count double dwords using the initial value, increment
++    // and a mask.
++    uint64_t *dmaBuffer = new uint64_t[pkt->count];
++    for (int i = 0; i < pkt->count; i++) {
++        dmaBuffer[i] = (pkt->mask | (pkt->initValue + (i * pkt->increment)));
++    }
++
++    // Writing generated data to the destination address.
++    if (gpuDevice->getVM().inMMHUB(pkt->dest)) {
++        Addr mmhubAddr = pkt->dest - gpuDevice->getVM().getMMHUBBase();
++        gpuDevice->getMemMgr()->writeRequest(mmhubAddr, (uint8_t *)dmaBuffer,
++                                           sizeof(uint64_t) * pkt->count);
++
++        decodeNext(q);
++    } else {
++        auto cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &) { ptePdeDone(q, pkt, dmaBuffer); });
++        dmaWriteVirt(pkt->dest, sizeof(uint64_t) * pkt->count, cb,
++            (void *)dmaBuffer);
++    }
++}
++
++/* Completion of a PTE PDE generation packet. */
++void
++SDMAEngine::ptePdeDone(SDMAQueue *q, sdmaPtePde *pkt, uint64_t *dmaBuffer)
++{
++    DPRINTF(SDMAEngine, "PtePde packet completed to %p, %d 2dwords\n",
++            pkt->dest, pkt->count);
++
++    delete []dmaBuffer;
++    delete pkt;
++    decodeNext(q);
++}
++
++AddrRangeList
++SDMAEngine::getAddrRanges() const
++{
++    AddrRangeList ranges;
++    return ranges;
++}
++
++void
++SDMAEngine::serialize(CheckpointOut &cp) const
++{
++    // Serialize the DmaVirtDevice base class
++    DmaVirtDevice::serialize(cp);
++
++    SERIALIZE_SCALAR(gfxBase);
++    SERIALIZE_SCALAR(gfxRptr);
++    SERIALIZE_SCALAR(gfxDoorbell);
++    SERIALIZE_SCALAR(gfxDoorbellOffset);
++    SERIALIZE_SCALAR(gfxWptr);
++    SERIALIZE_SCALAR(pageBase);
++    SERIALIZE_SCALAR(pageRptr);
++    SERIALIZE_SCALAR(pageDoorbell);
++    SERIALIZE_SCALAR(pageDoorbellOffset);
++    SERIALIZE_SCALAR(pageWptr);
++
++    int num_queues = 4;
++
++    std::vector<SDMAQueue *> queues;
++    queues.push_back((SDMAQueue *)&gfx);
++    queues.push_back((SDMAQueue *)&page);
++    queues.push_back((SDMAQueue *)&gfxIb);
++    queues.push_back((SDMAQueue *)&pageIb);
++
++    Addr base[num_queues];
++    Addr rptr[num_queues];
++    Addr wptr[num_queues];
++    Addr size[num_queues];
++    bool processing[num_queues];
++
++    for (int i = 0; i < num_queues; i++) {
++        base[i] = queues[i]->base();
++        rptr[i] = queues[i]->getRptr();
++        wptr[i] = queues[i]->getWptr();
++        size[i] = queues[i]->size();
++        processing[i] = queues[i]->processing();
++    }
++
++    SERIALIZE_ARRAY(base, num_queues);
++    SERIALIZE_ARRAY(rptr, num_queues);
++    SERIALIZE_ARRAY(wptr, num_queues);
++    SERIALIZE_ARRAY(size, num_queues);
++    SERIALIZE_ARRAY(processing, num_queues);
++}
++
++void
++SDMAEngine::unserialize(CheckpointIn &cp)
++{
++    // Serialize the DmaVirtDevice base class
++    DmaVirtDevice::unserialize(cp);
++
++    UNSERIALIZE_SCALAR(gfxBase);
++    UNSERIALIZE_SCALAR(gfxRptr);
++    UNSERIALIZE_SCALAR(gfxDoorbell);
++    UNSERIALIZE_SCALAR(gfxDoorbellOffset);
++    UNSERIALIZE_SCALAR(gfxWptr);
++    UNSERIALIZE_SCALAR(pageBase);
++    UNSERIALIZE_SCALAR(pageRptr);
++    UNSERIALIZE_SCALAR(pageDoorbell);
++    UNSERIALIZE_SCALAR(pageDoorbellOffset);
++    UNSERIALIZE_SCALAR(pageWptr);
++
++    int num_queues = 4;
++    Addr base[num_queues];
++    Addr rptr[num_queues];
++    Addr wptr[num_queues];
++    Addr size[num_queues];
++    bool processing[num_queues];
++
++    UNSERIALIZE_ARRAY(base, num_queues);
++    UNSERIALIZE_ARRAY(rptr, num_queues);
++    UNSERIALIZE_ARRAY(wptr, num_queues);
++    UNSERIALIZE_ARRAY(size, num_queues);
++    UNSERIALIZE_ARRAY(processing, num_queues);
++
++    std::vector<SDMAQueue *> queues;
++    queues.push_back((SDMAQueue *)&gfx);
++    queues.push_back((SDMAQueue *)&page);
++    queues.push_back((SDMAQueue *)&gfxIb);
++    queues.push_back((SDMAQueue *)&pageIb);
++
++    for (int i = 0; i < num_queues; i++) {
++        queues[i]->base(base[i]);
++        queues[i]->rptr(rptr[i]);
++        queues[i]->wptr(wptr[i]);
++        queues[i]->size(size[i]);
++        queues[i]->processing(processing[i]);
++    }
++}
++
++void
++SDMAEngine::writeMMIO(PacketPtr pkt, Addr mmio_offset)
++{
++    DPRINTF(SDMAEngine, "Writing offset %#x with data %x\n", mmio_offset,
++            pkt->getLE<uint32_t>());
++
++    // In Vega10 headers, the offsets are the same for both SDMAs
++    switch (mmio_offset) {
++      case mmSDMA_GFX_RB_BASE:
++        setGfxBaseLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_RB_BASE_HI:
++        setGfxBaseHi(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_RB_RPTR_ADDR_LO:
++        setGfxRptrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_RB_RPTR_ADDR_HI:
++        setGfxRptrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_DOORBELL:
++        setGfxDoorbellLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_DOORBELL_OFFSET:
++        setGfxDoorbellOffsetLo(pkt->getLE<uint32_t>());
++        // Bit 28 of doorbell indicates that doorbell is enabled.
++        if (bits(getGfxDoorbell(), 28, 28)) {
++            gpuDevice->setDoorbellType(getGfxDoorbellOffset(),
++                                       QueueType::SDMAGfx);
++            gpuDevice->setSDMAEngine(getGfxDoorbellOffset(), this);
++        }
++        break;
++      case mmSDMA_GFX_RB_CNTL: {
++        uint32_t rb_size = bits(pkt->getLE<uint32_t>(), 6, 1);
++        assert(rb_size >= 6 && rb_size <= 62);
++        setGfxSize(1 << (rb_size + 2));
++      } break;
++      case mmSDMA_GFX_RB_WPTR_POLL_ADDR_LO:
++        setGfxWptrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_GFX_RB_WPTR_POLL_ADDR_HI:
++        setGfxWptrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_PAGE_RB_BASE:
++        setPageBaseLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_PAGE_RB_RPTR_ADDR_LO:
++        setPageRptrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_PAGE_RB_RPTR_ADDR_HI:
++        setPageRptrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_PAGE_DOORBELL:
++        setPageDoorbellLo(pkt->getLE<uint32_t>());
++        break;
++      case mmSDMA_PAGE_DOORBELL_OFFSET:
++        setPageDoorbellOffsetLo(pkt->getLE<uint32_t>());
++        // Bit 28 of doorbell indicates that doorbell is enabled.
++        if (bits(getPageDoorbell(), 28, 28)) {
++            gpuDevice->setDoorbellType(getPageDoorbellOffset(),
++                                       QueueType::SDMAPage);
++            gpuDevice->setSDMAEngine(getPageDoorbellOffset(), this);
++        }
++        break;
++      case mmSDMA_PAGE_RB_CNTL: {
++        uint32_t rb_size = bits(pkt->getLE<uint32_t>(), 6, 1);
++        assert(rb_size >= 6 && rb_size <= 62);
++        setPageSize(1 << (rb_size + 2));
++      } break;
++      case mmSDMA_PAGE_RB_WPTR_POLL_ADDR_LO:
++        setPageWptrLo(pkt->getLE<uint32_t>());
++        break;
++      default:
++        DPRINTF(SDMAEngine, "Unknown SDMA MMIO %#x\n", mmio_offset);
++        break;
++    }
++}
++
++void
++SDMAEngine::setGfxBaseLo(uint32_t data)
++{
++    gfxBase = insertBits(gfxBase, 31, 0, 0);
++    gfxBase |= data;
++    gfx.base((gfxBase >> 1) << 12);
++}
++
++void
++SDMAEngine::setGfxBaseHi(uint32_t data)
++{
++    gfxBase = insertBits(gfxBase, 63, 32, 0);
++    gfxBase |= ((uint64_t)data) << 32;
++    gfx.base((gfxBase >> 1) << 12);
++}
++
++void
++SDMAEngine::setGfxRptrLo(uint32_t data)
++{
++    gfxRptr = insertBits(gfxRptr, 31, 0, 0);
++    gfxRptr |= data;
++}
++
++void
++SDMAEngine::setGfxRptrHi(uint32_t data)
++{
++    gfxRptr = insertBits(gfxRptr, 63, 32, 0);
++    gfxRptr |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setGfxDoorbellLo(uint32_t data)
++{
++    gfxDoorbell = insertBits(gfxDoorbell, 31, 0, 0);
++    gfxDoorbell |= data;
++}
++
++void
++SDMAEngine::setGfxDoorbellHi(uint32_t data)
++{
++    gfxDoorbell = insertBits(gfxDoorbell, 63, 32, 0);
++    gfxDoorbell |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setGfxDoorbellOffsetLo(uint32_t data)
++{
++    gfxDoorbellOffset = insertBits(gfxDoorbellOffset, 31, 0, 0);
++    gfxDoorbellOffset |= data;
++}
++
++void
++SDMAEngine::setGfxDoorbellOffsetHi(uint32_t data)
++{
++    gfxDoorbellOffset = insertBits(gfxDoorbellOffset, 63, 32, 0);
++    gfxDoorbellOffset |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setGfxSize(uint64_t data)
++{
++    gfx.size(data);
++}
++
++void
++SDMAEngine::setGfxWptrLo(uint32_t data)
++{
++    gfxWptr = insertBits(gfxWptr, 31, 0, 0);
++    gfxWptr |= data;
++}
++
++void
++SDMAEngine::setGfxWptrHi(uint32_t data)
++{
++    gfxWptr = insertBits(gfxWptr, 31, 0, 0);
++    gfxWptr |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setPageBaseLo(uint32_t data)
++{
++    pageBase = insertBits(pageBase, 31, 0, 0);
++    pageBase |= data;
++    page.base((pageBase >> 1) << 12);
++}
++
++void
++SDMAEngine::setPageBaseHi(uint32_t data)
++{
++    pageBase = insertBits(pageBase, 63, 32, 0);
++    pageBase |= ((uint64_t)data) << 32;
++    page.base((pageBase >> 1) << 12);
++}
++
++void
++SDMAEngine::setPageRptrLo(uint32_t data)
++{
++    pageRptr = insertBits(pageRptr, 31, 0, 0);
++    pageRptr |= data;
++}
++
++void
++SDMAEngine::setPageRptrHi(uint32_t data)
++{
++    pageRptr = insertBits(pageRptr, 63, 32, 0);
++    pageRptr |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setPageDoorbellLo(uint32_t data)
++{
++    pageDoorbell = insertBits(pageDoorbell, 31, 0, 0);
++    pageDoorbell |= data;
++}
++
++void
++SDMAEngine::setPageDoorbellHi(uint32_t data)
++{
++    pageDoorbell = insertBits(pageDoorbell, 63, 32, 0);
++    pageDoorbell |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setPageDoorbellOffsetLo(uint32_t data)
++{
++    pageDoorbellOffset = insertBits(pageDoorbellOffset, 31, 0, 0);
++    pageDoorbellOffset |= data;
++}
++
++void
++SDMAEngine::setPageDoorbellOffsetHi(uint32_t data)
++{
++    pageDoorbellOffset = insertBits(pageDoorbellOffset, 63, 32, 0);
++    pageDoorbellOffset |= ((uint64_t)data) << 32;
++}
++
++void
++SDMAEngine::setPageSize(uint64_t data)
++{
++    page.size(data);
++}
++
++void
++SDMAEngine::setPageWptrLo(uint32_t data)
++{
++    pageWptr = insertBits(pageWptr, 31, 0, 0);
++    pageWptr |= data;
++}
++
++void
++SDMAEngine::setPageWptrHi(uint32_t data)
++{
++    pageWptr = insertBits(pageWptr, 63, 32, 0);
++    pageWptr |= ((uint64_t)data) << 32;
++}
++
++} // namespace gem5
+diff --git a/src/dev/amdgpu/sdma_engine.hh b/src/dev/amdgpu/sdma_engine.hh
+new file mode 100644
+index 0000000..90d8e5b
+--- /dev/null
++++ b/src/dev/amdgpu/sdma_engine.hh
+@@ -0,0 +1,268 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_AMDGPU_SDMA_ENGINE_HH__
++#define __DEV_AMDGPU_SDMA_ENGINE_HH__
++
++#include "base/bitunion.hh"
++#include "debug/SDMAEngine.hh"
++#include "dev/amdgpu/amdgpu_device.hh"
++#include "dev/amdgpu/sdma_packets.hh"
++#include "dev/dma_virt_device.hh"
++#include "params/SDMAEngine.hh"
++
++namespace gem5
++{
++
++/**
++ * System DMA Engine class for AMD dGPU.
++ */
++class SDMAEngine : public DmaVirtDevice
++{
++    enum SDMAType
++    {
++        SDMAGfx,
++        SDMAPage
++    };
++
++    class SDMAQueue
++    {
++        Addr _base;
++        Addr _rptr;
++        Addr _wptr;
++        Addr _size;
++        bool _valid;
++        bool _processing;
++        SDMAQueue *_parent;
++        SDMAQueue *_ib;
++      public:
++        SDMAQueue() : _rptr(0), _wptr(0), _valid(false), _processing(false),
++            _parent(nullptr), _ib(nullptr) {}
++
++        Addr base() { return _base; }
++        Addr rptr() { return _base + _rptr; }
++        Addr getRptr() { return _rptr; }
++        Addr wptr() { return _base + _wptr; }
++        Addr getWptr() { return _wptr; }
++        Addr size() { return _size; }
++        bool valid() { return _valid; }
++        bool processing() { return _processing; }
++        SDMAQueue* parent() { return _parent; }
++        SDMAQueue* ib() { return _ib; }
++
++        void base(Addr value) { _base = value; }
++
++        void
++        incRptr(uint32_t value)
++        {
++            //assert((_rptr + value) <= (_size << 1));
++            _rptr = (_rptr + value) % _size;
++        }
++
++        void rptr(Addr value) { _rptr = value; }
++
++        void
++        setWptr(Addr value)
++        {
++            //assert(value <= (_size << 1));
++            _wptr = value % _size;
++        }
++
++        void wptr(Addr value) { _wptr = value; }
++
++        void size(Addr value) { _size = value; }
++        void valid(bool v) { _valid = v; }
++        void processing(bool value) { _processing = value; }
++        void parent(SDMAQueue* q) { _parent = q; }
++        void ib(SDMAQueue* ib) { _ib = ib; }
++    };
++
++    /* SDMA Engine ID */
++    int id;
++    /**
++     * Each SDMAEngine processes four queues: paging, gfx, rlc0, and rlc1,
++     * where RLC stands for Run List Controller. Each one of these
++     * can have one indirect buffer associated at any particular time.
++     * The switching order between queues is supposed to be page -> gfx ->
++     * rlc0 -> page -> gfx -> rlc1, skipping empty queues.
++     */
++    SDMAQueue gfx, page, gfxIb, pageIb;
++    SDMAQueue rlc0, rlc0Ib, rlc1, rlc1Ib;
++
++    /* Gfx ring buffer registers */
++    uint64_t gfxBase;
++    uint64_t gfxRptr;
++    uint64_t gfxDoorbell;
++    uint64_t gfxDoorbellOffset;
++    uint64_t gfxWptr;
++    /* Page ring buffer registers */
++    uint64_t pageBase;
++    uint64_t pageRptr;
++    uint64_t pageDoorbell;
++    uint64_t pageDoorbellOffset;
++    uint64_t pageWptr;
++
++    AMDGPUDevice *gpuDevice;
++    VegaISA::Walker *walker;
++
++    /* processRLC will select the correct queue for the doorbell */
++    std::unordered_map<Addr, int> rlcMap;
++    void processRLC0(Addr wptrOffset);
++    void processRLC1(Addr wptrOffset);
++
++  public:
++    SDMAEngine(const SDMAEngineParams &p);
++
++    void setGPUDevice(AMDGPUDevice *gpu_device);
++
++    void setId(int _id) { id = _id; }
++    /**
++     * Returns the client id for the Interrupt Handler.
++     */
++    int getIHClientId();
++
++    /**
++     * Methods for translation.
++     */
++    Addr getGARTAddr(Addr addr) const;
++    TranslationGenPtr translate(Addr vaddr, Addr size) override;
++
++    /**
++     * Inherited methods.
++     */
++    Tick write(PacketPtr pkt) override { return 0; }
++    Tick read(PacketPtr pkt) override { return 0; }
++    AddrRangeList getAddrRanges() const override;
++    void serialize(CheckpointOut &cp) const override;
++    void unserialize(CheckpointIn &cp) override;
++
++    /**
++     * Given a new write ptr offset, communicated to the GPU through a doorbell
++     * write, the SDMA engine processes the page, gfx, rlc0, or rlc1 queue.
++     */
++    void processGfx(Addr wptrOffset);
++    void processPage(Addr wptrOffset);
++    void processRLC(Addr doorbellOffset, Addr wptrOffset);
++
++    /**
++     * This method checks read and write pointers and starts decoding
++     * packets if the read pointer is less than the write pointer.
++     * It also marks a queue a being currently processing, in case the
++     * doorbell is rung again, the newly enqueued packets will be decoded once
++     * the currently processing once are finished. This is achieved by calling
++     * decodeNext once an entire SDMA packet has been processed.
++     */
++    void decodeNext(SDMAQueue *q);
++
++    /**
++     * Reads the first DW (32 bits) (i.e., header) of an SDMA packet, which
++     * encodes the opcode and sub-opcode of the packet. It also creates an
++     * SDMA packet object and calls the associated processing function.
++     */
++    void decodeHeader(SDMAQueue *q, uint32_t data);
++
++    /**
++     * Methods that implement processing of SDMA packets
++     */
++    void write(SDMAQueue *q, sdmaWrite *pkt);
++    void writeReadData(SDMAQueue *q, sdmaWrite *pkt, uint32_t *dmaBuffer);
++    void writeDone(SDMAQueue *q, sdmaWrite *pkt, uint32_t *dmaBuffer);
++    void copy(SDMAQueue *q, sdmaCopy *pkt);
++    void copyReadData(SDMAQueue *q, sdmaCopy *pkt, uint8_t *dmaBuffer);
++    void copyDone(SDMAQueue *q, sdmaCopy *pkt, uint8_t *dmaBuffer);
++    void indirectBuffer(SDMAQueue *q, sdmaIndirectBuffer *pkt);
++    void fence(SDMAQueue *q, sdmaFence *pkt);
++    void fenceDone(SDMAQueue *q, sdmaFence *pkt);
++    void trap(SDMAQueue *q, sdmaTrap *pkt);
++    void srbmWrite(SDMAQueue *q, sdmaSRBMWriteHeader *header,
++                    sdmaSRBMWrite *pkt);
++    void pollRegMem(SDMAQueue *q, sdmaPollRegMemHeader *header,
++                    sdmaPollRegMem *pkt);
++    void pollRegMemRead(SDMAQueue *q, sdmaPollRegMemHeader *header,
++                        sdmaPollRegMem *pkt, uint32_t dma_buffer, int count);
++    bool pollRegMemFunc(uint32_t value, uint32_t reference, uint32_t func);
++    void ptePde(SDMAQueue *q, sdmaPtePde *pkt);
++    void ptePdeDone(SDMAQueue *q, sdmaPtePde *pkt, uint64_t *dmaBuffer);
++
++    /**
++     * Methods for getting the values of SDMA MMIO registers.
++     */
++    uint64_t getGfxBase() { return gfxBase; }
++    uint64_t getGfxRptr() { return gfxRptr; }
++    uint64_t getGfxDoorbell() { return gfxDoorbell; }
++    uint64_t getGfxDoorbellOffset() { return gfxDoorbellOffset; }
++    uint64_t getGfxWptr() { return gfxWptr; }
++    uint64_t getPageBase() { return pageBase; }
++    uint64_t getPageRptr() { return pageRptr; }
++    uint64_t getPageDoorbell() { return pageDoorbell; }
++    uint64_t getPageDoorbellOffset() { return pageDoorbellOffset; }
++    uint64_t getPageWptr() { return pageWptr; }
++
++    /**
++     * Methods for setting the values of SDMA MMIO registers.
++     */
++    void writeMMIO(PacketPtr pkt, Addr mmio_offset);
++
++    void setGfxBaseLo(uint32_t data);
++    void setGfxBaseHi(uint32_t data);
++    void setGfxRptrLo(uint32_t data);
++    void setGfxRptrHi(uint32_t data);
++    void setGfxDoorbellLo(uint32_t data);
++    void setGfxDoorbellHi(uint32_t data);
++    void setGfxDoorbellOffsetLo(uint32_t data);
++    void setGfxDoorbellOffsetHi(uint32_t data);
++    void setGfxSize(uint64_t data);
++    void setGfxWptrLo(uint32_t data);
++    void setGfxWptrHi(uint32_t data);
++    void setPageBaseLo(uint32_t data);
++    void setPageBaseHi(uint32_t data);
++    void setPageRptrLo(uint32_t data);
++    void setPageRptrHi(uint32_t data);
++    void setPageDoorbellLo(uint32_t data);
++    void setPageDoorbellHi(uint32_t data);
++    void setPageDoorbellOffsetLo(uint32_t data);
++    void setPageDoorbellOffsetHi(uint32_t data);
++    void setPageSize(uint64_t data);
++    void setPageWptrLo(uint32_t data);
++    void setPageWptrHi(uint32_t data);
++
++    /**
++     * Methods for RLC queues
++     */
++    void registerRLCQueue(Addr doorbell, Addr rb_base);
++    void unregisterRLCQueue(Addr doorbell);
++
++    int cur_vmid = 0;
++};
++
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_SDMA_ENGINE_HH__
+diff --git a/src/dev/amdgpu/sdma_mmio.hh b/src/dev/amdgpu/sdma_mmio.hh
+new file mode 100644
+index 0000000..edd363a
+--- /dev/null
++++ b/src/dev/amdgpu/sdma_mmio.hh
+@@ -0,0 +1,61 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_AMDGPU_SDMA_MMIO_HH__
++#define __DEV_AMDGPU_SDMA_MMIO_HH__
++
++/**
++ * MMIO offsets for SDMA engine. These values were taken from the linux header
++ * for SDMA. The header files can be found here:
++ *
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++*      drivers/gpu/drm/amd/include/asic_reg/sdma0/sdma0_4_0_offset.h
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ *     drivers/gpu/drm/amd/include/asic_reg/sdma1/sdma1_4_0_offset.h
++ */
++#define mmSDMA_GFX_RB_CNTL                                0x0080
++#define mmSDMA_GFX_RB_BASE                                0x0081
++#define mmSDMA_GFX_RB_BASE_HI                             0x0082
++#define mmSDMA_GFX_RB_RPTR_ADDR_HI                        0x0088
++#define mmSDMA_GFX_RB_RPTR_ADDR_LO                        0x0089
++#define mmSDMA_GFX_DOORBELL                               0x0092
++#define mmSDMA_GFX_DOORBELL_OFFSET                        0x00ab
++#define mmSDMA_GFX_RB_WPTR_POLL_ADDR_HI                   0x00b2
++#define mmSDMA_GFX_RB_WPTR_POLL_ADDR_LO                   0x00b3
++#define mmSDMA_PAGE_RB_CNTL                               0x00e0
++#define mmSDMA_PAGE_RB_BASE                               0x00e1
++#define mmSDMA_PAGE_RB_RPTR_ADDR_HI                       0x00e8
++#define mmSDMA_PAGE_RB_RPTR_ADDR_LO                       0x00e9
++#define mmSDMA_PAGE_DOORBELL                              0x00f2
++#define mmSDMA_PAGE_DOORBELL_OFFSET                       0x010b
++#define mmSDMA_PAGE_RB_WPTR_POLL_ADDR_LO                  0x0113
++
++#endif // __DEV_AMDGPU_SDMA_MMIO_HH__
+diff --git a/src/dev/amdgpu/sdma_packets.hh b/src/dev/amdgpu/sdma_packets.hh
+new file mode 100644
+index 0000000..c490756
+--- /dev/null
++++ b/src/dev/amdgpu/sdma_packets.hh
+@@ -0,0 +1,441 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_AMDGPU_SDMA_PACKETS_HH__
++#define __DEV_AMDGPU_SDMA_PACKETS_HH__
++
++namespace gem5
++{
++
++/**
++ * SDMA packets
++ */
++typedef struct GEM5_PACKED
++{
++    uint32_t count : 30;
++    uint32_t res0 : 2;
++    uint32_t res1 : 16;
++    uint32_t sdw: 2;
++    uint32_t res2 : 6;
++    uint32_t ddw: 2;
++    uint32_t res3 : 6;
++    uint64_t source;
++    uint64_t dest;
++}  sdmaCopy;
++static_assert(sizeof(sdmaCopy) == 24);
++
++typedef struct GEM5_PACKED
++{
++    uint64_t dest;
++    uint32_t count : 20;
++    uint32_t reserved0 : 4;
++    uint32_t sw : 2;
++    uint32_t reserved1 : 6;
++}  sdmaWrite;
++static_assert(sizeof(sdmaWrite) == 12);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t addrLo;
++            uint32_t addrHi;
++        };
++        Addr addr;
++    };
++    uint32_t srcData;
++    uint32_t unused : 10;
++    uint32_t count : 22;
++}  sdmaConstFill;
++static_assert(sizeof(sdmaConstFill) == 16);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t key0;
++    uint32_t key1;
++    uint32_t key2;
++    uint32_t key3;
++    uint32_t count0;
++    uint32_t count1;
++    uint32_t count2;
++    uint32_t count3;
++}  sdmaAESKey;
++static_assert(sizeof(sdmaAESKey) == 32);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t countData0;
++    uint32_t countData1;
++    uint32_t countData2;
++    uint32_t countData3;
++}  sdmaAESCounter;
++static_assert(sizeof(sdmaAESCounter) == 16);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t countKey0;
++    uint32_t countKey1;
++    uint32_t countKey2;
++    uint32_t countKey3;
++}  sdmaAESLoad;
++static_assert(sizeof(sdmaAESLoad) == 16);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t reserved : 6;
++    uint32_t offset : 26;
++}  sdmaAESOffset;
++static_assert(sizeof(sdmaAESOffset) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint64_t base;
++    uint32_t size : 20;
++    uint32_t reserved : 12;
++    uint64_t csaAddr;
++}  sdmaIndirectBuffer;
++static_assert(sizeof(sdmaIndirectBuffer) == 20);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t priv : 1;
++    uint32_t reserved1 : 11;
++    uint32_t vmid : 4;
++    uint32_t reserved2 : 16;
++}  sdmaIndirectBufferHeader;
++static_assert(sizeof(sdmaIndirectBufferHeader) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint64_t dest;
++    uint32_t data;
++}  sdmaFence;
++static_assert(sizeof(sdmaFence) == 12);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t contextId : 3;
++            uint32_t rbRptr: 13;
++            uint32_t ibOffset : 12;
++            uint32_t reserved : 4;
++        };
++        uint32_t intrContext;
++    };
++}  sdmaTrap;
++static_assert(sizeof(sdmaTrap) == 4);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t reserved : 3;
++            uint32_t addrLo : 29;
++            uint32_t addrHi;
++        };
++        Addr addr;
++    };
++}  sdmaSemaphore;
++static_assert(sizeof(sdmaSemaphore) == 8);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t reserved : 3;
++            uint32_t addrLo : 29;
++            uint32_t addrHi;
++        };
++        Addr addr;
++    };
++}  sdmaMemInc;
++static_assert(sizeof(sdmaMemInc) == 8);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t regAddr : 18;
++    uint32_t reserved : 2;
++    uint32_t apertureId : 12;
++    uint32_t data;
++}  sdmaSRBMWrite;
++static_assert(sizeof(sdmaSRBMWrite) == 8);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t reserved : 28;
++    uint32_t byteEnable : 4;
++}  sdmaSRBMWriteHeader;
++static_assert(sizeof(sdmaSRBMWriteHeader) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint64_t address;
++    uint32_t ref;
++    uint32_t mask;
++    uint32_t pollInt : 16;
++    uint32_t retryCount : 12;
++    uint32_t reserved1 : 4;
++}  sdmaPollRegMem;
++static_assert(sizeof(sdmaPollRegMem) == 20);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t reserved : 26;
++    uint32_t op : 2;            // Operation
++    uint32_t func : 3;          // Comparison function
++    uint32_t mode : 1;          // Mode: register or memory polling
++}  sdmaPollRegMemHeader;
++static_assert(sizeof(sdmaPollRegMemHeader) == 4);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t addrLo;
++            uint32_t addrHi;
++        };
++        Addr addr;
++    };
++    uint32_t reference;
++    union
++    {
++        struct
++        {
++            uint32_t execCount : 14;
++            uint32_t unused : 18;
++        };
++        uint32_t ordinal;
++    };
++}  sdmaCondExec;
++static_assert(sizeof(sdmaCondExec) == 16);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t addrLo;
++            uint32_t addrHi;
++        };
++        Addr addr;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t srcDataLo;
++            uint32_t srdDataHi;
++        };
++        uint64_t srcData;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t cmpDataLo;
++            uint32_t cmpDataHi;
++        };
++        uint64_t cmpData;
++    };
++    uint32_t loopInt : 13;
++    uint32_t reserved : 19;
++}  sdmaAtomic;
++static_assert(sizeof(sdmaAtomic) == 28);
++
++typedef struct GEM5_PACKED
++{
++    uint64_t dest;
++    uint64_t mask;
++    uint64_t initValue;
++    uint64_t increment;
++    uint32_t count: 19;
++    uint32_t reserved : 13;
++}  sdmaPtePde;
++static_assert(sizeof(sdmaPtePde) == 36);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t initDataLo;
++            uint32_t initDataHi;
++        };
++        uint64_t initData;
++    };
++}  sdmaTimestamp;
++static_assert(sizeof(sdmaTimestamp) == 8);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t execCount : 14;
++    uint32_t reserved : 18;
++}  sdmaPredExec;
++static_assert(sizeof(sdmaPredExec) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t opcode : 8;
++    uint32_t subOpcode : 8;
++    uint32_t device : 8;
++    uint32_t unused : 8;
++}  sdmaPredExecHeader;
++static_assert(sizeof(sdmaPredExecHeader) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t contextId : 3;
++    uint32_t rbRptr: 13;
++    uint32_t ibOffset : 12;
++    uint32_t reserved : 4;
++}  sdmaDummyTrap;
++static_assert(sizeof(sdmaDummyTrap) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t byteStride;
++    uint32_t dmaCount;
++    union
++    {
++        struct
++        {
++            uint32_t destLo;
++            uint32_t destHi;
++        };
++        uint64_t dest;
++    };
++    uint32_t byteCount : 26;
++}  sdmaDataFillMulti;
++static_assert(sizeof(sdmaDataFillMulti) == 20);
++
++typedef struct GEM5_PACKED
++{
++    uint16_t format : 8;
++    uint16_t barrier : 1;
++    uint16_t acqFenceScope : 2;
++    uint16_t relFenceScope : 2;
++    uint16_t reserved : 3;
++}  sdmaHeaderAgentDisp;
++static_assert(sizeof(sdmaHeaderAgentDisp) == 2);
++
++typedef struct GEM5_PACKED
++{
++    sdmaHeaderAgentDisp header;
++    uint16_t res0;
++    uint32_t res1;
++    union
++    {
++        struct
++        {
++            uint32_t retLo;
++            uint32_t retHi;
++        };
++        Addr ret;
++    };
++    uint32_t count : 22;
++    uint32_t res2 : 10;
++    uint32_t res3 : 16;
++    uint32_t swDest : 2;
++    uint32_t res4 : 6;
++    uint32_t swSrc : 2;
++    uint32_t unused : 6;
++    union
++    {
++        struct
++        {
++            uint32_t srcLo;
++            uint32_t srcHi;
++        };
++        Addr src;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t destLo;
++            uint32_t destHi;
++        };
++        Addr dest;
++    };
++    uint64_t res5;
++    uint64_t res6;
++    union
++    {
++        struct
++        {
++            uint32_t compSignalLo;
++            uint32_t compSignalHi;
++        };
++        Addr compSignal;
++    };
++}  sdmaAQLCopy;
++static_assert(sizeof(sdmaAQLCopy) == 64);
++
++typedef struct GEM5_PACKED
++{
++    sdmaHeaderAgentDisp header;
++    uint16_t res0;
++    uint32_t res1;
++    Addr depSignal0;
++    Addr depSignal1;
++    Addr depSignal2;
++    Addr depSignal3;
++    Addr depSignal4;
++    uint64_t res2;
++    union
++    {
++        struct
++        {
++            uint32_t compSignalLo;
++            uint32_t compSignalHi;
++        };
++        Addr compSignal;
++    };
++}  sdmaAQLBarrierOr;
++static_assert(sizeof(sdmaAQLBarrierOr) == 64);
++
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_SDMA_PACKETS_HH__
+diff --git a/src/dev/amdgpu/vega10/soc15_ih_clientid.h b/src/dev/amdgpu/vega10/soc15_ih_clientid.h
+new file mode 100644
+index 0000000..c08ece1
+--- /dev/null
++++ b/src/dev/amdgpu/vega10/soc15_ih_clientid.h
+@@ -0,0 +1,81 @@
++/*
++ * Copyright 2018 Advanced Micro Devices, Inc.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
++ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
++ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
++ * OTHER DEALINGS IN THE SOFTWARE.
++ *
++ */
++
++#ifndef __SOC15_IH_CLIENTID_H__
++#define __SOC15_IH_CLIENTID_H__
++
++/*
++ * src: https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/
++ * 89baa3f89c8cb0d76e999c01bf304301e35abc9b/drivers/gpu/drm/amd/include/
++ * soc15_ih_clientid.h
++ */
++
++ /*
++  * vega10+ IH clients
++ */
++enum soc15_ih_clientid {
++    SOC15_IH_CLIENTID_IH        = 0x00,
++    SOC15_IH_CLIENTID_ACP       = 0x01,
++    SOC15_IH_CLIENTID_ATHUB     = 0x02,
++    SOC15_IH_CLIENTID_BIF       = 0x03,
++    SOC15_IH_CLIENTID_DCE       = 0x04,
++    SOC15_IH_CLIENTID_ISP       = 0x05,
++    SOC15_IH_CLIENTID_PCIE0     = 0x06,
++    SOC15_IH_CLIENTID_RLC       = 0x07,
++    SOC15_IH_CLIENTID_SDMA0     = 0x08,
++    SOC15_IH_CLIENTID_SDMA1     = 0x09,
++    SOC15_IH_CLIENTID_SE0SH     = 0x0a,
++    SOC15_IH_CLIENTID_SE1SH     = 0x0b,
++    SOC15_IH_CLIENTID_SE2SH     = 0x0c,
++    SOC15_IH_CLIENTID_SE3SH     = 0x0d,
++    SOC15_IH_CLIENTID_SYSHUB    = 0x0e,
++    SOC15_IH_CLIENTID_UVD1      = 0x0e,
++    SOC15_IH_CLIENTID_THM       = 0x0f,
++    SOC15_IH_CLIENTID_UVD       = 0x10,
++    SOC15_IH_CLIENTID_VCE0      = 0x11,
++    SOC15_IH_CLIENTID_VMC       = 0x12,
++    SOC15_IH_CLIENTID_XDMA      = 0x13,
++    SOC15_IH_CLIENTID_GRBM_CP   = 0x14,
++    SOC15_IH_CLIENTID_ATS       = 0x15,
++    SOC15_IH_CLIENTID_ROM_SMUIO = 0x16,
++    SOC15_IH_CLIENTID_DF        = 0x17,
++    SOC15_IH_CLIENTID_VCE1      = 0x18,
++    SOC15_IH_CLIENTID_PWR       = 0x19,
++    SOC15_IH_CLIENTID_UTCL2     = 0x1b,
++    SOC15_IH_CLIENTID_EA        = 0x1c,
++    SOC15_IH_CLIENTID_UTCL2LOG  = 0x1d,
++    SOC15_IH_CLIENTID_MP0       = 0x1e,
++    SOC15_IH_CLIENTID_MP1       = 0x1f,
++
++    SOC15_IH_CLIENTID_MAX,
++
++    SOC15_IH_CLIENTID_VCN       = SOC15_IH_CLIENTID_UVD
++};
++
++enum ihSourceId {
++    TRAP_ID                     = 224
++};
++
++#endif
++
++
+-- 
+1.8.3.1
+

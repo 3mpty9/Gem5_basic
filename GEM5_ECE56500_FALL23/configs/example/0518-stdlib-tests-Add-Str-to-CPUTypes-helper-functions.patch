@@ -1,0 +1,367 @@
+From 8f629fa6385884882f32b2c91734cbe3aff7c4f0 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 1 Apr 2022 18:37:11 -0700
+Subject: [PATCH 518/757] stdlib,tests: Add Str-to-CPUTypes helper functions
+
+The two functions are `get_cpu_types_str_set()` which returns a set of
+valid CPUTypes as strings, and `get_cpu_type_from_str()` which will
+return a CPUType enum given an input string.
+
+The purpose of these functions is to aid and standardize user input
+parameters or environment variables.
+
+Test scripts are updated accordingly.
+
+Change-Id: I7cb9263321fe36bc8a7530edfd0d8e8bbd329e0e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58491
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/components/processors/cpu_types.py | 44 +++++++++++++++++++---
+ tests/gem5/configs/boot_kvm_fork_run.py            | 29 ++++----------
+ tests/gem5/configs/boot_kvm_switch_exit.py         | 26 ++++---------
+ tests/gem5/configs/parsec_disk_run.py              | 27 ++++---------
+ tests/gem5/configs/simple_binary_run.py            | 23 +++--------
+ tests/gem5/configs/x86_boot_exit_run.py            | 28 ++++----------
+ 6 files changed, 75 insertions(+), 102 deletions(-)
+
+diff --git a/src/python/gem5/components/processors/cpu_types.py b/src/python/gem5/components/processors/cpu_types.py
+index 831fe1d..969b7a1 100644
+--- a/src/python/gem5/components/processors/cpu_types.py
++++ b/src/python/gem5/components/processors/cpu_types.py
+@@ -25,11 +25,43 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from enum import Enum
+-
++from typing import Set
++import os
+ 
+ class CPUTypes(Enum):
+-    ATOMIC = 1
+-    KVM = 2
+-    O3 = 3
+-    TIMING = 4
+-    MINOR = 5
++    ATOMIC = "atomic"
++    KVM = "kvm"
++    O3 = "o3"
++    TIMING = "timing"
++    MINOR = "minor"
++
++def get_cpu_types_str_set() -> Set[CPUTypes]:
++    """
++    Returns a set of all the CPU types as strings.
++    """
++    return {cpu_type.value for cpu_type in CPUTypes}
++
++def get_cpu_type_from_str(input: str) -> CPUTypes:
++    """
++    Will return the correct enum given the input string. This is matched on
++    the enum's value. E.g., "kvm" will return ISA.KVM. Throws an exception if
++    the input string is invalid.
++
++    `get_cpu_types_str_set()` can be used to determine the valid strings.
++
++    This is for parsing text inputs that specify CPU Type targets.
++
++    :param input: The CPU Type to return, as a string. Case-insensitive.
++    """
++    for cpu_type in CPUTypes:
++        if input.lower() == cpu_type.value:
++            return cpu_type
++
++    valid_cpu_types_list_str =str()
++    for cpu_type_str in get_cpu_types_str_set():
++        valid_cpu_types_list_str += f"{os.linesep}{cpu_type_str}"
++
++    raise Exception(
++        f"CPU type '{input}' does not correspond to a known CPU type. "
++        f"Known CPU Types:{valid_cpu_types_list_str}"
++    )
+diff --git a/tests/gem5/configs/boot_kvm_fork_run.py b/tests/gem5/configs/boot_kvm_fork_run.py
+index d0f38fb..c4160fd 100644
+--- a/tests/gem5/configs/boot_kvm_fork_run.py
++++ b/tests/gem5/configs/boot_kvm_fork_run.py
+@@ -47,7 +47,11 @@ from gem5.components.boards.x86_board import X86Board
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.isas import ISA
+ from gem5.components.memory import SingleChannelDDR3_1600
+-from gem5.components.processors.cpu_types import CPUTypes
++from gem5.components.processors.cpu_types import(
++    CPUTypes,
++    get_cpu_types_str_set,
++    get_cpu_type_from_str,
++)
+ from gem5.components.processors.simple_switchable_processor import (
+     SimpleSwitchableProcessor,
+ )
+@@ -78,7 +82,7 @@ parser.add_argument(
+     "-c",
+     "--cpu",
+     type=str,
+-    choices=("kvm", "atomic", "timing", "o3"),
++    choices=get_cpu_types_str_set(),
+     required=True,
+     help="The CPU type.",
+ )
+@@ -115,7 +119,7 @@ elif args.mem_system == "mesi_two_level":
+ requires(
+     isa_required=ISA.X86,
+     coherence_protocol_required=coherence_protocol_required,
+-    kvm_required=(args.cpu == "kvm"),
++    kvm_required=True,
+ )
+ 
+ cache_hierarchy = None
+@@ -161,26 +165,9 @@ assert cache_hierarchy != None
+ 
+ memory = SingleChannelDDR3_1600(size="3GB")
+ 
+-# Setup a Processor.
+-cpu_type = None
+-if args.cpu == "kvm":
+-    cpu_type = CPUTypes.KVM
+-elif args.cpu == "atomic":
+-    cpu_type = CPUTypes.ATOMIC
+-elif args.cpu == "timing":
+-    cpu_type = CPUTypes.TIMING
+-elif args.cpu == "o3":
+-    cpu_type = CPUTypes.O3
+-else:
+-    raise NotImplementedError(
+-        "CPU type '{}' is not supported in the boot tests.".format(args.cpu)
+-    )
+-
+-assert cpu_type != None
+-
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+-    switch_core_type=cpu_type,
++    switch_core_type=get_cpu_type_from_str(args.cpu),
+     isa=ISA.X86,
+     num_cores=args.num_cpus,
+ )
+diff --git a/tests/gem5/configs/boot_kvm_switch_exit.py b/tests/gem5/configs/boot_kvm_switch_exit.py
+index 3505a20..a807f84 100644
+--- a/tests/gem5/configs/boot_kvm_switch_exit.py
++++ b/tests/gem5/configs/boot_kvm_switch_exit.py
+@@ -37,7 +37,11 @@ from gem5.isas import ISA
+ from gem5.components.boards.x86_board import X86Board
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.components.memory import SingleChannelDDR3_1600
+-from gem5.components.processors.cpu_types import CPUTypes
++from gem5.components.processors.cpu_types import(
++    CPUTypes,
++    get_cpu_types_str_set,
++    get_cpu_type_from_str,
++)
+ from gem5.components.processors.simple_switchable_processor import (
+     SimpleSwitchableProcessor,
+ )
+@@ -71,7 +75,7 @@ parser.add_argument(
+     "-c",
+     "--cpu",
+     type=str,
+-    choices=("kvm", "atomic", "timing", "o3"),
++    choices=get_cpu_types_str_set(),
+     required=True,
+     help="The CPU type.",
+ )
+@@ -147,25 +151,9 @@ assert cache_hierarchy != None
+ memory = SingleChannelDDR3_1600(size="3GB")
+ 
+ # Setup a Processor.
+-cpu_type = None
+-if args.cpu == "kvm":
+-    cpu_type = CPUTypes.KVM
+-elif args.cpu == "atomic":
+-    cpu_type = CPUTypes.ATOMIC
+-elif args.cpu == "timing":
+-    cpu_type = CPUTypes.TIMING
+-elif args.cpu == "o3":
+-    cpu_type = CPUTypes.O3
+-else:
+-    raise NotImplementedError(
+-        "CPU type '{}' is not supported in the boot tests.".format(args.cpu)
+-    )
+-
+-assert cpu_type != None
+-
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+-    switch_core_type=cpu_type,
++    switch_core_type=get_cpu_type_from_str(args.cpu),
+     isa=ISA.X86,
+     num_cores=args.num_cpus,
+ )
+diff --git a/tests/gem5/configs/parsec_disk_run.py b/tests/gem5/configs/parsec_disk_run.py
+index 8063cf4..456fce0 100644
+--- a/tests/gem5/configs/parsec_disk_run.py
++++ b/tests/gem5/configs/parsec_disk_run.py
+@@ -43,7 +43,10 @@ from gem5.components.memory import SingleChannelDDR3_1600
+ from gem5.components.processors.simple_switchable_processor import (
+     SimpleSwitchableProcessor,
+ )
+-from gem5.components.processors.cpu_types import CPUTypes
++from gem5.components.processors.cpu_types import(
++    get_cpu_types_str_set,
++    get_cpu_type_from_str,
++)
+ from gem5.isas import ISA
+ from gem5.runtime import get_runtime_isa, get_runtime_coherence_protocol
+ from gem5.simulate.simulator import Simulator
+@@ -75,7 +78,7 @@ parser.add_argument(
+     "-b",
+     "--boot-cpu",
+     type=str,
+-    choices=("kvm", "timing", "atomic", "o3"),
++    choices=get_cpu_types_str_set(),
+     required=False,
+     help="The CPU type to run before and after the ROI. If not specified will "
+     "be equal to that of the CPU type used in the ROI.",
+@@ -85,7 +88,7 @@ parser.add_argument(
+     "-c",
+     "--cpu",
+     type=str,
+-    choices=("kvm", "timing", "atomic", "o3"),
++    choices=get_cpu_types_str_set(),
+     required=True,
+     help="The CPU type used in the ROI.",
+ )
+@@ -174,23 +177,9 @@ elif args.mem_system == "mesi_two_level":
+ # Setup the memory system.
+ memory = SingleChannelDDR3_1600(size="3GB")
+ 
+-
+-def input_to_cputype(input: str) -> CPUTypes:
+-    if input == "kvm":
+-        return CPUTypes.KVM
+-    elif input == "timing":
+-        return CPUTypes.TIMING
+-    elif input == "atomic":
+-        return CPUTypes.ATOMIC
+-    elif input == "o3":
+-        return CPUTypes.O3
+-    else:
+-        raise NotADirectoryError("Unknown CPU type '{}'.".format(input))
+-
+-
+-roi_type = input_to_cputype(args.cpu)
++roi_type = get_cpu_type_from_str(args.cpu)
+ if args.boot_cpu != None:
+-    boot_type = input_to_cputype(args.boot_cpu)
++    boot_type = get_cpu_type_from_str(args.boot_cpu)
+ else:
+     boot_type = roi_type
+ 
+diff --git a/tests/gem5/configs/simple_binary_run.py b/tests/gem5/configs/simple_binary_run.py
+index a4e4cf6..854fc66 100644
+--- a/tests/gem5/configs/simple_binary_run.py
++++ b/tests/gem5/configs/simple_binary_run.py
+@@ -31,7 +31,10 @@ gem5 while still being functinal.
+ """
+ 
+ from gem5.resources.resource import Resource
+-from gem5.components.processors.cpu_types import CPUTypes
++from gem5.components.processors.cpu_types import(
++    get_cpu_types_str_set,
++    get_cpu_type_from_str,
++)
+ from gem5.components.memory import SingleChannelDDR3_1600
+ from gem5.components.boards.simple_board import SimpleBoard
+ from gem5.components.cachehierarchies.classic.no_cache import NoCache
+@@ -54,7 +57,7 @@ parser.add_argument(
+ parser.add_argument(
+     "cpu",
+     type=str,
+-    choices=("kvm", "timing", "atomic", "o3", "minor"),
++    choices=get_cpu_types_str_set(),
+     help="The CPU type used.",
+ )
+ 
+@@ -75,25 +78,11 @@ parser.add_argument(
+ 
+ args = parser.parse_args()
+ 
+-def input_to_cputype(input: str) -> CPUTypes:
+-    if input == "kvm":
+-        return CPUTypes.KVM
+-    elif input == "timing":
+-        return CPUTypes.TIMING
+-    elif input == "atomic":
+-        return CPUTypes.ATOMIC
+-    elif input == "o3":
+-        return CPUTypes.O3
+-    elif input == "minor":
+-        return CPUTypes.MINOR
+-    else:
+-        raise NotADirectoryError("Unknown CPU type '{}'.".format(input))
+-
+ # Setup the system.
+ cache_hierarchy = NoCache()
+ memory = SingleChannelDDR3_1600()
+ processor = SimpleProcessor(
+-    cpu_type=input_to_cputype(args.cpu),
++    cpu_type=get_cpu_type_from_str(args.cpu),
+     isa=get_isa_from_str(args.isa),
+     num_cores=1,
+ )
+diff --git a/tests/gem5/configs/x86_boot_exit_run.py b/tests/gem5/configs/x86_boot_exit_run.py
+index 3297421..358276c 100644
+--- a/tests/gem5/configs/x86_boot_exit_run.py
++++ b/tests/gem5/configs/x86_boot_exit_run.py
+@@ -36,7 +36,10 @@ from gem5.utils.requires import requires
+ from gem5.resources.resource import Resource
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.components.boards.x86_board import X86Board
+-from gem5.components.processors.cpu_types import CPUTypes
++from gem5.components.processors.cpu_types import(
++    get_cpu_types_str_set,
++    get_cpu_type_from_str,
++)
+ from gem5.components.processors.simple_processor import SimpleProcessor
+ from gem5.simulate.simulator import Simulator
+ 
+@@ -67,7 +70,7 @@ parser.add_argument(
+     "-c",
+     "--cpu",
+     type=str,
+-    choices=("kvm", "atomic", "timing", "o3"),
++    choices=get_cpu_types_str_set(),
+     required=True,
+     help="The CPU type.",
+ )
+@@ -166,25 +169,10 @@ memory_class = getattr(
+ memory = memory_class(size="3GiB")
+ 
+ # Setup a Processor.
+-
+-cpu_type = None
+-if args.cpu == "kvm":
+-    cpu_type = CPUTypes.KVM
+-elif args.cpu == "atomic":
+-    cpu_type = CPUTypes.ATOMIC
+-elif args.cpu == "timing":
+-    cpu_type = CPUTypes.TIMING
+-elif args.cpu == "o3":
+-    cpu_type = CPUTypes.O3
+-else:
+-    raise NotImplementedError(
+-        "CPU type '{}' is not supported in the boot tests.".format(args.cpu)
+-    )
+-
+-assert cpu_type != None
+-
+ processor = SimpleProcessor(
+-    cpu_type=cpu_type, isa=ISA.X86, num_cores=args.num_cpus
++    cpu_type=get_cpu_type_from_str(args.cpu),
++    isa=ISA.X86,
++    num_cores=args.num_cpus,
+ )
+ 
+ # Setup the motherboard.
+-- 
+1.8.3.1
+

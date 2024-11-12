@@ -1,0 +1,35 @@
+From 0d1a40602f918eff84c0e8028bb369e8ead4a496 Mon Sep 17 00:00:00 2001
+From: "Daniel R. Carvalho" <odanrc@yahoo.com.br>
+Date: Sun, 19 Dec 2021 11:43:11 +0100
+Subject: [PATCH 063/757] base: Finish deprecating SatCounter
+
+SatCounter has been marked as deprecated for at least 2 versions,
+so it can be removed.
+
+Change-Id: Iffb75822cc0d09d8b7d9b86828b26198865ce407
+Signed-off-by: Daniel R. Carvalho <odanrc@yahoo.com.br>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54523
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/sat_counter.hh | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/src/base/sat_counter.hh b/src/base/sat_counter.hh
+index 6644b05..a607c4c 100644
+--- a/src/base/sat_counter.hh
++++ b/src/base/sat_counter.hh
+@@ -340,9 +340,6 @@ typedef GenericSatCounter<uint32_t> SatCounter32;
+ typedef GenericSatCounter<uint64_t> SatCounter64;
+ /** @} */
+ 
+-[[deprecated("Use SatCounter8 (or variants) instead")]]
+-typedef SatCounter8 SatCounter;
+-
+ } // namespace gem5
+ 
+ #endif // __BASE_SAT_COUNTER_HH__
+-- 
+1.8.3.1
+

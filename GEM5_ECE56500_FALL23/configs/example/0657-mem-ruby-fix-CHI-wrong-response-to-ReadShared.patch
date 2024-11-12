@@ -1,0 +1,92 @@
+From ff5aafa1e9e452061b7e63805ee1d611ed6ce9d9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 1 Mar 2022 18:48:43 -0600
+Subject: [PATCH 657/757] mem-ruby: fix CHI wrong response to ReadShared
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When an exclusive cache is responding to a ReadShared and the line is
+unique, it send the data in unique state without checking if the line
+already has other sharers in other upstream caches.
+
+This patch fixes this issue and also cleans up Send_CompData.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: Ica7c2afafb55750681b39ae7de99a665689ecb8a
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57389
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 37 +++++++++++---------------
+ 1 file changed, 15 insertions(+), 22 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 280ae50..7dbb05c 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2021 ARM Limited
++ * Copyright (c) 2021-2022 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -2201,27 +2201,15 @@ action(Send_CompData, desc="") {
+   bool is_rd_nsd := tbe.reqType == CHIRequestType:ReadNotSharedDirty;
+   bool is_rd_unique := tbe.reqType == CHIRequestType:ReadUnique;
+ 
++  // if the config allows (or not caching the data) and line has no sharers
++  bool snd_unique_on_rs := (fwd_unique_on_readshared || tbe.dataToBeInvalid)
++                          && tbe.dataUnique && tbe.dir_sharers.isEmpty();
++  // if the request type allows and we won't be caching the data
++  bool snd_dirty_on_rs := is_rd_shared && !is_rd_nsd && tbe.dataToBeInvalid;
++
+   if (is_rd_once) {
+     tbe.snd_msgType := CHIDataType:CompData_I;
+-  } else if (tbe.dataToBeInvalid) {
+-    // We will drop the data so propagate it's coherent state upstream
+-    if (tbe.dataUnique && tbe.dataDirty) {
+-      tbe.snd_msgType := CHIDataType:CompData_UD_PD;
+-    } else if (tbe.dataUnique) {
+-      tbe.snd_msgType := CHIDataType:CompData_UC;
+-    } else if (tbe.dataDirty) {
+-      if (is_rd_nsd) {
+-        tbe.snd_msgType := CHIDataType:CompData_SC;
+-      } else {
+-        tbe.snd_msgType := CHIDataType:CompData_SD_PD;
+-      }
+-    } else {
+-      tbe.snd_msgType := CHIDataType:CompData_SC;
+-    }
+-  } else if (is_rd_unique ||
+-             (is_rd_shared && tbe.dataUnique &&
+-              fwd_unique_on_readshared && (tbe.dir_ownerExists == false))) {
+-    // propagates dirtyness
++  } else if (is_rd_unique || (is_rd_shared && snd_unique_on_rs)) {
+     assert(tbe.dataUnique);
+     if (tbe.dataDirty) {
+       tbe.snd_msgType := CHIDataType:CompData_UD_PD;
+@@ -2229,8 +2217,13 @@ action(Send_CompData, desc="") {
+       tbe.snd_msgType := CHIDataType:CompData_UC;
+     }
+   } else if (is_rd_shared) {
+-    // still keeping a copy so can send as SC
+-    tbe.snd_msgType := CHIDataType:CompData_SC;
++    if (tbe.dataDirty && snd_dirty_on_rs) {
++      tbe.snd_msgType := CHIDataType:CompData_SD_PD;
++    } else {
++      // notice the MaintainCoherence will send WriteClean if the line
++      // is dirty and we won't be caching the data
++      tbe.snd_msgType := CHIDataType:CompData_SC;
++    }
+   } else {
+     error("Invalid request type");
+   }
+-- 
+1.8.3.1
+

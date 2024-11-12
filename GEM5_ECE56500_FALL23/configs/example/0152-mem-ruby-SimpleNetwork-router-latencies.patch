@@ -1,0 +1,158 @@
+From 72185e51b2ac8ce9028e38a89f1c7987f83a39df Mon Sep 17 00:00:00 2001
+From: Tiago Muck <tiago.muck@arm.com>
+Date: Fri, 7 Jun 2019 18:20:39 -0500
+Subject: [PATCH 152/757] mem-ruby: SimpleNetwork router latencies
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SimpleNetwork takes into account the network router latency parameter.
+The latency may be set to zero. PerfectSwitch and Throttle events were
+assigned different priorities to ensure they always execute in the same
+order for zero-latency forwarding.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I6cae6a0fc22b25078c27a1e2f71744c08efd7753
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41856
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/simple/PerfectSwitch.cc | 17 +++++++++++++++--
+ src/mem/ruby/network/simple/SimpleNetwork.py |  2 ++
+ src/mem/ruby/network/simple/Switch.cc        |  4 ++--
+ src/mem/ruby/network/simple/Switch.hh        | 12 ++++++++++++
+ src/mem/ruby/network/simple/Throttle.cc      |  2 +-
+ 5 files changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.cc b/src/mem/ruby/network/simple/PerfectSwitch.cc
+index ff0400d..5fb52af 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.cc
++++ b/src/mem/ruby/network/simple/PerfectSwitch.cc
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2020 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
+  * All rights reserved.
+  *
+@@ -55,7 +67,8 @@ operator<(const LinkOrder& l1, const LinkOrder& l2)
+ }
+ 
+ PerfectSwitch::PerfectSwitch(SwitchID sid, Switch *sw, uint32_t virt_nets)
+-    : Consumer(sw), m_switch_id(sid), m_switch(sw)
++    : Consumer(sw, Switch::PERFECTSWITCH_EV_PRI),
++      m_switch_id(sid), m_switch(sw)
+ {
+     m_round_robin_start = 0;
+     m_wakeups_wo_switch = 0;
+@@ -281,7 +294,7 @@ PerfectSwitch::operateMessageBuffer(MessageBuffer *buffer, int incoming,
+                     incoming, vnet, outgoing, vnet);
+ 
+             m_out[outgoing][vnet]->enqueue(msg_ptr, current_time,
+-                                           m_switch->cyclesToTicks(Cycles(1)));
++                                           m_switch->latencyTicks());
+         }
+     }
+ }
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.py b/src/mem/ruby/network/simple/SimpleNetwork.py
+index 68974cc..a186dae 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.py
++++ b/src/mem/ruby/network/simple/SimpleNetwork.py
+@@ -97,6 +97,7 @@ class SimpleNetwork(RubyNetwork):
+                 if link.dst_node == router:
+                     for i in range(int(self.number_of_virtual_networks)):
+                         router_buffers.append(MessageBuffer(ordered = True,
++                                     allow_zero_latency = True,
+                                      buffer_size = self.vnet_buffer_size(i)))
+ 
+             # Add message buffers to routers for each external link connection
+@@ -105,6 +106,7 @@ class SimpleNetwork(RubyNetwork):
+                 if link.int_node in self.routers:
+                     for i in range(int(self.number_of_virtual_networks)):
+                         router_buffers.append(MessageBuffer(ordered = True,
++                                     allow_zero_latency = True,
+                                      buffer_size = self.vnet_buffer_size(i)))
+             router.port_buffers = router_buffers
+ 
+diff --git a/src/mem/ruby/network/simple/Switch.cc b/src/mem/ruby/network/simple/Switch.cc
+index e1600ea..0977ba7 100644
+--- a/src/mem/ruby/network/simple/Switch.cc
++++ b/src/mem/ruby/network/simple/Switch.cc
+@@ -58,8 +58,8 @@ using stl_helpers::operator<<;
+ 
+ Switch::Switch(const Params &p)
+   : BasicRouter(p),
+-    perfectSwitch(m_id, this, p.virt_nets), m_num_connected_buffers(0),
+-    switchStats(this)
++    perfectSwitch(m_id, this, p.virt_nets),  m_latency(p.latency),
++    m_num_connected_buffers(0), switchStats(this)
+ {
+     m_port_buffers.reserve(p.port_buffers.size());
+     for (auto& buffer : p.port_buffers) {
+diff --git a/src/mem/ruby/network/simple/Switch.hh b/src/mem/ruby/network/simple/Switch.hh
+index 1498df6..5312c5c 100644
+--- a/src/mem/ruby/network/simple/Switch.hh
++++ b/src/mem/ruby/network/simple/Switch.hh
+@@ -77,6 +77,12 @@ class SimpleNetwork;
+ class Switch : public BasicRouter
+ {
+   public:
++
++    // Makes sure throttle sends messages to the links after the switch is
++    // done forwarding the messages in the same cycle
++    static constexpr Event::Priority PERFECTSWITCH_EV_PRI = Event::Default_Pri;
++    static constexpr Event::Priority THROTTLE_EV_PRI = Event::Default_Pri + 1;
++
+     typedef SwitchParams Params;
+     Switch(const Params &p);
+     ~Switch() = default;
+@@ -100,6 +106,10 @@ class Switch : public BasicRouter
+     bool functionalRead(Packet *, WriteMask&);
+     uint32_t functionalWrite(Packet *);
+ 
++    Cycles latencyCycles() const { return m_latency; }
++
++    Tick latencyTicks() const { return cyclesToTicks(m_latency); }
++
+   private:
+     // Private copy constructor and assignment operator
+     Switch(const Switch& obj);
+@@ -109,6 +119,8 @@ class Switch : public BasicRouter
+     SimpleNetwork* m_network_ptr;
+     std::list<Throttle> throttles;
+ 
++    const Cycles m_latency;
++
+     unsigned m_num_connected_buffers;
+     std::vector<MessageBuffer*> m_port_buffers;
+ 
+diff --git a/src/mem/ruby/network/simple/Throttle.cc b/src/mem/ruby/network/simple/Throttle.cc
+index 65c930c..1e530df 100644
+--- a/src/mem/ruby/network/simple/Throttle.cc
++++ b/src/mem/ruby/network/simple/Throttle.cc
+@@ -66,7 +66,7 @@ static int network_message_to_size(Message* net_msg_ptr);
+ 
+ Throttle::Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
+                    int endpoint_bandwidth, Switch *em)
+-    : Consumer(em),
++    : Consumer(em,  Switch::THROTTLE_EV_PRI),
+       m_switch_id(sID), m_switch(em), m_node(node),
+       m_physical_vnets(false), m_ruby_system(rs),
+       throttleStats(em, node)
+-- 
+1.8.3.1
+

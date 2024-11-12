@@ -1,0 +1,45 @@
+From 4bbcd985981258136871e1754662729b5a3ce631 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 17 Mar 2022 09:53:49 +0000
+Subject: [PATCH 462/757] dev-arm: Remove unused ELIsInHost redirection for
+ CNTKCTL_EL1
+
+The redirection to CNTHCTL_EL2 is already handled in
+ISA::redirectRegVHE
+
+Change-Id: Ia3290c5bdb75c6e45f08a47c1b75881bc52add5f
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58115
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/generic_timer.cc | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/src/dev/arm/generic_timer.cc b/src/dev/arm/generic_timer.cc
+index 12144a5..ac25c05 100644
+--- a/src/dev/arm/generic_timer.cc
++++ b/src/dev/arm/generic_timer.cc
+@@ -535,7 +535,6 @@ void
+ GenericTimer::setMiscReg(int reg, unsigned cpu, RegVal val)
+ {
+     CoreTimers &core(getTimers(cpu));
+-    ThreadContext *tc = system.threads[cpu];
+ 
+     switch (reg) {
+       case MISCREG_CNTFRQ:
+@@ -547,10 +546,6 @@ GenericTimer::setMiscReg(int reg, unsigned cpu, RegVal val)
+       case MISCREG_CNTKCTL:
+       case MISCREG_CNTKCTL_EL1:
+       {
+-        if (ELIsInHost(tc, currEL(tc))) {
+-            tc->setMiscReg(MISCREG_CNTHCTL_EL2, val);
+-            return;
+-        }
+         RegVal old_cnt_ctl = core.cntkctl;
+         core.cntkctl = val;
+ 
+-- 
+1.8.3.1
+

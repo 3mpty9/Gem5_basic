@@ -1,0 +1,55 @@
+From 7f25e7acbfbd14c60c85015adcdcd2014f4a56aa Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 25 Apr 2022 12:47:06 -0700
+Subject: [PATCH 584/757] stdlib: Fix race condition in creating of resource
+ dir
+
+Found via a failing weekly test:
+https://jenkins.gem5.org/job/weekly/46/
+
+The following exception was thrown:
+
+```
+FileExistsError: [Errno 17] File exists: '/nobackup/jenkins/workspace/weekly/tests/gem5/resources'
+
+At:
+  /usr/lib/python3.8/os.py(228): makedirs
+  build/GCN3_X86/python/gem5/resources/resource.py(156): __init__
+  /nobackup/jenkins/workspace/weekly/tests/gem5/configs/x86_boot_exit_run.py(192): <module>
+  build/GCN3_X86/python/m5/main.py(440): main
+```
+
+It was found that, in cases where the resource directory does not exist,
+there is a race condition between gem5 threads to create the directory.
+This patch fixes this so threads that lose this race continue normally.
+
+Change-Id: Ie3323c4df0b247e7830c5d3ab93a4d7f9224fe36
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59090
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/resources/resource.py | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/python/gem5/resources/resource.py b/src/python/gem5/resources/resource.py
+index f03490b..f72215a 100644
+--- a/src/python/gem5/resources/resource.py
++++ b/src/python/gem5/resources/resource.py
+@@ -153,7 +153,12 @@ class Resource(AbstractResource):
+                     )
+                 )
+         else:
+-            os.makedirs(resource_directory)
++            # `exist_ok=True` here as, occasionally, if multiple instance of
++            # gem5 are started simultaneously, a race condition can exist to
++            # create the resource directory. Without `exit_ok=True`, threads
++            # which lose this race will thrown a `FileExistsError` exception.
++            # `exit_ok=True` ensures no exception is thrown.
++            os.makedirs(resource_directory, exist_ok=True)
+ 
+         to_path = os.path.join(resource_directory, resource_name)
+ 
+-- 
+1.8.3.1
+

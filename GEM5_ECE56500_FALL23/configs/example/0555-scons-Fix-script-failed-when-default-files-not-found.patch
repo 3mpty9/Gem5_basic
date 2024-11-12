@@ -1,0 +1,30 @@
+From 7a8af170e362200d6f58c50c5cc9e21bfc22a14e Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Tue, 12 Apr 2022 11:27:33 +0800
+Subject: [PATCH 555/757] scons: Fix script failed when default files not found
+
+Change-Id: Ic673783cb5050159a141a869ca17b1ac09a924ef
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58809
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/SConstruct b/SConstruct
+index cf130c1..95ebff1 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -633,7 +633,7 @@ for variant_path in variant_paths:
+                     (' or '.join(current_vars_files), default_vars_file))
+         else:
+             error("Cannot find variables file(s) %s or default file(s) %s" %
+-                    (' or '.join(current_vars_file),
++                    (' or '.join(current_vars_files),
+                      ' or '.join(default_vars_files)))
+             Exit(1)
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,39 @@
+From ff4a8b15a00d43e8d18123d4ce1e8ada5a2e8c2b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 16 Feb 2022 22:14:37 -0800
+Subject: [PATCH 262/757] scons: Handle TARGET_GPU_ISA not being set.
+
+If TARGET_GPU_ISA is not set, even if the GPU ISA namespace isn't used
+by anything, the logic which figures out what to set it to will fail.
+This checks for that condition and sets it to something invalid, but
+doesn't crash. If that namespace is actually used, then the build will
+still fail.
+
+Change-Id: Iec44255cccbafa4aceaa68bdd8b6a835dc0637a0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56895
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/SConscript | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index 6c8ccaf..d3c5a5c 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -563,7 +563,10 @@ env.Command('config/the_isa.hh', [],
+ def makeTheGPUISA(source, target, env):
+     gpu_isa = env['TARGET_GPU_ISA']
+ 
+-    namespace = gpu_isa[0].upper() + gpu_isa[1:].lower() + 'ISA'
++    if gpu_isa:
++        namespace = gpu_isa[0].upper() + gpu_isa[1:].lower() + 'ISA'
++    else:
++        namespace = 'None'
+ 
+     code = code_formatter()
+     code('''\
+-- 
+1.8.3.1
+

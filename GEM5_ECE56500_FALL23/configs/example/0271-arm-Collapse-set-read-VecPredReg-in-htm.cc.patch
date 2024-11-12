@@ -1,0 +1,41 @@
+From 973d9c82c099067a7eb9f3804722cbd5691a6359 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:29:03 -0700
+Subject: [PATCH 271/757] arm: Collapse (set|read)VecPredReg in htm.cc.
+
+Replace these helpers with calls to the underlying setReg and getReg.
+
+Change-Id: I1b811f5dab2d23aafc2f373f743126a54b8c3d73
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49699
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/htm.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/htm.cc b/src/arch/arm/htm.cc
+index 84ef4a1..8d20563 100644
+--- a/src/arch/arm/htm.cc
++++ b/src/arch/arm/htm.cc
+@@ -86,7 +86,7 @@ ArmISA::HTMCheckpoint::save(ThreadContext *tc)
+     }
+     for (auto n = 0; n < NumVecPredRegs; n++) {
+         RegId idx = RegId(VecPredRegClass, n);
+-        p[n] = tc->readVecPredReg(idx);
++        tc->getReg(idx, &p[n]);
+     }
+     fpcr = tc->readMiscReg(MISCREG_FPCR);
+     fpsr = tc->readMiscReg(MISCREG_FPSR);
+@@ -113,7 +113,7 @@ ArmISA::HTMCheckpoint::restore(ThreadContext *tc, HtmFailureFaultCause cause)
+     }
+     for (auto n = 0; n < NumVecPredRegs; n++) {
+         RegId idx = RegId(VecPredRegClass, n);
+-        tc->setVecPredReg(idx, p[n]);
++        tc->setReg(idx, &p[n]);
+     }
+     tc->setMiscReg(MISCREG_FPCR, fpcr);
+     tc->setMiscReg(MISCREG_FPSR, fpsr);
+-- 
+1.8.3.1
+

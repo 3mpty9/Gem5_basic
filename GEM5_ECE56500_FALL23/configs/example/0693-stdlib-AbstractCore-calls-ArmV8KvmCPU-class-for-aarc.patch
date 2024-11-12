@@ -1,0 +1,64 @@
+From c64f296695e9e85340d4f849ab06b1deb2fb60ba Mon Sep 17 00:00:00 2001
+From: Kaustav Goswami <kggoswami@ucdavis.edu>
+Date: Fri, 3 Jun 2022 21:35:53 +0000
+Subject: [PATCH 693/757] stdlib: AbstractCore calls ArmV8KvmCPU class for
+ aarch64
+
+This change calls the stdlib's correct ArmKvmCPU class (ArmKvmCPU or
+ArmV8KVMCPU) depending upon the host machine's architecture when
+using KVM cores with ARM ISA.
+
+Change-Id: I2ba8070825503659cd93da15da8507528d7f12ad
+Signed-off-by: Kaustav Goswami <kggoswami@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60329
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/python/gem5/components/processors/abstract_core.py | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/python/gem5/components/processors/abstract_core.py b/src/python/gem5/components/processors/abstract_core.py
+index 4da26bf..32f597d 100644
+--- a/src/python/gem5/components/processors/abstract_core.py
++++ b/src/python/gem5/components/processors/abstract_core.py
+@@ -27,6 +27,7 @@
+ from abc import ABCMeta, abstractmethod
+ from typing import Optional
+ import importlib
++import platform
+ 
+ from .cpu_types import CPUTypes
+ from ...isas import ISA
+@@ -34,7 +35,6 @@ from ...utils.requires import requires
+ 
+ from m5.objects import BaseMMU, Port, SubSystem
+ 
+-
+ class AbstractCore(SubSystem):
+     __metaclass__ = ABCMeta
+ 
+@@ -158,8 +158,18 @@ class AbstractCore(SubSystem):
+         else:
+             module_str = f"m5.objects.{_isa_string_map[isa]}CPU"
+ 
+-        cpu_class_str = f"{_isa_string_map[isa]}"\
+-                        f"{_cpu_types_string_map[cpu_type]}"
++        # GEM5 compiles two versions of KVM for ARM depending upon the host CPU
++        # : ArmKvmCPU and ArmV8KvmCPU for 32 bit (Armv7l) and 64 bit (Armv8)
++        # respectively.
++
++        if isa.name == "ARM" and \
++                cpu_type == CPUTypes.KVM and \
++                platform.architecture()[0] == "64bit":
++            cpu_class_str = f"{_isa_string_map[isa]}V8"\
++                            f"{_cpu_types_string_map[cpu_type]}"
++        else:
++            cpu_class_str = f"{_isa_string_map[isa]}"\
++                            f"{_cpu_types_string_map[cpu_type]}"
+ 
+         try:
+             to_return_cls = getattr(importlib.import_module(module_str),
+-- 
+1.8.3.1
+

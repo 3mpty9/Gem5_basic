@@ -1,0 +1,71 @@
+From 9d3cd9792054f47d39b26b39844c7fcd54e5671b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 10 Feb 2022 23:10:52 -0800
+Subject: [PATCH 391/757] scons: Turn a lot of compiler flag vars into env
+ vars.
+
+These are used to adapt gem5 to the system it's being built on, and so
+should be attached to the host via the environment rather than gem5's
+configuration.
+
+Change-Id: I2adfe1af484dcdeae32a48097d9aa87752a7ed2a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56752
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ SConstruct                        |  7 -------
+ site_scons/gem5_scons/defaults.py | 11 +++++++++--
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index ec36532..000e526 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -253,13 +253,6 @@ global_vars_file = os.path.join(build_root, 'variables.global')
+ global_vars = Variables(global_vars_file, args=ARGUMENTS)
+ 
+ global_vars.AddVariables(
+-    ('CCFLAGS_EXTRA', 'Extra C and C++ compiler flags', ''),
+-    ('GEM5PY_CCFLAGS_EXTRA', 'Extra C and C++ gem5py compiler flags', ''),
+-    ('GEM5PY_LINKFLAGS_EXTRA', 'Extra marshal gem5py flags', ''),
+-    ('LINKFLAGS_EXTRA', 'Extra linker flags', ''),
+-    ('PYTHON_CONFIG', 'Python config binary to use',
+-     [ 'python3-config', 'python-config']
+-    ),
+     ('BATCH', 'Use batch pool for build and tests', False),
+     ('BATCH_CMD', 'Batch pool submission command name', 'qdo'),
+     ('M5_BUILD_CACHE', 'Cache built objects in this directory', False),
+diff --git a/site_scons/gem5_scons/defaults.py b/site_scons/gem5_scons/defaults.py
+index 4efaa26..4382937 100644
+--- a/site_scons/gem5_scons/defaults.py
++++ b/site_scons/gem5_scons/defaults.py
+@@ -46,7 +46,9 @@ def EnvDefaults(env):
+     # export TERM so that clang reports errors in color
+     use_vars = set([ 'AS', 'AR', 'CC', 'CXX', 'HOME', 'LD_LIBRARY_PATH',
+                      'LIBRARY_PATH', 'PATH', 'PKG_CONFIG_PATH', 'PROTOC',
+-                     'PYTHONPATH', 'RANLIB', 'TERM' ])
++                     'PYTHONPATH', 'RANLIB', 'TERM', 'PYTHON_CONFIG',
++                     'CCFLAGS_EXTRA', 'GEM5PY_CCFLAGS_EXTRA',
++                     'GEM5PY_LINKFLAGS_EXTRA', 'LINKFLAGS_EXTRA'])
+ 
+     use_prefixes = [
+         "ASAN_",           # address sanitizer symbolizer path and settings
+@@ -68,7 +70,12 @@ def EnvDefaults(env):
+     var_overrides = {
+         'CC': env['CC'],
+         'CXX': env['CXX'],
+-        'PROTOC': 'protoc'
++        'PROTOC': 'protoc',
++        'PYTHON_CONFIG': [ 'python3-config', 'python-config' ],
++        'CCFLAGS_EXTRA': '',
++        'GEM5PY_CCFLAGS_EXTRA': '',
++        'GEM5PY_LINKFLAGS_EXTRA': '',
++        'LINKFLAGS_EXTRA': '',
+     }
+     for key,default in var_overrides.items():
+         env[key] = env['ENV'].get(key, default)
+-- 
+1.8.3.1
+

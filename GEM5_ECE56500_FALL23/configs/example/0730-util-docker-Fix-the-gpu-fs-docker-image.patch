@@ -1,0 +1,33 @@
+From 15c896831a615487439149024da1297919f44549 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 16:26:51 -0700
+Subject: [PATCH 730/757] util-docker: Fix the gpu-fs docker image.
+
+This was broken, it was actually building he gcn-gpu image, not the
+gpu-fs image. This patch fixes this error.
+
+Change-Id: I2d8ca0ea6584d059ddb6c9084de2b3075fb59723
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60532
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ util/dockerfiles/docker-compose.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/util/dockerfiles/docker-compose.yaml b/util/dockerfiles/docker-compose.yaml
+index 5a16717..103c221 100644
+--- a/util/dockerfiles/docker-compose.yaml
++++ b/util/dockerfiles/docker-compose.yaml
+@@ -8,7 +8,7 @@ services:
+         image: gcr.io/gem5-test/gcn-gpu
+     gpu-fs:
+         build:
+-            context: gcn-gpu
++            context: gpu-fs
+             dockerfile: Dockerfile
+         image: gcr.io/gem5-test/gpu-fs
+     sst:
+-- 
+1.8.3.1
+

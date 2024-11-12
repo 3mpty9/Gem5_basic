@@ -1,0 +1,138 @@
+From 156225124366d37f620c666fc36d6978402bba4b Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 31 Mar 2022 09:55:20 -0700
+Subject: [PATCH 539/757] dev-amdgpu: Update comments pointing to ROCK repo
+
+It seems the tag name was changed which broke a few links in some
+comments pointing to where definitions and struct come from. Update the
+URLs and also use consistent version.
+
+Change-Id: I7d6393f1f08d592989999a8a6f9c5bbdf1a9c992
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58471
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_vm.hh         | 4 ++--
+ src/dev/amdgpu/ih_mmio.hh           | 2 +-
+ src/dev/amdgpu/interrupt_handler.hh | 2 +-
+ src/dev/amdgpu/pm4_defines.hh       | 6 ++++--
+ src/dev/amdgpu/pm4_queues.hh        | 4 ++--
+ src/dev/amdgpu/sdma_commands.hh     | 2 +-
+ src/dev/amdgpu/sdma_mmio.hh         | 4 ++--
+ 7 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/dev/amdgpu/amdgpu_vm.hh b/src/dev/amdgpu/amdgpu_vm.hh
+index e16975b..8df169b 100644
+--- a/src/dev/amdgpu/amdgpu_vm.hh
++++ b/src/dev/amdgpu/amdgpu_vm.hh
+@@ -45,9 +45,9 @@
+  * MMIO offsets for graphics register bus manager (GRBM). These values were
+  * taken from linux header files. The header files can be found here:
+  *
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *      drivers/gpu/drm/amd/include/ asic_reg/gc/gc_9_0_offset.h
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *      drivers/gpu/drm/amd/include/ asic_reg/mmhub/mmhub_1_0_offset.h
+  */
+ 
+diff --git a/src/dev/amdgpu/ih_mmio.hh b/src/dev/amdgpu/ih_mmio.hh
+index c7e94fd..b0c1e45 100644
+--- a/src/dev/amdgpu/ih_mmio.hh
++++ b/src/dev/amdgpu/ih_mmio.hh
+@@ -36,7 +36,7 @@
+  * MMIO offsets for interrupt handler. These values were taken from the linux
+  * header for IH. The header files can be found here:
+  *
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *      drivers/gpu/drm/amd/include/asic_reg/oss/osssys_4_0_offset.h
+  */
+ #define mmIH_RB_CNTL                                            0x0080
+diff --git a/src/dev/amdgpu/interrupt_handler.hh b/src/dev/amdgpu/interrupt_handler.hh
+index 1b38dc3..fcf1076 100644
+--- a/src/dev/amdgpu/interrupt_handler.hh
++++ b/src/dev/amdgpu/interrupt_handler.hh
+@@ -50,7 +50,7 @@ namespace gem5
+ 
+ /**
+  * Defines from driver code. Taken from
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *     drivers/gpu/drm/amd/include/soc15_ih_clientid.h
+  */
+ enum soc15_ih_clientid
+diff --git a/src/dev/amdgpu/pm4_defines.hh b/src/dev/amdgpu/pm4_defines.hh
+index 99e245c..b690e54 100644
+--- a/src/dev/amdgpu/pm4_defines.hh
++++ b/src/dev/amdgpu/pm4_defines.hh
+@@ -43,9 +43,11 @@ namespace gem5
+ {
+ 
+ /**
+- * PM4 opcodes. Taken from linux tree at
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * PM4 opcodes. Taken from linux tree from the following locations:
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *     drivers/gpu/drm/amd/amdkfd/kfd_pm4_opcodes.h
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
++ *     drivers/gpu/drm/amd/amdgpu/soc15d.h
+  */
+ enum it_opcode_type
+ {
+diff --git a/src/dev/amdgpu/pm4_queues.hh b/src/dev/amdgpu/pm4_queues.hh
+index 4af5e30..4e8638b 100644
+--- a/src/dev/amdgpu/pm4_queues.hh
++++ b/src/dev/amdgpu/pm4_queues.hh
+@@ -38,7 +38,7 @@ namespace gem5
+ 
+ /**
+  * Queue descriptor with relevant MQD attributes. Taken from
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *     drivers/gpu/drm/amd/include/v9_structs.h
+  */
+ typedef struct GEM5_PACKED
+@@ -186,7 +186,7 @@ typedef struct GEM5_PACKED
+ 
+ /**
+  * Queue descriptor for SDMA-based user queues (RLC queues). Taken from
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *     drivers/gpu/drm/amd/include/v9_structs.h
+  */
+ typedef struct GEM5_PACKED
+diff --git a/src/dev/amdgpu/sdma_commands.hh b/src/dev/amdgpu/sdma_commands.hh
+index c5eebf9..50f942b 100644
+--- a/src/dev/amdgpu/sdma_commands.hh
++++ b/src/dev/amdgpu/sdma_commands.hh
+@@ -35,7 +35,7 @@
+ /**
+  * Commands for the SDMA engine. The header files can be found here:
+  *
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *      drivers/gpu/drm/amd/amdgpu/vega10_sdma_pkt_open.h
+  */
+ #define SDMA_OP_NOP  0
+diff --git a/src/dev/amdgpu/sdma_mmio.hh b/src/dev/amdgpu/sdma_mmio.hh
+index a10682f..a87bfb8 100644
+--- a/src/dev/amdgpu/sdma_mmio.hh
++++ b/src/dev/amdgpu/sdma_mmio.hh
+@@ -36,9 +36,9 @@
+  * MMIO offsets for SDMA engine. These values were taken from the linux header
+  * for SDMA. The header files can be found here:
+  *
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *      drivers/gpu/drm/amd/include/asic_reg/sdma0/sdma0_4_0_offset.h
+- * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *     drivers/gpu/drm/amd/include/asic_reg/sdma1/sdma1_4_0_offset.h
+  */
+ #define mmSDMA_GFX_RB_CNTL                                0x0080
+-- 
+1.8.3.1
+

@@ -1,0 +1,41 @@
+From f64f05eff621c1e8de29b8a7f9df2e5d5f8fa318 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 17 Mar 2022 12:04:27 -0500
+Subject: [PATCH 426/757] arch-vega: Mark global instructions executed as
+ global
+
+The executed_as field is currently not set for global memory
+instructions. This results in the default of SC_NONE, causing the status
+vector to be all zeros. The GM pipe sees this and completes the
+instruction immediately rather than issuing memory requests. This is
+fixed by marking the instruction as executed as SC_GLOBAL always. Flat
+instructions use resolvedFlatSegment for this, however since global
+instructions are known to be global we can set this field directly. This
+results in the expected issuing of memory requests to GPU memory.
+
+Change-Id: Ic23102853ccd49a41e2f083b7bb24f033dfed18a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57829
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/insts/op_encodings.hh | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.hh b/src/arch/amdgpu/vega/insts/op_encodings.hh
+index e9ce4cc..17d69d5 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.hh
++++ b/src/arch/amdgpu/vega/insts/op_encodings.hh
+@@ -931,6 +931,9 @@ namespace VegaISA
+ 
+             if (isFlat()) {
+                 gpuDynInst->resolveFlatSegment(gpuDynInst->exec_mask);
++            } else {
++                gpuDynInst->staticInstruction()->executed_as =
++                    enums::SC_GLOBAL;
+             }
+         }
+ 
+-- 
+1.8.3.1
+

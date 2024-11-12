@@ -1,0 +1,98 @@
+From dda149ecf8c35219461ceb12edbeda8b62b91078 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 3 Aug 2021 21:48:28 -0700
+Subject: [PATCH 083/757] scons: Add a --linker option.
+
+There is currently a "--gold-linker" option, which tells SCons to use
+the gold linker. This puts the gold linker in a special position where
+it has its own command line option, and makes it impossible to
+explicitly select any other linker.
+
+This change adds a --linker option which can be set to "bfd" (the
+default gnu linker), "gold" (the gnu gold linker), or "lld" which is the
+clang linker. If none is specified, SCons will let the compiler fall
+back to whatever its default is.
+
+The --gold-linker option is modified so that it just sets the --linker
+option for you. Because of how SCons handles adding command line
+options, there isn't a good way to complain if both it and --linker is
+used, nor is there a good way to warn that the user is using a
+deprecated command line option. A warning is in the help text for that
+option now, though.
+
+If the gold linker is selected, this change also sets the --threads
+option, and sets the --thread-count option. This tells the gold linker
+to run multi-threaded to speed up linking. Apparently the gold linker
+must have been built with an option that enables threading for these
+options to have any effect. If threads and LTO are both enabled, the
+gold linker segfaults. To avoid that problem, we don't add --threads if
+LTO has been enabled.
+
+This change also enables a new configuration, where lld, the clang
+linker, can be used with gcc. Unfortunately the format of LTO
+information gcc/g++ generates is not compatible with lld, and so if you
+set the linker to lld and enable LTO, you'll probably get errors like
+not being able to find the symbol "main".
+
+This change also allows you to select the default gnu linker ("bfd")
+when using clang, although it's not clear why you would want to do that.
+
+Change-Id: Ib37030431527f5d0bc626e9594b2e1142df889be
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49003
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ SConstruct | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index ceeb1ba..60493ae 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -98,6 +98,8 @@ import SCons.Tool
+ #
+ ########################################################################
+ 
++linker_options = ('bfd', 'gold', 'lld')
++
+ AddOption('--no-colors', dest='use_colors', action='store_false',
+           help="Don't add color to abbreviated scons output")
+ AddOption('--with-cxx-config', action='store_true',
+@@ -106,7 +108,10 @@ AddOption('--default',
+           help='Override which build_opts file to use for defaults')
+ AddOption('--ignore-style', action='store_true',
+           help='Disable style checking hooks')
+-AddOption('--gold-linker', action='store_true', help='Use the gold linker')
++AddOption('--linker', action='store', default=None, choices=linker_options,
++          help=f'Select which linker to use ({", ".join(linker_options)})')
++AddOption('--gold-linker', action='store_const', const='gold', dest='linker',
++          help='Use the gold linker. Deprecated: Use --linker=gold')
+ AddOption('--no-compress-debug', action='store_true',
+           help="Don't compress debug info in build files")
+ AddOption('--with-lto', action='store_true',
+@@ -345,8 +350,18 @@ if main['GCC'] or main['CLANG']:
+ 
+     with gem5_scons.Configure(main) as conf:
+         conf.CheckLinkFlag('-Wl,--as-needed')
+-    if GetOption('gold_linker'):
+-        main.Append(LINKFLAGS='-fuse-ld=gold')
++
++    linker = GetOption('linker')
++    if linker:
++        with gem5_scons.Configure(main) as conf:
++            if not conf.CheckLinkFlag(f'-fuse-ld={linker}'):
++                error(f'Linker "{linker}" is not supported')
++            if linker == 'gold' and not GetOption('with_lto'):
++                # Tell the gold linker to use threads. The gold linker
++                # segfaults if both threads and LTO are enabled.
++                conf.CheckLinkFlag('-Wl,--threads')
++                conf.CheckLinkFlag(
++                        '-Wl,--thread-count=%d' % GetOption('num_jobs'))
+ 
+ else:
+     error('\n'.join((
+-- 
+1.8.3.1
+

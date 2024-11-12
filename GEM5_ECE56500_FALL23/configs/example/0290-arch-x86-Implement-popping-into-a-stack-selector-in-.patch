@@ -1,0 +1,99 @@
+From 802f14bb5248036cbcd1fe386aa8ff941f669a33 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 11:22:38 -0800
+Subject: [PATCH 290/757] arch-x86: Implement popping into a stack selector in
+ real mode.
+
+Segmentation is relatively easy to deal with in real mode, vs. protected
+mode.
+
+Change-Id: I4b93a7e321d5debb7240b002bb42fdecaafbfdfe
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55590
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa                  |  3 +++
+ src/arch/x86/isa/decoder/two_byte_opcodes.isa                  | 10 ++++++++--
+ .../insts/general_purpose/data_transfer/stack_operations.py    |  9 +++++++++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index c47a9a3..e369621 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -47,6 +47,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
++                0x4: POP_REAL(sEv);
+                 default: WarnUnimpl::pop_ES();
+             }
+             default: MultiInst::ADD(OPCODE_OP_BOTTOM3,
+@@ -74,6 +75,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
++                0x4: POP_REAL(sSv);
+                 default: WarnUnimpl::pop_SS();
+             }
+             default: MultiInst::ADC(OPCODE_OP_BOTTOM3,
+@@ -88,6 +90,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
++                0x4: POP_REAL(sDv);
+                 default: WarnUnimpl::pop_DS();
+             }
+             default: MultiInst::SBB(OPCODE_OP_BOTTOM3,
+diff --git a/src/arch/x86/isa/decoder/two_byte_opcodes.isa b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+index 1a37c0a..43f1eb3 100644
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+@@ -668,7 +668,10 @@
+         }
+         0x14: decode OPCODE_OP_BOTTOM3 {
+             0x0: Inst::PUSH(sFv);
+-            0x1: pop_fs();
++            0x1: decode MODE_SUBMODE {
++                0x4: Inst::POP_REAL(sFv);
++                default: pop_fs();
++            }
+             0x2: CPUIDInst::CPUID({{
+                 CpuidResult result;
+                 bool success = doCpuid(xc->tcBase(), bits(Rax, 31, 0),
+@@ -695,7 +698,10 @@
+         }
+         0x15: decode OPCODE_OP_BOTTOM3 {
+             0x0: Inst::PUSH(sGv);
+-            0x1: pop_gs();
++            0x1: decode MODE_SUBMODE {
++                0x4: Inst::POP_REAL(sGv);
++                default: pop_gs();
++            }
+             0x2: rsm_smm();
+             0x3: Inst::BTS(Ev,Gv);
+             0x4: Inst::SHRD(Ev,Gv,Ib);
+diff --git a/src/arch/x86/isa/insts/general_purpose/data_transfer/stack_operations.py b/src/arch/x86/isa/insts/general_purpose/data_transfer/stack_operations.py
+index 350b57e..e97d17f 100644
+--- a/src/arch/x86/isa/insts/general_purpose/data_transfer/stack_operations.py
++++ b/src/arch/x86/isa/insts/general_purpose/data_transfer/stack_operations.py
+@@ -64,6 +64,15 @@ def macroop POP_P {
+     st t1, seg, riprel, disp
+ };
+ 
++def macroop POP_REAL_S {
++    ld t1, ss, [1, t0, rsp], addressSize=ssz, dataSize=2
++    addi rsp, rsp, dsz, dataSize=ssz
++    wrsel sr, t1
++    mov t1, t0, t1, dataSize=2
++    slli t1, t1, 4, dataSize=8
++    wrbase sr, t1, dataSize=8
++};
++
+ def macroop PUSH_R {
+     # Make the default data size of pops 64 bits in 64 bit mode
+     .adjust_env oszIn64Override
+-- 
+1.8.3.1
+

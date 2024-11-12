@@ -1,0 +1,35 @@
+From e13d482f3fbbb14aa222b63167e4b6ef77c3b2e7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 30 Jan 2022 21:24:32 -0800
+Subject: [PATCH 431/757] arch-x86: Remove __init__ from the X86MicrocodeRom
+ class.
+
+This is just setting up an empty dict the base class already sets up.
+
+Change-Id: I22b00799f3424f9ced784c3d25771b979865e53d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56329
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/rom.isa | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/src/arch/x86/isa/rom.isa b/src/arch/x86/isa/rom.isa
+index 4f97ac8..c7ba675 100644
+--- a/src/arch/x86/isa/rom.isa
++++ b/src/arch/x86/isa/rom.isa
+@@ -41,10 +41,6 @@ let {{
+     from micro_asm import Rom
+ 
+     class X86MicrocodeRom(Rom):
+-        def __init__(self, name):
+-            super().__init__(name)
+-            self.directives = {}
+-
+         def add_microop(self, mnemonic, microop):
+             microop.mnemonic = mnemonic
+             microop.micropc = len(self.microops)
+-- 
+1.8.3.1
+

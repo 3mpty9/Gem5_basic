@@ -1,0 +1,39 @@
+From 4df0d886df0412511db0efdf2c7beac37db20040 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 11:48:43 -0700
+Subject: [PATCH 726/757] scons: Remove -Werror for the gem5 v22.0 release
+
+While gem5 compiles on all our supported compilers, removing the -Werror
+flag on the stable branch ensures that, as new compilers are released
+with stricter warnings, gem5 remains compilable.
+
+Change-Id: I0efe6cf83714720ae0d5de9de9b993c6d8ab00a8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60510
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index 4d91eae..f1f1c64 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -418,13 +418,6 @@ for variant_path in variant_paths:
+                     conf.CheckLinkFlag(
+                             '-Wl,--thread-count=%d' % GetOption('num_jobs'))
+ 
+-        # Treat warnings as errors but white list some warnings that we
+-        # want to allow (e.g., deprecation warnings).
+-        env.Append(CCFLAGS=['-Werror',
+-                             '-Wno-error=deprecated-declarations',
+-                             '-Wno-error=deprecated',
+-                            ])
+-
+     else:
+         error('\n'.join((
+               "Don't know what compiler options to use for your compiler.",
+-- 
+1.8.3.1
+

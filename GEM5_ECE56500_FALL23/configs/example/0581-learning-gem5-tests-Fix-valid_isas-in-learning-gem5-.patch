@@ -1,0 +1,46 @@
+From e3fc3694a10a9acea424385dd1653ad3c8ad8e51 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 19 Apr 2022 11:24:00 -0700
+Subject: [PATCH 581/757] learning-gem5,tests: Fix 'valid_isas' in learning
+ gem5 part 3
+
+This was set to 'gcn3_x86_tag'. We only do this for quick X86 tests (to
+minimize the build targets during the quick tests). This is not
+necessary for the long tests.
+
+Change-Id: I3bd20b53e04d129462e6f62a24f34b093f4a1b80
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59011
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/learning_gem5/part3_test.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/tests/gem5/learning_gem5/part3_test.py b/tests/gem5/learning_gem5/part3_test.py
+index 249951b..ad9ea8d 100644
+--- a/tests/gem5/learning_gem5/part3_test.py
++++ b/tests/gem5/learning_gem5/part3_test.py
+@@ -40,9 +40,9 @@ gem5_verify_config(
+     config_args = [],
+     protocol = 'MSI',
+     # Currently only x86 has the threads test
+-    valid_isas=(constants.gcn3_x86_tag,),
++    valid_isas=(constants.x86_tag,),
+     # dynamically linked
+-    valid_hosts=constants.target_host[constants.gcn3_x86_tag],
++    valid_hosts=constants.target_host[constants.x86_tag],
+     length=constants.long_tag,
+ )
+ 
+@@ -53,6 +53,6 @@ gem5_verify_config(
+     config_args = [],
+     protocol = 'MSI',
+     # Currently only x86 has the threads test
+-    valid_isas=(constants.gcn3_x86_tag,),
++    valid_isas=(constants.x86_tag,),
+     length=constants.long_tag,
+ )
+-- 
+1.8.3.1
+

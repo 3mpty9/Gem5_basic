@@ -1,0 +1,90 @@
+From 234d61663d98115028d2f8ecfaa59a6e4993dbea Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 19 May 2022 10:52:47 +0100
+Subject: [PATCH 643/757] tests: Add realview64-o3-dual-ruby.py long test
+
+This will test Linux boot with two O3CPUs and ruby memory
+subsystem
+
+Change-Id: Iaf965fc29571ad003e7b8bc160d1e4d00b90e448
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59869
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/configs/realview64-o3-dual-ruby.py | 43 +++++++++++++++++++++++++++
+ tests/gem5/fs/linux/arm/test.py               |  3 +-
+ 2 files changed, 45 insertions(+), 1 deletion(-)
+ create mode 100644 tests/gem5/configs/realview64-o3-dual-ruby.py
+
+diff --git a/tests/gem5/configs/realview64-o3-dual-ruby.py b/tests/gem5/configs/realview64-o3-dual-ruby.py
+new file mode 100644
+index 0000000..09f8284
+--- /dev/null
++++ b/tests/gem5/configs/realview64-o3-dual-ruby.py
+@@ -0,0 +1,43 @@
++# Copyright (c) 2017, 2019, 2022 Arm Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.objects import *
++from arm_generic import *
++
++root = LinuxArmFSSystem(mem_mode='timing',
++                        mem_class=DDR3_1600_8x8,
++                        cpu_class=O3CPU,
++                        num_cpus=2,
++                        use_ruby=True).create_root()
+diff --git a/tests/gem5/fs/linux/arm/test.py b/tests/gem5/fs/linux/arm/test.py
+index 42bd706..facff57 100644
+--- a/tests/gem5/fs/linux/arm/test.py
++++ b/tests/gem5/fs/linux/arm/test.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2019-2021 Arm Limited
++# Copyright (c) 2019-2022 Arm Limited
+ # All rights reserved
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -79,6 +79,7 @@ arm_fs_long_tests = [
+     'realview-simple-timing-ruby',
+     'realview64-simple-timing-ruby',
+     'realview64-simple-timing-dual-ruby',
++    'realview64-o3-dual-ruby',
+ 
+ 
+     # The following tests fail. These are recorded in the GEM5-640
+-- 
+1.8.3.1
+

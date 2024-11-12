@@ -1,0 +1,58 @@
+From 2e4b7d90916efa9ebbbe9a978ab25fdeb0b80576 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 15 Dec 2021 22:33:17 -0800
+Subject: [PATCH 055/757] sim,python: Use scoped_interpreter_guard's argc and
+ argv ctor arguments.
+
+When pybind11's scoped_interpreter_guard is constructed, it can take
+argc and argv parameters which it uses to intitialize the sys.argv list
+in python. We can use that mechanism instead of setting that up manually
+ourselves.
+
+Change-Id: If34fac610d1f829aef313bb9ea4c9dfe6bc8fc0f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54309
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/sim/main.cc | 19 +------------------
+ 1 file changed, 1 insertion(+), 18 deletions(-)
+
+diff --git a/src/sim/main.cc b/src/sim/main.cc
+index c44531e..81a691d 100644
+--- a/src/sim/main.cc
++++ b/src/sim/main.cc
+@@ -60,28 +60,11 @@ main(int argc, char **argv)
+     // It's probably not necessary, but is mostly harmless and might be useful.
+     Py_SetProgramName(program.get());
+ 
+-    py::scoped_interpreter guard;
++    py::scoped_interpreter guard(true, argc, argv);
+ 
+     auto importer = py::module_::import("importer");
+     importer.attr("install")();
+ 
+-    // Embedded python doesn't set up sys.argv, so we'll do that ourselves.
+-    py::list py_argv;
+-    auto sys = py::module::import("sys");
+-    if (py::hasattr(sys, "argv")) {
+-        // sys.argv already exists, so grab that.
+-        py_argv = sys.attr("argv");
+-    } else {
+-        // sys.argv doesn't exist, so create it.
+-        sys.add_object("argv", py_argv);
+-    }
+-    // Clear out argv just in case it has something in it.
+-    py_argv.attr("clear")();
+-
+-    // Fill it with our argvs.
+-    for (int i = 0; i < argc; i++)
+-        py_argv.append(argv[i]);
+-
+     try {
+         py::module_::import("m5").attr("main")();
+     } catch (py::error_already_set &e) {
+-- 
+1.8.3.1
+

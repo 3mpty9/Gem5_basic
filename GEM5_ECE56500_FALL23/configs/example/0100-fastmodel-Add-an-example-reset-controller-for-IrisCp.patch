@@ -1,0 +1,350 @@
+From 614b608a08ae8b22c844e2874b4fb8aed2732a77 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Mon, 13 Dec 2021 17:54:45 +0800
+Subject: [PATCH 100/757] fastmodel: Add an example reset controller for
+ IrisCpu
+
+The example reset controller provides a register interface to config
+RVBAR and ability to reset the core.
+
+Change-Id: I088ddde6f44ff9cc5914afb834ec07a8f7f269fa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54065
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../FastModelResetControllerExample.py             |  40 ++++++
+ src/arch/arm/fastmodel/reset_controller/SConscript |  34 ++++++
+ src/arch/arm/fastmodel/reset_controller/example.cc | 136 +++++++++++++++++++++
+ src/arch/arm/fastmodel/reset_controller/example.hh |  88 +++++++++++++
+ 4 files changed, 298 insertions(+)
+ create mode 100644 src/arch/arm/fastmodel/reset_controller/FastModelResetControllerExample.py
+ create mode 100644 src/arch/arm/fastmodel/reset_controller/SConscript
+ create mode 100644 src/arch/arm/fastmodel/reset_controller/example.cc
+ create mode 100644 src/arch/arm/fastmodel/reset_controller/example.hh
+
+diff --git a/src/arch/arm/fastmodel/reset_controller/FastModelResetControllerExample.py b/src/arch/arm/fastmodel/reset_controller/FastModelResetControllerExample.py
+new file mode 100644
+index 0000000..b9327f4
+--- /dev/null
++++ b/src/arch/arm/fastmodel/reset_controller/FastModelResetControllerExample.py
+@@ -0,0 +1,40 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.proxy import *
++
++from m5.objects.Device import BasicPioDevice
++from m5.objects.IntPin import IntSourcePin
++from m5.objects.Iris import IrisBaseCPU
++
++class FastModelResetControllerExample(BasicPioDevice):
++    type = 'FastModelResetControllerExample'
++    cxx_class = 'gem5::fastmodel::ResetControllerExample'
++    cxx_header = 'arch/arm/fastmodel/reset_controller/example.hh'
++
++    cpu = Param.IrisBaseCPU('target cpu')
++    reset = IntSourcePin('reset pin')
++    halt = IntSourcePin('halt pin')
+diff --git a/src/arch/arm/fastmodel/reset_controller/SConscript b/src/arch/arm/fastmodel/reset_controller/SConscript
+new file mode 100644
+index 0000000..3230e5d
+--- /dev/null
++++ b/src/arch/arm/fastmodel/reset_controller/SConscript
+@@ -0,0 +1,34 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++Import('*')
++
++if not env['USE_ARM_FASTMODEL']:
++    Return()
++
++SimObject('FastModelResetControllerExample.py', sim_objects=[
++    'FastModelResetControllerExample'])
++
++Source('example.cc')
+diff --git a/src/arch/arm/fastmodel/reset_controller/example.cc b/src/arch/arm/fastmodel/reset_controller/example.cc
+new file mode 100644
+index 0000000..33769ac
+--- /dev/null
++++ b/src/arch/arm/fastmodel/reset_controller/example.cc
+@@ -0,0 +1,136 @@
++/*
++ * Copyright 2021 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/arm/fastmodel/reset_controller/example.hh"
++
++#include <algorithm>
++
++#include "base/logging.hh"
++
++namespace gem5
++{
++namespace fastmodel
++{
++
++ResetControllerExample::CorePins::CorePins(const std::string &module_name)
++    : reset(module_name + ".reset", 0, this),
++      halt(module_name + ".halt", 0, this)
++{}
++
++ResetControllerExample::Registers::Registers(
++    const std::string &module_name, Iris::BaseCPU *c, CorePins *p)
++    : RegisterBankLE(module_name, 0), cpu(c), pins(p),
++      nsrvbar(module_name + ".nsrvbar"),
++      rvbar(module_name + ".rvbar"),
++      reset(module_name + ".reset"),
++      halt(module_name + ".halt")
++{
++      panic_if(cpu == nullptr, "ResetControllerExample needs a target cpu.");
++      nsrvbar.writer(
++          [this] (auto &reg, auto val)
++          {
++              cpu->setResetAddr(val, false);
++          });
++      rvbar.writer(
++          [this] (auto &reg, auto val)
++          {
++              cpu->setResetAddr(val, true);
++          });
++      reset.writer(
++          [this] (auto &reg, auto val)
++          {
++              panic_if(!pins->reset.isConnected(),
++                       "%s is not connected.", pins->reset.name());
++
++              if (val)
++                  pins->reset.raise();
++              else
++                  pins->reset.lower();
++          });
++      halt.writer(
++          [this] (auto &reg, auto val)
++          {
++              panic_if(!pins->halt.isConnected(),
++                       "%s is not connected.", pins->halt.name());
++
++              if (val)
++                  pins->halt.raise();
++              else
++                  pins->halt.lower();
++          });
++
++      addRegisters({
++          nsrvbar,
++          rvbar,
++          reset,
++          halt,
++      });
++}
++
++ResetControllerExample::ResetControllerExample(const Params &p)
++    : BasicPioDevice(p, 0x20),
++      pins(p.name + ".pins"),
++      registers(p.name  + ".registers", p.cpu, &pins)
++{}
++
++Tick
++ResetControllerExample::read(PacketPtr pkt)
++{
++    pkt->makeResponse();
++    auto data = pkt->getPtr<uint8_t>();
++    auto size = pkt->getSize();
++    std::fill(data, data + size, 0);
++    return pioDelay;
++}
++
++Tick
++ResetControllerExample::write(PacketPtr pkt)
++{
++    pkt->makeResponse();
++    size_t size = pkt->getSize();
++    if (size != 4 && size != 8) {
++        pkt->setBadAddress();
++    } else {
++        auto addr = pkt->getAddr() - pioAddr;
++        registers.write(addr, pkt->getPtr<void>(), size);
++    }
++    return pioDelay;
++}
++
++Port &
++ResetControllerExample::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "reset")
++        return pins.reset;
++    else if (if_name == "halt")
++        return pins.halt;
++
++    return BasicPioDevice::getPort(if_name, idx);
++}
++
++} // namespace fastmodel
++} // namespace gem5
+diff --git a/src/arch/arm/fastmodel/reset_controller/example.hh b/src/arch/arm/fastmodel/reset_controller/example.hh
+new file mode 100644
+index 0000000..2805d6f
+--- /dev/null
++++ b/src/arch/arm/fastmodel/reset_controller/example.hh
+@@ -0,0 +1,88 @@
++/*
++ * Copyright 2021 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_ARM_FASTMODEL_RESET_CONTROLLER_EXAMPLE_HH__
++#define __ARCH_ARM_FASTMODEL_RESET_CONTROLLER_EXAMPLE_HH__
++
++#include <string>
++
++#include "arch/arm/fastmodel/iris/cpu.hh"
++#include "dev/intpin.hh"
++#include "dev/io_device.hh"
++#include "dev/reg_bank.hh"
++#include "mem/packet_access.hh"
++#include "params/FastModelResetControllerExample.hh"
++
++namespace gem5
++{
++
++namespace fastmodel
++{
++
++class ResetControllerExample : public BasicPioDevice
++{
++  private:
++    struct CorePins
++    {
++        using CoreInt = IntSourcePin<CorePins>;
++        CoreInt reset;
++        CoreInt halt;
++
++        explicit CorePins(const std::string &);
++    };
++
++    class Registers : public RegisterBankLE
++    {
++      private:
++        Iris::BaseCPU *cpu;
++        CorePins *pins;
++
++        Register64 nsrvbar;
++        Register64 rvbar;
++        Register32 reset;
++        Register32 halt;
++
++      public:
++        Registers(const std::string &, Iris::BaseCPU *, CorePins *);
++    };
++
++    CorePins pins;
++    Registers registers;
++
++  public:
++    using Params = FastModelResetControllerExampleParams;
++    explicit ResetControllerExample(const Params &);
++
++    Tick read(PacketPtr pkt) override;
++    Tick write(PacketPtr pkt) override;
++    Port &getPort(const std::string &, PortID = InvalidPortID) override;
++};
++
++} // namespace fastmodel
++} // namespace gem5
++
++#endif  // __ARCH_ARM_FASTMODEL_RESET_CONTROLLER_EXAMPLE_HH__
+-- 
+1.8.3.1
+

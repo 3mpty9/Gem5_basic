@@ -1,0 +1,55 @@
+From 35f18c4c50496c4e9f19f07cf17d244794aca80f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 8 Dec 2021 22:57:32 -0800
+Subject: [PATCH 014/757] stdlib,configs: Set SPEC examples partition param to
+ optional
+
+The SPEC2006 and SPEC2017 example configs require the passing of SPEC
+disk image to function correctly. Prior to this commit a root partition
+parameter was required. However, disk images don't necessarily have
+partitions. In this case an empty string needed passed.
+
+This patch makes the root partition parameter optional. If a disk image
+does not have a root partition, it does not need specified.
+
+Change-Id: Ic0093c70c72ab83ffaca54c8ad24245d84a5e5ba
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53846
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py | 3 ++-
+ configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+index 5624eaf..c1b7a3b 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+@@ -117,7 +117,8 @@ parser.add_argument(
+ parser.add_argument(
+     "--partition",
+     type = str,
+-    required = True,
++    required = False,
++    default=None,
+     help = "Input the root partition of the SPEC disk-image. If the disk is \
+     not partitioned, then pass \"\"."
+ )
+diff --git a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+index 25bbbea..2a03389 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+@@ -123,7 +123,8 @@ parser.add_argument(
+ parser.add_argument(
+     "--partition",
+     type = str,
+-    required = True,
++    required = False,
++    default=None,
+     help = "Input the root partition of the SPEC disk-image. If the disk is \
+     not partitioned, then pass \"\"."
+ )
+-- 
+1.8.3.1
+

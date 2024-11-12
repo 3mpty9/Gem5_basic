@@ -1,0 +1,45 @@
+From 347364ab0f12e6ff5eb8860159a929a70c46f839 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 15 Mar 2022 09:13:18 -0500
+Subject: [PATCH 528/757] gpu-compute: Handle mailbox/wakeup signals for GPUFS
+
+The current mailbox/wakeup signal uses the SE mode proxy port to write
+the event value. This is not available in full system mode so instead we
+need to issue a DMA write to the address. The value of event_val clears
+the event.
+
+Change-Id: I424469076e87e690ab0bb722bac4c3e7414fb150
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57709
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/gpu_command_processor.cc | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/gpu-compute/gpu_command_processor.cc b/src/gpu-compute/gpu_command_processor.cc
+index 0f74cb1..08bce77 100644
+--- a/src/gpu-compute/gpu_command_processor.cc
++++ b/src/gpu-compute/gpu_command_processor.cc
+@@ -224,7 +224,17 @@ GPUCommandProcessor::updateHsaSignal(Addr signal_handle, uint64_t signal_value,
+ 
+         DPRINTF(GPUCommandProc, "Calling signal wakeup event on "
+                 "signal event value %d\n", *event_val);
+-        signalWakeupEvent(*event_val);
++
++        // The mailbox/wakeup signal uses the SE mode proxy port to write
++        // the event value. This is not available in full system mode so
++        // instead we need to issue a DMA write to the address. The value of
++        // *event_val clears the event.
++        if (FullSystem) {
++            auto cb = new DmaVirtCallback<uint64_t>(function, *event_val);
++            dmaWriteVirt(mailbox_addr, sizeof(Addr), cb, &cb->dmaBuffer, 0);
++        } else {
++            signalWakeupEvent(*event_val);
++        }
+     }
+ }
+ 
+-- 
+1.8.3.1
+

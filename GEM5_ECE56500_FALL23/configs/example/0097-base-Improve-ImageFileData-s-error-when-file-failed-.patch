@@ -1,0 +1,55 @@
+From 5e3c64da4ead9f8f3428a0011c2417306891710d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 6 Jan 2022 11:42:06 -0800
+Subject: [PATCH 097/757] base: Improve ImageFileData's error when file failed
+ to open
+
+When a user accidentally specifies the wrong path to a file, the
+following error is received:
+
+```
+build/X86/base/loader/image_file_data.cc:111: panic: panic condition fd < 0 occurred: Failed to open file {path}.
+```
+
+For new users to gem5 this is confusing, and does not explicitly state
+that the root cause of the issue is likely due to the path being
+incorrect. Due to use of `panic_if`, this error was followed by a long
+and unhelpful backtrace.
+
+This patch expands the error message to state this error is typically
+triggered when the specified path is incorrect. It also changes the
+`panic_if` to a `fatal_if`. As noted in `src/base/logging.hh`, a
+"panic() should be called when something happens that should never ever
+happen", while a "fatal() should be called when the simulation cannot
+continue due to some condition that is the user's fault". It is clear a
+`fatal_if` is more suitable here as it is typically a user error. A
+backtrace is not printed for `fatal`, only for `panic`.
+
+Change-Id: I6e0a9bf4efb27ee00a40d77d74fd0dc99f9be4f8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55183
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/loader/image_file_data.cc | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/base/loader/image_file_data.cc b/src/base/loader/image_file_data.cc
+index f99c5f3..57fb47f 100644
+--- a/src/base/loader/image_file_data.cc
++++ b/src/base/loader/image_file_data.cc
+@@ -108,7 +108,9 @@ ImageFileData::ImageFileData(const std::string &fname)
+ 
+     // Open the file.
+     int fd = open(fname.c_str(), O_RDONLY);
+-    panic_if(fd < 0, "Failed to open file %s.\n", fname);
++    fatal_if(fd < 0, "Failed to open file %s.\n"
++        "This error typically occurs when the file path specified is "
++        "incorrect.\n", fname);
+ 
+     // Decompress GZ files.
+     if (hasGzipMagic(fd)) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,72 @@
+From 118b069d5d238c68afbe29d11878137746b3c375 Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Tue, 29 Mar 2022 11:17:54 +0800
+Subject: [PATCH 502/757] mem: Align mmap offset to page boundary
+
+If we create abstract memories with a sub-page size on a system with
+shared backstore, the offset of next mmap might become non-page-align
+and cause an invalid argument error.
+
+In this CL, we always upscale the range size to multiple of page before
+updating the offset, so the offset is always on page boundary.
+
+Change-Id: I3a6adf312f2cb5a09ee6a24a87adc62b630eac66
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58289
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Boris Shingarov <shingarov@labware.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/physical.cc | 8 ++++++--
+ src/mem/physical.hh | 2 ++
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/physical.cc b/src/mem/physical.cc
+index cae37a0..06f2cdc 100644
+--- a/src/mem/physical.cc
++++ b/src/mem/physical.cc
+@@ -50,6 +50,7 @@
+ #include <iostream>
+ #include <string>
+ 
++#include "base/intmath.hh"
+ #include "base/trace.hh"
+ #include "debug/AddrRanges.hh"
+ #include "debug/Checkpoint.hh"
+@@ -81,7 +82,8 @@ PhysicalMemory::PhysicalMemory(const std::string& _name,
+                                const std::string& shared_backstore,
+                                bool auto_unlink_shared_backstore) :
+     _name(_name), size(0), mmapUsingNoReserve(mmap_using_noreserve),
+-    sharedBackstore(shared_backstore), sharedBackstoreSize(0)
++    sharedBackstore(shared_backstore), sharedBackstoreSize(0),
++    pageSize(sysconf(_SC_PAGE_SIZE))
+ {
+     // Register cleanup callback if requested.
+     if (auto_unlink_shared_backstore && !sharedBackstore.empty()) {
+@@ -217,7 +219,9 @@ PhysicalMemory::createBackingStore(
+     } else {
+         // Newly create backstore will be located after previous one.
+         map_offset = sharedBackstoreSize;
+-        sharedBackstoreSize += range.size();
++        // mmap requires the offset to be multiple of page, so we need to
++        // upscale the range size.
++        sharedBackstoreSize += roundUp(range.size(), pageSize);
+         DPRINTF(AddrRanges, "Sharing backing store as %s at offset %llu\n",
+                 sharedBackstore.c_str(), (uint64_t)map_offset);
+         shm_fd = shm_open(sharedBackstore.c_str(), O_CREAT | O_RDWR, 0666);
+diff --git a/src/mem/physical.hh b/src/mem/physical.hh
+index 3a976ed..4997d80 100644
+--- a/src/mem/physical.hh
++++ b/src/mem/physical.hh
+@@ -156,6 +156,8 @@ class PhysicalMemory : public Serializable
+     const std::string sharedBackstore;
+     uint64_t sharedBackstoreSize;
+ 
++    long pageSize;
++
+     // The physical memory used to provide the memory in the simulated
+     // system
+     std::vector<BackingStoreEntry> backingStore;
+-- 
+1.8.3.1
+

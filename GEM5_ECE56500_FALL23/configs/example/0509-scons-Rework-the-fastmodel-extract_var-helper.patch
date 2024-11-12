@@ -1,0 +1,54 @@
+From 3ae3b1a62f8e3d51ccf3bdf933ff868c9e979fb7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 29 Mar 2022 23:48:29 -0700
+Subject: [PATCH 509/757] scons: Rework the fastmodel extract_var helper.
+
+This helper extracts config variables and sets them up for use in
+fast model tools. Rework this function for two purposes. First, ensure
+that the ['CONF'] subdict is used consistently. It was used in one spot
+in that function, but not anywhere else. Avoid those mistakes by
+accessing the configuration dict only once, and then reusing the value.
+
+Second, only print the values of those variables if they aren't empty.
+That avoids extra log output for values which aren't set up and aren't
+being used, while still exposing those values if they are set up. This
+will print them even if they aren't being actively used, but are set up
+and could be with other changes in the config.
+
+Change-Id: Ia3ea76e6cb6b3347fd082112a1eaa8d594e06ca2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58354
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index 5c4bbf9..cfbe4b9 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -61,13 +61,15 @@ systemc_home = Dir('#/src/systemc/ext/systemc_home')
+ env['ENV']['SYSTEMC_HOME'] = systemc_home.abspath
+ 
+ def extract_var(name):
+-    if name not in env['CONF']:
+-        error('Error: %s is not set' % name)
+-    print('%s = %s' % (name, env[name]))
++    val = env['CONF'].get(name, None)
++    if val is None:
++        error(f'{name} is not set')
++    if env['CONF']['USE_ARM_FASTMODEL']:
++        print(f'{name} = {val}')
+     # Make sure the value of this variable shows up as an environment variable
+     # for commands scons runs.
+-    env['ENV'][name] = env[name]
+-    return env[name]
++    env['ENV'][name] = val
++    return val
+ 
+ pvlib_home, maxcore_home, armlmd_license_file = \
+     list(map(extract_var, ('PVLIB_HOME', 'MAXCORE_HOME',
+-- 
+1.8.3.1
+

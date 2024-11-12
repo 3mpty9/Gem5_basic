@@ -1,0 +1,64 @@
+From f10fe51e1869476a8823adb9da4e8b36dfae4b14 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 10 Feb 2022 23:54:24 -0800
+Subject: [PATCH 457/757] scons: Don't accumulate SLICC_INCLUDES.
+
+Presumably, these are fixed for whatever protocol that gets selected. We
+don't need to accumulate includes, we need to set includes to something
+in particular. If there is a common include which always needs to be
+used, we can handle that in the SConscript separately from
+SLICC_INCLUDES.
+
+Change-Id: I996d08566944e38e388dc287f644c40366ebba0d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56754
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+---
+ src/mem/ruby/protocol/SConscript | 6 ++++--
+ src/mem/ruby/protocol/SConsopts  | 2 --
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/SConscript b/src/mem/ruby/protocol/SConscript
+index f137021..a71a8b2 100644
+--- a/src/mem/ruby/protocol/SConscript
++++ b/src/mem/ruby/protocol/SConscript
+@@ -60,13 +60,15 @@ slicc_scanner = Classic("SliccScanner", ['.sm', '.slicc'], "SLICC_PATH",
+                         r'''include[ \t]["'](.*)["'];''')
+ env.Append(SCANNERS=slicc_scanner)
+ 
++slicc_includes = ['mem/ruby/slicc_interface/RubySlicc_includes.hh'] + \
++        env['SLICC_INCLUDES']
+ def slicc_emitter(target, source, env):
+     assert len(source) == 1
+     filepath = source[0].srcnode().abspath
+ 
+     slicc = SLICC(filepath, protocol_base.abspath, verbose=False)
+     slicc.process()
+-    slicc.writeCodeFiles(output_dir.abspath, env['SLICC_INCLUDES'])
++    slicc.writeCodeFiles(output_dir.abspath, slicc_includes)
+     if env['SLICC_HTML']:
+         slicc.writeHTMLFiles(html_dir.abspath)
+ 
+@@ -79,7 +81,7 @@ def slicc_action(target, source, env):
+ 
+     slicc = SLICC(filepath, protocol_base.abspath, verbose=True)
+     slicc.process()
+-    slicc.writeCodeFiles(output_dir.abspath, env['SLICC_INCLUDES'])
++    slicc.writeCodeFiles(output_dir.abspath, slicc_includes)
+     if env['SLICC_HTML']:
+         slicc.writeHTMLFiles(html_dir.abspath)
+ 
+diff --git a/src/mem/ruby/protocol/SConsopts b/src/mem/ruby/protocol/SConsopts
+index 03b87b4..2fcc57a 100644
+--- a/src/mem/ruby/protocol/SConsopts
++++ b/src/mem/ruby/protocol/SConsopts
+@@ -51,5 +51,3 @@ main.Append(PROTOCOL_DIRS=[Dir('.')])
+ 
+ protocol_base = Dir('.')
+ Export('protocol_base')
+-
+-main.Append(SLICC_INCLUDES=['mem/ruby/slicc_interface/RubySlicc_includes.hh'])
+-- 
+1.8.3.1
+

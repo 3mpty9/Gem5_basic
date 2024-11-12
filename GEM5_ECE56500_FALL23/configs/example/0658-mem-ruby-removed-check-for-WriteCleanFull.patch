@@ -1,0 +1,39 @@
+From 5faa7aaffd1767e91e0aa4049252473890275460 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Tue, 1 Mar 2022 19:03:59 -0600
+Subject: [PATCH 658/757] mem-ruby: removed check for WriteCleanFull
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Relaxed check on Send_WriteCleanFull. That data state may actually
+happen if the writeback was triggered by a CleanUnique request.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: I33ec5693df09efe39345f403c5b6d3388f1a5056
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57390
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Daecheol You <daecheol.you@samsung.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 7dbb05c..6c87416 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -1298,7 +1298,6 @@ action(Send_WriteCleanFull, desc="") {
+   assert(tbe.dataValid);
+   assert(is_HN == false);
+   assert(tbe.dataDirty);
+-  assert(tbe.dataMaybeDirtyUpstream == false);
+ 
+   enqueue(reqOutPort, CHIRequestMsg, request_latency) {
+     prepareRequest(tbe, CHIRequestType:WriteCleanFull, out_msg);
+-- 
+1.8.3.1
+

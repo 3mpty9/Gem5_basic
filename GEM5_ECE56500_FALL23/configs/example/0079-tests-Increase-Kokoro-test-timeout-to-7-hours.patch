@@ -1,0 +1,27 @@
+From b2ffa27f4429a4d1e5a03cafc0e118c2b3b61d99 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 22 Dec 2021 14:39:55 -0800
+Subject: [PATCH 079/757] tests: Increase Kokoro test timeout to 7 hours
+
+Change-Id: I5a334124cc14d7db3a6227981ed46ae0cc80e558
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54824
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/jenkins/presubmit.cfg | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/jenkins/presubmit.cfg b/tests/jenkins/presubmit.cfg
+index a356c76..ef25969 100644
+--- a/tests/jenkins/presubmit.cfg
++++ b/tests/jenkins/presubmit.cfg
+@@ -3,4 +3,4 @@
+ # Location of the continuous batch script in repository.
+ build_file: "jenkins-gem5-prod/tests/jenkins/presubmit.sh"
+ 
+-timeout_mins: 360 # 6 hours
++timeout_mins: 420 # 7 hours
+-- 
+1.8.3.1
+

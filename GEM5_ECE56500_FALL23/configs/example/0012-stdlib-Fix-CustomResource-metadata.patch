@@ -1,0 +1,36 @@
+From 69255abeb0b93090b8d963e54799370f79dbff8a Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 8 Dec 2021 22:50:29 -0800
+Subject: [PATCH 012/757] stdlib: Fix CustomResource metadata
+
+CustomResource's base class, AbstractResource, must be constructed with
+a dictionary for the 'metadata' field. However, if the user did not
+specify any metadata for the CustomResource, None is passed. This is
+not permitted and can cause error. This patch ensures the metadata is
+set to an empty dictionary by default
+
+Change-Id: I358725ee6982dc9c6410eac3ad8194fa676dd326
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53843
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/resources/resource.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/python/gem5/resources/resource.py b/src/python/gem5/resources/resource.py
+index 0b9b128..b316f7d 100644
+--- a/src/python/gem5/resources/resource.py
++++ b/src/python/gem5/resources/resource.py
+@@ -73,7 +73,7 @@ class CustomResource(AbstractResource):
+     repository.
+     """
+ 
+-    def __init__(self, local_path: str, metadata: Optional[Dict] = None):
++    def __init__(self, local_path: str, metadata: Dict = {}):
+         """
+         :param local_path: The path of the resource on the host system.
+         :param metadata: Add metadata for the custom resource.
+-- 
+1.8.3.1
+

@@ -1,0 +1,40 @@
+From e36a8dbd8a16c37337b98bb53bf072d73924278d Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Fri, 18 Mar 2022 14:13:02 -0500
+Subject: [PATCH 532/757] gpu-compute: Handle GPUFS system store responses
+
+Requests in GPUFS which go to system memory will not generate the
+WriteCompleteResp packets that the VIPER protocol would normally created
+for device requests which go through the caches. Therefore, we need to
+callback the GM pipe handleResponse to complete the access and make
+forward progress.
+
+Change-Id: Ic00c430ce420a591fe5743f758b780d93afd2a38
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57989
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/compute_unit.cc | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index eefb4d128..1b20530 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -1362,8 +1362,10 @@ ComputeUnit::DataPort::processMemRespEvent(PacketPtr pkt)
+     // The status vector and global memory response for WriteResp packets get
+     // handled by the WriteCompleteResp packets.
+     if (pkt->cmd == MemCmd::WriteResp) {
+-        delete pkt;
+-        return;
++        if (!FullSystem || !pkt->req->systemReq()) {
++            delete pkt;
++            return;
++        }
+     }
+ 
+     // this is for read, write and atomic
+-- 
+1.8.3.1
+

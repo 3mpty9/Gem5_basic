@@ -1,0 +1,36 @@
+From 0e65df2cf5877ba4e07274e6bc9d515f84582dcf Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 22 Feb 2022 23:43:14 -0800
+Subject: [PATCH 264/757] arch-x86: Respect LDT and TR bases in long mode.
+
+The LDT and TR bases *are* respected in 64 bit mode, so the base values
+need to be set as specified.
+
+Change-Id: Ieb1b58511d9651e6e59be199059b9d2b8c670472
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57049
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/x86/fs_workload.cc | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/src/arch/x86/fs_workload.cc b/src/arch/x86/fs_workload.cc
+index dd71222..90df698 100644
+--- a/src/arch/x86/fs_workload.cc
++++ b/src/arch/x86/fs_workload.cc
+@@ -66,9 +66,7 @@ installSegDesc(ThreadContext *tc, SegmentRegIndex seg,
+                SegDescriptor desc, bool longmode)
+ {
+     bool honorBase = !longmode || seg == SEGMENT_REG_FS ||
+-                                  seg == SEGMENT_REG_GS ||
+-                                  seg == SEGMENT_REG_TSL ||
+-                                  seg == SYS_SEGMENT_REG_TR;
++                                  seg == SEGMENT_REG_GS;
+ 
+     SegAttr attr = 0;
+ 
+-- 
+1.8.3.1
+

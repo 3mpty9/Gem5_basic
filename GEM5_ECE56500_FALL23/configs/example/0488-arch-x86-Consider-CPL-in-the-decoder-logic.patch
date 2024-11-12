@@ -1,0 +1,218 @@
+From 141d44b97904a7befde6a385c454bf0e14b6431b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 24 Jan 2022 04:30:53 -0800
+Subject: [PATCH 488/757] arch-x86: Consider CPL in the decoder logic.
+
+For instructions which simply require CPL0 (vs. requiring CPL is < IOPL,
+or something else more complicated), this change either switches their
+format so that they check that value before being returned, or adds a
+comment marking them as privileged if they aren't yet implemented.
+
+This change also makes the mov to/from CR and DR instructions more
+particular, and returns an undefined instruction if the CR or DR index
+is invalid.
+
+Change-Id: I367d87a380a47428d458bda2ceecc1b983644704
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55891
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/locked_opcodes.isa   |  4 +-
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa |  2 +-
+ src/arch/x86/isa/decoder/two_byte_opcodes.isa | 74 ++++++++++++++-------------
+ 3 files changed, 41 insertions(+), 39 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/locked_opcodes.isa b/src/arch/x86/isa/decoder/locked_opcodes.isa
+index 4a3a94b..de75479 100644
+--- a/src/arch/x86/isa/decoder/locked_opcodes.isa
++++ b/src/arch/x86/isa/decoder/locked_opcodes.isa
+@@ -137,8 +137,8 @@
+             }
+             'X86ISA::TwoByteOpcode': decode OPCODE_OP_TOP5 {
+                 0x04: decode OPCODE_OP_BOTTOM3 {
+-                    0x0: WarnUnimpl::mov_Rd_CR8D();
+-                    0x2: WarnUnimpl::mov_CR8D_Rd();
++                    0x0: WarnUnimpl::mov_Rd_CR8D(); // privileged
++                    0x2: WarnUnimpl::mov_CR8D_Rd(); // privileged
+                 }
+                 0x15: decode OPCODE_OP_BOTTOM3 {
+                     0x3: BTS_LOCKED(Mv,Gv);
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index e5ad019..0f938eb 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -575,7 +575,7 @@
+                 {{"Tried to execute the repne prefix!"}});
+             0x3: M5InternalError::error(
+                 {{"Tried to execute the rep/repe prefix!"}});
+-            0x4: HLT();
++            0x4: Cpl0Inst::HLT();
+             0x5: CMC();
+             //0x6: group3_Eb();
+             0x6: decode MODRM_REG {
+diff --git a/src/arch/x86/isa/decoder/two_byte_opcodes.isa b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+index c87b33e..3931c40 100644
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+@@ -49,12 +49,12 @@
+                 0x0: sldt_Mw_or_Rv();
+                 0x1: str_Mw_or_Rv();
+                 0x2: decode MODE_SUBMODE {
+-                    0x0: Inst::LLDT_64(Ew);
+-                    default: Inst::LLDT(Ew);
++                    0x0: Cpl0Inst::LLDT_64(Ew);
++                    default: Cpl0Inst::LLDT(Ew);
+                 }
+                 0x3: decode MODE_SUBMODE {
+-                    0x0: Inst::LTR_64(Ew);
+-                    default: Inst::LTR(Ew);
++                    0x0: Cpl0Inst::LTR_64(Ew);
++                    default: Cpl0Inst::LTR(Ew);
+                 }
+                 0x4: verr_Mw_or_Rv();
+                 0x5: verw_Mw_or_Rv();
+@@ -99,33 +99,33 @@
+                         0x1: xsetbv();
+                     }
+                     default: decode MODE_SUBMODE {
+-                        0x0: Inst::LGDT(M);
++                        0x0: Cpl0Inst::LGDT(M);
+                         default: decode OPSIZE {
+                             // 16 bit operand sizes are special, but only
+                             // in legacy and compatability modes.
+-                            0x2: Inst::LGDT_16(M);
+-                            default: Inst::LGDT(M);
++                            0x2: Cpl0Inst::LGDT_16(M);
++                            default: Cpl0Inst::LGDT(M);
+                         }
+                     }
+                 }
+                 0x3: decode MODRM_MOD {
+                     0x3: decode MODRM_RM {
+-                        0x0: vmrun();
+-                        0x1: vmmcall();
+-                        0x2: vmload();
+-                        0x3: vmsave();
+-                        0x4: stgi();
+-                        0x5: clgi();
++                        0x0: vmrun(); // privileged
++                        0x1: vmmcall(); // privileged
++                        0x2: vmload(); // privileged
++                        0x3: vmsave(); // privileged
++                        0x4: stgi(); // privileged
++                        0x5: clgi(); // privileged
+                         0x6: skinit();
+-                        0x7: invlpga();
++                        0x7: invlpga(); // privileged
+                     }
+                     default: decode MODE_SUBMODE {
+-                        0x0: Inst::LIDT(M);
++                        0x0: Cpl0Inst::LIDT(M);
+                         default: decode OPSIZE {
+                             // 16 bit operand sizes are special, but only
+                             // in legacy and compatability modes.
+-                            0x2: Inst::LIDT_16(M);
+-                            default: Inst::LIDT(M);
++                            0x2: Cpl0Inst::LIDT_16(M);
++                            default: Cpl0Inst::LIDT(M);
+                         }
+                     }
+                 }
+@@ -133,14 +133,14 @@
+                     0x3: Inst::SMSW(Rv);
+                     default: Inst::SMSW(Mw);
+                 }
+-                0x6: Inst::LMSW(Ew);
++                0x6: Cpl0Inst::LMSW(Ew);
+                 0x7: decode MODRM_MOD {
+                     0x3: decode MODRM_RM {
+-                        0x0: Inst::SWAPGS();
++                        0x0: Cpl0Inst::SWAPGS();
+                         0x1: Inst::RDTSCP();
+                         default: Inst::UD2();
+                     }
+-                    default: Inst::INVLPG(M);
++                    default: Cpl0Inst::INVLPG(M);
+                 }
+             }
+             0x02: lar_Gv_Ew();
+@@ -168,20 +168,20 @@
+                     0x1: Inst::SYSCALL_LEGACY();
+                 }
+             }
+-            0x06: Inst::CLTS();
++            0x06: Cpl0Inst::CLTS();
+             0x07: decode MODE_SUBMODE {
+                 0x0: decode OPSIZE {
+                     // Return to 64 bit mode.
+-                    0x8: Inst::SYSRET_TO_64();
++                    0x8: Cpl0Inst::SYSRET_TO_64();
+                     // Return to compatibility mode.
+-                    default: Inst::SYSRET_TO_COMPAT();
++                    default: Cpl0Inst::SYSRET_TO_COMPAT();
+                 }
+-                default: Inst::SYSRET_NON_64();
++                default: Cpl0Inst::SYSRET_NON_64();
+             }
+         }
+         0x01: decode OPCODE_OP_BOTTOM3 {
+-            0x0: invd();
+-            0x1: wbinvd();
++            0x0: invd(); // privileged
++            0x1: wbinvd(); // privileged
+             0x2: Inst::UD2();
+             0x3: Inst::UD2();
+             0x4: Inst::UD2();
+@@ -282,18 +282,20 @@
+             0x04: decode LEGACY_DECODEVAL {
+                 // no prefix
+                 0x0: decode OPCODE_OP_BOTTOM3 {
+-                    0x0: CondInst::MOV(
++                    0x0: Cpl0CondInst::MOV(
+                         {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Rd,Cd);
+-                    0x1: MOV(Rd,Dd);
+-                    0x2: CondInst::MOV(
++                    0x1: Cpl0CondInst::MOV({{MODRM_REG < 8}},Rd,Dd);
++                    0x2: Cpl0CondInst::MOV(
+                         {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Cd,Rd);
+-                    0x3: MOV(Dd,Rd);
++                    0x3: Cpl0CondInst::MOV({{MODRM_REG < 8}},Dd,Rd);
+                     default: UD2();
+                 }
+                 // operand size (0x66)
+                 0x1: decode OPCODE_OP_BOTTOM3 {
+-                    0x0: MOV(Rd,Cd);
+-                    0x2: MOV(Cd,Rd);
++                    0x0: Cpl0CondInst::MOV(
++                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Rd,Cd);
++                    0x2: Cpl0CondInst::MOV(
++                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Cd,Rd);
+                 }
+                 default: UD2();
+             }
+@@ -346,17 +348,17 @@
+             }
+         }
+         0x06: decode OPCODE_OP_BOTTOM3 {
+-            0x0: Inst::WRMSR();
++            0x0: Cpl0Inst::WRMSR();
+             0x1: Inst::RDTSC();
+-            0x2: Inst::RDMSR();
+-            0x3: rdpmc();
++            0x2: Cpl0Inst::RDMSR();
++            0x3: rdpmc(); // privileged
+             0x4: decode FullSystemInt {
+                 0: SyscallInst::sysenter({{
+                     return std::make_shared<SESyscallFault>();
+                 }});
+                 default: sysenter();
+             }
+-            0x5: sysexit();
++            0x5: sysexit(); // privileged
+             0x6: Inst::UD2();
+             0x7: getsec();
+         }
+-- 
+1.8.3.1
+

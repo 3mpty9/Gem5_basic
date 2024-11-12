@@ -1,0 +1,43 @@
+From c0b57d8421238e1ffdeb3d8355d035df5df540f5 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 27 Jul 2022 10:41:24 -0700
+Subject: [PATCH 747/757] misc: Update version info to v22.0.0.2
+
+Change-Id: I102ffac04547a5fab49d6d87b0a53f6cf0b44395
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61737
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/Doxyfile        | 2 +-
+ src/base/version.cc | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/Doxyfile b/src/Doxyfile
+index a49de0f..c8bde04 100644
+--- a/src/Doxyfile
++++ b/src/Doxyfile
+@@ -31,7 +31,7 @@ PROJECT_NAME           = gem5
+ # This could be handy for archiving the generated documentation or 
+ # if some version control system is used.
+ 
+-PROJECT_NUMBER         = v22.0.0.1
++PROJECT_NUMBER         = v22.0.0.2
+ 
+ # The OUTPUT_DIRECTORY tag is used to specify the (relative or absolute) 
+ # base path where the generated documentation will be put. 
+diff --git a/src/base/version.cc b/src/base/version.cc
+index 33b0fd0..fa29d1b 100644
+--- a/src/base/version.cc
++++ b/src/base/version.cc
+@@ -32,6 +32,6 @@ namespace gem5
+ /**
+  * @ingroup api_base_utils
+  */
+-const char *gem5Version = "22.0.0.1";
++const char *gem5Version = "22.0.0.2";
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

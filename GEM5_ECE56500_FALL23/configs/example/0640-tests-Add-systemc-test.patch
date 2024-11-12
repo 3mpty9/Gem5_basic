@@ -1,0 +1,53 @@
+From e2fc2d576528e403ef7219a3b04f6358d1be017d Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Fri, 13 May 2022 14:01:16 -0700
+Subject: [PATCH 640/757] tests: Add systemc test
+
+Change-Id: I2eb5f6725942829940fc2bd18f1c321dea567840
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59689
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/nightly.sh | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/tests/nightly.sh b/tests/nightly.sh
+index 7b784b2..de90d61 100755
+--- a/tests/nightly.sh
++++ b/tests/nightly.sh
+@@ -173,6 +173,30 @@ scons build/${isa}/libgem5_${variant}.so -j${compile_threads} --without-tcmalloc
+ cd ext/sst; \
+ make clean; make -j ${compile_threads}; \
+ sst --add-lib-path=./ sst/example.py; \
++cd -;
+ "
+ }
+ build_and_run_SST RISCV opt
++
++build_and_run_systemc () {
++    docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
++        "${gem5_root}" --memory="${docker_mem_limit}" --rm \
++        gcr.io/gem5-test/ubuntu-20.04_all-dependencies:latest bash -c "\
++scons -j${compile_threads} build/ARM/gem5.opt; \
++scons --with-cxx-config --without-python --without-tcmalloc USE_SYSTEMC=0 \
++    -j${compile_threads} build/ARM/libgem5_opt.so \
++"
++
++    docker run -u $UID:$GID --volume "${gem5_root}":"${gem5_root}" -w \
++        "${gem5_root}" --memory="${docker_mem_limit}" --rm \
++        gcr.io/gem5-test/systemc-env:latest bash -c "\
++cd util/systemc/gem5_within_systemc; \
++make -j${compile_threads}; \
++../../../build/ARM/gem5.opt ../../../configs/example/se.py -c \
++    ../../../tests/test-progs/hello/bin/arm/linux/hello; \
++LD_LIBRARY_PATH=../../../build/ARM/:/opt/systemc/lib-linux64/ \
++    ./gem5.opt.sc m5out/config.ini; \
++cd -; \
++"
++}
++build_and_run_systemc
+-- 
+1.8.3.1
+

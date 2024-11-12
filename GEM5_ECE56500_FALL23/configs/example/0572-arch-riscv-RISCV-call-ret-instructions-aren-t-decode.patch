@@ -1,0 +1,144 @@
+From 29a39d9472367ae4c1de7c639cbd41ea39280431 Mon Sep 17 00:00:00 2001
+From: zhongchengyong <zhongcy93@gmail.com>
+Date: Sat, 26 Mar 2022 22:23:56 +0800
+Subject: [PATCH 572/757] arch-riscv: RISCV call/ret instructions aren't
+ decoded correctly
+
+This change adds IsReturn and IsCall flag for RISC-V jump instructions
+by define new "JumpConstructor" in standard.isa, and fixes target
+overwriting in buildRetPC.
+
+See RAS presentation in spec:
+Section 2.5 Page 22 of https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMAFDQC/riscv-spec-20191213.pdf
+Or:
+https://github.com/riscv/riscv-isa-manual/blob/master/src/rv32.tex#:~:text=Return%2Daddress%20prediction,%5Cend%7Btable%7D
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1139
+
+Change-Id: I9728757c9f3f81bd498a0ba04664a003dbded3bf
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58209
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/insts/static_inst.hh     |  1 -
+ src/arch/riscv/isa/decoder.isa          |  6 ++---
+ src/arch/riscv/isa/formats/standard.isa | 47 +++++++++++++++++++++++++++++++--
+ 3 files changed, 48 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/riscv/insts/static_inst.hh b/src/arch/riscv/insts/static_inst.hh
+index ef8032d..eec9c88 100644
+--- a/src/arch/riscv/insts/static_inst.hh
++++ b/src/arch/riscv/insts/static_inst.hh
+@@ -80,7 +80,6 @@ class RiscvStaticInst : public StaticInst
+         PCStateBase *ret_pc_ptr = call_pc.clone();
+         auto &ret_pc = ret_pc_ptr->as<PCState>();
+         ret_pc.advance();
+-        ret_pc.pc(cur_pc.as<PCState>().npc());
+         return std::unique_ptr<PCStateBase>{ret_pc_ptr};
+     }
+ 
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index cb46ec5..a88ca8c 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -312,7 +312,7 @@ decode QUADRANT default Unknown::unknown() {
+                                 "source reg x0", machInst);
+                     }
+                     NPC = Rc1;
+-                }}, IsIndirectControl, IsUncondControl, IsCall);
++                }}, IsIndirectControl, IsUncondControl);
+                 default: CROp::c_mv({{
+                     if (RC1 == 0) {
+                         return std::make_shared<IllegalInstFault>(
+@@ -1534,13 +1534,13 @@ decode QUADRANT default Unknown::unknown() {
+             0x0: Jump::jalr({{
+                 Rd = NPC;
+                 NPC = (imm + Rs1) & (~0x1);
+-            }}, IsIndirectControl, IsUncondControl, IsCall);
++            }}, IsIndirectControl, IsUncondControl);
+         }
+ 
+         0x1b: JOp::jal({{
+             Rd = NPC;
+             NPC = PC + imm;
+-        }}, IsDirectControl, IsUncondControl, IsCall);
++        }}, IsDirectControl, IsUncondControl);
+ 
+         0x1c: decode FUNCT3 {
+             format SystemOp {
+diff --git a/src/arch/riscv/isa/formats/standard.isa b/src/arch/riscv/isa/formats/standard.isa
+index e4bd4d8..e40f097 100644
+--- a/src/arch/riscv/isa/formats/standard.isa
++++ b/src/arch/riscv/isa/formats/standard.isa
+@@ -240,6 +240,49 @@ def template JumpDeclare {{
+     };
+ }};
+ 
++def template JumpConstructor {{
++    %(class_name)s::%(class_name)s(MachInst machInst)
++        : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
++    {
++        %(set_reg_idx_arr)s;
++        %(constructor)s;
++        %(imm_code)s;
++        if (QUADRANT != 0x3) {
++            // Handle "c_jr" instruction, set "IsReturn" flag if RC1 is 1 or 5
++            if (CFUNCT1 == 0 && (RC1 == 1 || RC1 == 5))
++                flags[IsReturn] = true;
++        } else {
++            bool rd_link = (RD == 1 || RD == 5);
++            bool rs1_link = (RS1 == 1 || RS1 == 5);
++            // Handle "jalr" and "jal" instruction,
++            // set "IsCall" if RD is link register
++            if (rd_link)
++                flags[IsCall] = true;
++
++            // Handle "Jalr" instruction
++            if (FUNCT3 == 0x0) {
++                // If RD is not link and RS1 is link, then pop RAS
++                if (!rd_link && rs1_link) flags[IsReturn] = true;
++                else if (rd_link) {
++                    // If RD is link and RS1 is not link, push RAS
++                    if (!rs1_link) flags[IsCall] = true;
++                    // If RD is link and RS1 is link and rd != rs1
++                    else if (rs1_link) {
++                        if (RS1 != RD) {
++                            // Both are link and RS1 == RD, pop then push
++                            flags[IsReturn] = true;
++                            flags[IsCall] = true;
++                        } else {
++                            // Both are link and RS1 != RD, push RAS
++                            flags[IsCall] = true;
++                        }
++                    }
++                }
++            }
++        }
++    }
++}};
++
+ def template JumpExecute {{
+     Fault
+     %(class_name)s::execute(
+@@ -420,7 +463,7 @@ def format Jump(code, *opt_flags) {{
+         {'code': code, 'imm_code': 'imm = sext<12>(IMM12);',
+          'regs': ','.join(regs)}, opt_flags)
+     header_output = JumpDeclare.subst(iop)
+-    decoder_output = ImmConstructor.subst(iop)
++    decoder_output = JumpConstructor.subst(iop)
+     decode_block = BasicDecode.subst(iop)
+     exec_output = JumpExecute.subst(iop)
+ }};
+@@ -450,7 +493,7 @@ def format JOp(code, *opt_flags) {{
+         {'code': code, 'imm_code': imm_code,
+          'regs': ','.join(regs)}, opt_flags)
+     header_output = BranchDeclare.subst(iop)
+-    decoder_output = ImmConstructor.subst(iop)
++    decoder_output = JumpConstructor.subst(iop)
+     decode_block = BasicDecode.subst(iop)
+     exec_output = BranchExecute.subst(iop)
+ }};
+-- 
+1.8.3.1
+

@@ -1,0 +1,41 @@
+From cad8cf70ee796bce938abbe2e9256715698becd6 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 2 Jun 2022 15:20:08 -0700
+Subject: [PATCH 676/757] proto: Add a missing std:: in protoio.cc.
+
+Also include string which that file uses.
+
+Change-Id: I79cd9c88652abdd1d16b3368dd37268509f4d3f0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60310
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/proto/protoio.cc | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/proto/protoio.cc b/src/proto/protoio.cc
+index 72e463b..acf04de 100644
+--- a/src/proto/protoio.cc
++++ b/src/proto/protoio.cc
+@@ -37,6 +37,8 @@
+ 
+ #include "proto/protoio.hh"
+ 
++#include <string>
++
+ #include "base/logging.hh"
+ 
+ using namespace google::protobuf;
+@@ -53,7 +55,7 @@ ProtoOutputStream::ProtoOutputStream(const std::string& filename) :
+     // wrapped in a gzip stream if the filename ends with .gz. The
+     // latter stream is in turn wrapped in a coded stream
+     wrappedFileStream = new io::OstreamOutputStream(&fileStream);
+-    if (filename.find_last_of('.') != string::npos &&
++    if (filename.find_last_of('.') != std::string::npos &&
+         filename.substr(filename.find_last_of('.') + 1) == "gz") {
+         gzipStream = new io::GzipOutputStream(wrappedFileStream);
+         zeroCopyStream = gzipStream;
+-- 
+1.8.3.1
+

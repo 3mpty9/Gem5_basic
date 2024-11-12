@@ -1,0 +1,42 @@
+From e7f1acc0dcf2214e8de962c3d2d371597dd102fa Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 25 Feb 2022 23:12:17 -0800
+Subject: [PATCH 310/757] scons: Add a "mold" value to the --linker option.
+
+This new and improved linker approximately halves link time for
+build/X86/gem5.opt for me compared to lld, the previously fastest
+linker. The -fuse-ld=mold option is supported by current versions of
+clang, and will be supported in gcc 12.
+
+To use the mold linker with gcc prior to version 12, you need to set
+the LINKFLAGS_EXTRA scons variable to pass in a -B option as described
+on this page:
+
+https://github.com/rui314/mold
+
+Change-Id: Ic5ad0e532fac078d384a0aebb3e04a4b04ce4880
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57173
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Earl Ou <shunhsingou@google.com>
+---
+ SConstruct | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/SConstruct b/SConstruct
+index 93b421e..679315e 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -98,7 +98,7 @@ import SCons.Tool
+ #
+ ########################################################################
+ 
+-linker_options = ('bfd', 'gold', 'lld')
++linker_options = ('bfd', 'gold', 'lld', 'mold')
+ 
+ AddOption('--no-colors', dest='use_colors', action='store_false',
+           help="Don't add color to abbreviated scons output")
+-- 
+1.8.3.1
+

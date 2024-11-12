@@ -1,0 +1,491 @@
+From 45a07f1eeb69344a38e766a14485e93b9c9f8830 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 10 Dec 2021 18:01:05 +0000
+Subject: [PATCH 196/757] dev-arm: Gicv3 implementation of the Gicv3Registers
+ interface
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Iba23604cc6f7d5a1de91c287b4546154fcb20535
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55612
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/gic_v3.cc               | 143 +++++++++++++++++++++++++++++++++++-
+ src/dev/arm/gic_v3.hh               |  64 +++++++++++++++-
+ src/dev/arm/gic_v3_cpu_interface.cc |  25 ++++++-
+ src/dev/arm/gic_v3_cpu_interface.hh |   5 +-
+ src/dev/arm/gic_v3_distributor.cc   |  25 ++++++-
+ src/dev/arm/gic_v3_distributor.hh   |   4 +-
+ src/dev/arm/gic_v3_redistributor.cc |  30 +++++++-
+ src/dev/arm/gic_v3_redistributor.hh |   4 +-
+ 8 files changed, 288 insertions(+), 12 deletions(-)
+
+diff --git a/src/dev/arm/gic_v3.cc b/src/dev/arm/gic_v3.cc
+index 223e86a..dde3818 100644
+--- a/src/dev/arm/gic_v3.cc
++++ b/src/dev/arm/gic_v3.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2020 ARM Limited
++ * Copyright (c) 2019-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -54,6 +54,80 @@
+ namespace gem5
+ {
+ 
++void
++Gicv3Registers::copyDistRegister(Gicv3Registers* from,
++                                 Gicv3Registers* to,
++                                 Addr daddr)
++{
++    auto val = from->readDistributor(daddr);
++    DPRINTF(GIC, "copy dist 0x%x 0x%08x\n", daddr, val);
++    to->writeDistributor(daddr, val);
++}
++
++void
++Gicv3Registers::copyRedistRegister(Gicv3Registers* from,
++                                   Gicv3Registers* to,
++                                   const ArmISA::Affinity &aff, Addr daddr)
++{
++    auto val = from->readRedistributor(aff, daddr);
++    DPRINTF(GIC,
++            "copy redist (aff3: %d, aff2: %d, aff1: %d, aff0: %d) "
++            "0x%x 0x%08x\n",
++            aff.aff3, aff.aff2, aff.aff1, aff.aff0, daddr, val);
++
++    to->writeRedistributor(aff, daddr, val);
++}
++
++void
++Gicv3Registers::copyCpuRegister(Gicv3Registers* from,
++                                Gicv3Registers* to,
++                                const ArmISA::Affinity &aff,
++                                ArmISA::MiscRegIndex misc_reg)
++{
++    auto val = from->readCpu(aff, misc_reg);
++    DPRINTF(GIC,
++            "copy cpu (aff3: %d, aff2: %d, aff1: %d, aff0: %d) "
++            "%s 0x%08x\n",
++            aff.aff3, aff.aff2, aff.aff1, aff.aff0,
++            ArmISA::miscRegName[misc_reg], val);
++
++    to->writeCpu(aff, misc_reg, val);
++}
++
++void
++Gicv3Registers::clearRedistRegister(Gicv3Registers* to,
++                                    const ArmISA::Affinity &aff, Addr daddr)
++{
++    to->writeRedistributor(aff, daddr, 0xFFFFFFFF);
++}
++
++void
++Gicv3Registers::copyRedistRange(Gicv3Registers* from,
++                                Gicv3Registers* to,
++                                const ArmISA::Affinity &aff,
++                                Addr daddr, size_t size)
++{
++    for (auto a = daddr; a < daddr + size; a += 4)
++        copyRedistRegister(from, to, aff, a);
++}
++
++void
++Gicv3Registers::copyDistRange(Gicv3Registers *from,
++                              Gicv3Registers *to,
++                              Addr daddr, size_t size)
++{
++    for (auto a = daddr; a < daddr + size; a += 4)
++        copyDistRegister(from, to, a);
++}
++
++void
++Gicv3Registers::clearDistRange(Gicv3Registers *to, Addr daddr, size_t size)
++{
++    for (auto a = daddr; a < daddr + size; a += 4)
++        to->writeDistributor(a, 0xFFFFFFFF);
++}
++
++
+ Gicv3::Gicv3(const Params &p)
+     : BaseGic(p)
+ {
+@@ -240,11 +314,17 @@ Gicv3::haveAsserted(uint32_t cpu) const
+     return tc->getCpuPtr()->checkInterrupts(tc->threadId());
+ }
+ 
++Gicv3CPUInterface *
++Gicv3::getCPUInterfaceByAffinity(const ArmISA::Affinity &aff) const
++{
++    return getRedistributorByAffinity(aff)->getCPUInterface();
++}
++
+ Gicv3Redistributor *
+-Gicv3::getRedistributorByAffinity(uint32_t affinity) const
++Gicv3::getRedistributorByAffinity(const ArmISA::Affinity &aff) const
+ {
+     for (auto & redistributor : redistributors) {
+-        if (redistributor->getAffinity() == affinity) {
++        if (redistributor->getAffinity() == aff) {
+             return redistributor;
+         }
+     }
+@@ -268,6 +348,63 @@ Gicv3::getRedistributorByAddr(Addr addr) const
+     return redistributors[redistributor_id];
+ }
+ 
++uint32_t
++Gicv3::readDistributor(Addr daddr)
++{
++    return distributor->read(daddr, 4, false);
++}
++
++uint32_t
++Gicv3::readRedistributor(const ArmISA::Affinity &aff, Addr daddr)
++{
++    auto redistributor = getRedistributorByAffinity(aff);
++    assert(redistributor);
++    return redistributor->read(daddr, 4, false);
++}
++
++RegVal
++Gicv3::readCpu(const ArmISA::Affinity &aff, ArmISA::MiscRegIndex misc_reg)
++{
++    auto cpu_interface = getCPUInterfaceByAffinity(aff);
++    assert(cpu_interface);
++    return cpu_interface->readMiscReg(misc_reg);
++}
++
++void
++Gicv3::writeDistributor(Addr daddr, uint32_t data)
++{
++    distributor->write(daddr, data, sizeof(data), false);
++}
++
++void
++Gicv3::writeRedistributor(const ArmISA::Affinity &aff, Addr daddr, uint32_t data)
++{
++    auto redistributor = getRedistributorByAffinity(aff);
++    assert(redistributor);
++    redistributor->write(daddr, data, sizeof(data), false);
++}
++
++void
++Gicv3::writeCpu(const ArmISA::Affinity &aff, ArmISA::MiscRegIndex misc_reg,
++                RegVal data)
++{
++    auto cpu_interface = getCPUInterfaceByAffinity(aff);
++    assert(cpu_interface);
++    cpu_interface->setMiscReg(misc_reg, data);
++}
++
++void
++Gicv3::copyGicState(Gicv3Registers* from, Gicv3Registers* to)
++{
++    distributor->copy(from, to);
++    for (auto& redistributor : redistributors) {
++        redistributor->copy(from, to);
++    }
++    for (auto& cpu_interface : cpuInterfaces) {
++        cpu_interface->copy(from, to);
++    }
++}
++
+ void
+ Gicv3::serialize(CheckpointOut & cp) const
+ {
+diff --git a/src/dev/arm/gic_v3.hh b/src/dev/arm/gic_v3.hh
+index 40c6f3c..120b039 100644
+--- a/src/dev/arm/gic_v3.hh
++++ b/src/dev/arm/gic_v3.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019 ARM Limited
++ * Copyright (c) 2019, 2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -42,6 +42,7 @@
+ #define __DEV_ARM_GICV3_H__
+ 
+ #include "arch/arm/interrupts.hh"
++#include "arch/arm/types.hh"
+ #include "dev/arm/base_gic.hh"
+ #include "params/Gicv3.hh"
+ 
+@@ -53,7 +54,45 @@ class Gicv3Distributor;
+ class Gicv3Redistributor;
+ class Gicv3Its;
+ 
+-class Gicv3 : public BaseGic
++class Gicv3Registers
++{
++  public:
++    virtual uint32_t readDistributor(Addr daddr) = 0;
++    virtual uint32_t readRedistributor(const ArmISA::Affinity &aff,
++                                       Addr daddr) = 0;
++    virtual RegVal readCpu(const ArmISA::Affinity &aff,
++                           ArmISA::MiscRegIndex misc_reg) = 0;
++
++    virtual void writeDistributor(Addr daddr, uint32_t data) = 0;
++    virtual void writeRedistributor(const ArmISA::Affinity &aff,
++                                    Addr daddr, uint32_t data) = 0;
++    virtual void writeCpu(const ArmISA::Affinity &aff,
++                          ArmISA::MiscRegIndex misc_reg, RegVal data) = 0;
++
++  protected:
++    static void copyDistRegister(Gicv3Registers* from,
++                                 Gicv3Registers* to,
++                                 Addr daddr);
++    static void copyRedistRegister(Gicv3Registers* from,
++                                   Gicv3Registers* to,
++                                   const ArmISA::Affinity &aff, Addr daddr);
++    static void copyCpuRegister(Gicv3Registers* from,
++                                Gicv3Registers* to,
++                                const ArmISA::Affinity &aff,
++                                ArmISA::MiscRegIndex misc_reg);
++    static void clearRedistRegister(Gicv3Registers* to,
++                                    const ArmISA::Affinity &aff, Addr daddr);
++    static void copyRedistRange(Gicv3Registers* from,
++                                Gicv3Registers* to,
++                                const ArmISA::Affinity &aff,
++                                Addr daddr, size_t size);
++    static void copyDistRange(Gicv3Registers* from,
++                              Gicv3Registers* to,
++                              Addr daddr, size_t size);
++    static void clearDistRange(Gicv3Registers* to, Addr daddr, size_t size);
++};
++
++class Gicv3 : public BaseGic, public Gicv3Registers
+ {
+   protected:
+     friend class Gicv3CPUInterface;
+@@ -156,13 +195,32 @@ class Gicv3 : public BaseGic
+         return redistributors[context_id];
+     }
+ 
++    Gicv3CPUInterface *
++    getCPUInterfaceByAffinity(const ArmISA::Affinity &aff) const;
++
+     Gicv3Redistributor *
+-    getRedistributorByAffinity(uint32_t affinity) const;
++    getRedistributorByAffinity(const ArmISA::Affinity &aff) const;
+ 
+     Gicv3Redistributor *
+     getRedistributorByAddr(Addr address) const;
+ 
+     void postInt(uint32_t cpu, ArmISA::InterruptTypes int_type);
++
++  protected: // GIC state transfer
++    void copyGicState(Gicv3Registers* from, Gicv3Registers* to);
++
++  public: // Gicv3Registers
++    uint32_t readDistributor(Addr daddr) override;
++    uint32_t readRedistributor(const ArmISA::Affinity &aff,
++                               Addr daddr) override;
++    RegVal readCpu(const ArmISA::Affinity &aff,
++                   ArmISA::MiscRegIndex misc_reg) override;
++
++    void writeDistributor(Addr daddr, uint32_t data) override;
++    void writeRedistributor(const ArmISA::Affinity &aff,
++                            Addr daddr, uint32_t data) override;
++    void writeCpu(const ArmISA::Affinity &aff,
++                  ArmISA::MiscRegIndex misc_reg, RegVal data) override;
+ };
+ 
+ } // namespace gem5
+diff --git a/src/dev/arm/gic_v3_cpu_interface.cc b/src/dev/arm/gic_v3_cpu_interface.cc
+index 496e3fa..b089ba0 100644
+--- a/src/dev/arm/gic_v3_cpu_interface.cc
++++ b/src/dev/arm/gic_v3_cpu_interface.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, 2021 Arm Limited
++ * Copyright (c) 2019, 2021-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -2593,6 +2593,29 @@ Gicv3CPUInterface::deassertWakeRequest()
+ }
+ 
+ void
++Gicv3CPUInterface::copy(Gicv3Registers *from, Gicv3Registers *to)
++{
++    const auto affinity = redistributor->getAffinity();
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_PMR_EL1);
++
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_AP1R0_EL1);
++    if (PRIORITY_BITS >= 6) {
++        gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_AP1R1_EL1);
++    }
++
++    if (PRIORITY_BITS >= 7) {
++        gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_AP1R2_EL1);
++        gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_AP1R3_EL1);
++    }
++
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_BPR1_EL1);
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_CTLR_EL1);
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_SRE_EL1);
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_IGRPEN0_EL1);
++    gic->copyCpuRegister(from, to, affinity, MISCREG_ICC_IGRPEN1_EL1);
++}
++
++void
+ Gicv3CPUInterface::serialize(CheckpointOut & cp) const
+ {
+     SERIALIZE_SCALAR(hppi.intid);
+diff --git a/src/dev/arm/gic_v3_cpu_interface.hh b/src/dev/arm/gic_v3_cpu_interface.hh
+index eb16602..5bcfba5 100644
+--- a/src/dev/arm/gic_v3_cpu_interface.hh
++++ b/src/dev/arm/gic_v3_cpu_interface.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019 ARM Limited
++ * Copyright (c) 2019, 2022 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -360,6 +360,9 @@ class Gicv3CPUInterface : public ArmISA::BaseISADevice, public Serializable
+ 
+     void init();
+ 
++  public:
++    void copy(Gicv3Registers *from, Gicv3Registers *to);
++
+   public: // BaseISADevice
+     RegVal readMiscReg(int misc_reg) override;
+     void setMiscReg(int misc_reg, RegVal val) override;
+diff --git a/src/dev/arm/gic_v3_distributor.cc b/src/dev/arm/gic_v3_distributor.cc
+index c91dfb0..8feccb6 100644
+--- a/src/dev/arm/gic_v3_distributor.cc
++++ b/src/dev/arm/gic_v3_distributor.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2021 Arm Limited
++ * Copyright (c) 2019-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1182,6 +1182,29 @@ Gicv3Distributor::deactivateIRQ(uint32_t int_id)
+ }
+ 
+ void
++Gicv3Distributor::copy(Gicv3Registers *from, Gicv3Registers *to)
++{
++    const size_t size = itLines / 8;
++
++    gic->copyDistRegister(from, to, GICD_CTLR);
++
++    gic->clearDistRange(to, GICD_ICENABLER.start(), size);
++    gic->clearDistRange(to, GICD_ICPENDR.start(), size);
++    gic->clearDistRange(to, GICD_ICACTIVER.start(), size);
++
++    gic->copyDistRange(from, to, GICD_IGROUPR.start(), size);
++    gic->copyDistRange(from, to, GICD_ISENABLER.start(), size);
++    gic->copyDistRange(from, to, GICD_ISPENDR.start(), size);
++    gic->copyDistRange(from, to, GICD_ISACTIVER.start(), size);
++    gic->copyDistRange(from, to, GICD_IPRIORITYR.start(), size);
++    gic->copyDistRange(from, to, GICD_ITARGETSR.start(), size);
++    gic->copyDistRange(from, to, GICD_ICFGR.start(), size);
++    gic->copyDistRange(from, to, GICD_IGRPMODR.start(), size);
++    gic->copyDistRange(from, to, GICD_NSACR.start(), size);
++    gic->copyDistRange(from, to, GICD_IROUTER.start(), size);
++}
++
++void
+ Gicv3Distributor::serialize(CheckpointOut & cp) const
+ {
+     SERIALIZE_SCALAR(ARE);
+diff --git a/src/dev/arm/gic_v3_distributor.hh b/src/dev/arm/gic_v3_distributor.hh
+index 22c5ad7..9960e91 100644
+--- a/src/dev/arm/gic_v3_distributor.hh
++++ b/src/dev/arm/gic_v3_distributor.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2020 ARM Limited
++ * Copyright (c) 2019-2022 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -272,6 +272,8 @@ class Gicv3Distributor : public Serializable
+     uint64_t read(Addr addr, size_t size, bool is_secure_access);
+     void write(Addr addr, uint64_t data, size_t size,
+                bool is_secure_access);
++
++    void copy(Gicv3Registers *from, Gicv3Registers *to);
+ };
+ 
+ } // namespace gem5
+diff --git a/src/dev/arm/gic_v3_redistributor.cc b/src/dev/arm/gic_v3_redistributor.cc
+index adfc5bc..03e8218 100644
+--- a/src/dev/arm/gic_v3_redistributor.cc
++++ b/src/dev/arm/gic_v3_redistributor.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2021 Arm Limited
++ * Copyright (c) 2019-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1047,6 +1047,34 @@ Gicv3Redistributor::canBeSelectedFor1toNInterrupt(Gicv3::GroupId group) const
+ }
+ 
+ void
++Gicv3Redistributor::copy(Gicv3Registers *from, Gicv3Registers *to)
++{
++    const auto affinity = getAffinity();
++    // SGI_Base regs
++    gic->copyRedistRegister(from, to, affinity, GICR_CTLR);
++    gic->copyRedistRegister(from, to, affinity, GICR_WAKER);
++
++    gic->clearRedistRegister(to, affinity, GICR_ICENABLER0);
++    gic->clearRedistRegister(to, affinity, GICR_ICPENDR0);
++    gic->clearRedistRegister(to, affinity, GICR_ICACTIVER0);
++
++    gic->copyRedistRegister(from, to, affinity, GICR_ISENABLER0);
++    gic->copyRedistRegister(from, to, affinity, GICR_ISPENDR0);
++    gic->copyRedistRegister(from, to, affinity, GICR_ISACTIVER0);
++    gic->copyRedistRegister(from, to, affinity, GICR_ICFGR0);
++    gic->copyRedistRegister(from, to, affinity, GICR_ICFGR1);
++    gic->copyRedistRegister(from, to, affinity, GICR_IGRPMODR0);
++    gic->copyRedistRegister(from, to, affinity, GICR_NSACR);
++
++    gic->copyRedistRange(from, to, affinity,
++        GICR_IPRIORITYR.start(), GICR_IPRIORITYR.size());
++
++    // RD_Base regs
++    gic->copyRedistRegister(from, to, affinity, GICR_PROPBASER);
++    gic->copyRedistRegister(from, to, affinity, GICR_PENDBASER);
++}
++
++void
+ Gicv3Redistributor::serialize(CheckpointOut & cp) const
+ {
+     SERIALIZE_SCALAR(peInLowPowerState);
+diff --git a/src/dev/arm/gic_v3_redistributor.hh b/src/dev/arm/gic_v3_redistributor.hh
+index 4d4bc99..2709ff6 100644
+--- a/src/dev/arm/gic_v3_redistributor.hh
++++ b/src/dev/arm/gic_v3_redistributor.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2020 ARM Limited
++ * Copyright (c) 2019-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -260,6 +260,8 @@ class Gicv3Redistributor : public Serializable
+     void sendPPInt(uint32_t int_id);
+     void clearPPInt(uint32_t int_id);
+     void write(Addr addr, uint64_t data, size_t size, bool is_secure_access);
++
++    void copy(Gicv3Registers *from, Gicv3Registers *to);
+ };
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

@@ -1,0 +1,38 @@
+From ea6a659adc14fac94fc6a2fce95b3ede32ef27ae Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 06:17:15 -0800
+Subject: [PATCH 380/757] arch-x86: Detect when entering virtual 8086 mode.
+
+If we're entering virtual 8086 mode, panic. Some aspects of that mode
+may actually work, but since it's essentially untested, lets be extra
+cautious.
+
+Change-Id: I78bbfcb75db8370f4271c75caabc0ec53f75a884
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55810
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa.cc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index 713346e..f426137 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -318,6 +318,12 @@ ISA::setMiscReg(int miscReg, RegVal val)
+         break;
+       case MISCREG_CR8:
+         break;
++      case MISCREG_RFLAGS:
++        {
++            RFLAGS rflags = val;
++            panic_if(rflags.vm, "Virtual 8086 mode is not supported.");
++            break;
++        }
+       case MISCREG_CS_ATTR:
+         {
+             SegAttr toggled = regVal[miscReg] ^ val;
+-- 
+1.8.3.1
+

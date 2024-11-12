@@ -1,0 +1,54 @@
+From ccb5f8f8b3dd1ad27e7d00995c090ad0c41e9432 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 03:00:02 -0800
+Subject: [PATCH 389/757] dev,arch-x86: Implement some self test 8042 commands.
+
+The self test in particular is used by bare metal software to ensure
+that the keyboard controller is reset and ready to use.
+
+Change-Id: I53c2a80c181b9d19617c75657637e06951c94433
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55806
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/i8042.cc | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/src/dev/x86/i8042.cc b/src/dev/x86/i8042.cc
+index 268d090..9fab694 100644
+--- a/src/dev/x86/i8042.cc
++++ b/src/dev/x86/i8042.cc
+@@ -226,11 +226,26 @@ X86ISA::I8042::write(PacketPtr pkt)
+             commandByte.disableMouse = 0;
+             break;
+           case TestMouse:
+-            panic("i8042 \"Test mouse\" command not implemented.\n");
++            // The response to this is from the 8042, not the mouse.
++            // Hard code no errors detected.
++            writeData(0x00);
++            break;
+           case SelfTest:
+-            panic("i8042 \"Self test\" command not implemented.\n");
++            // Exactly what this does is essentially undocumented, but this:
++            // https://www.os2museum.com/wp/
++            //          ibm-pcat-8042-keyboard-controller-commands/
++            // says that this should essentially reset some values.
++            commandByte.convertScanCodes = 1;
++            commandByte.disableMouse = 1;
++            commandByte.disableKeyboard = 1;
++            commandByte.passedSelfTest = 1;
++            statusReg.passedSelfTest = 1;
++            writeData(0x55); // Self test passed.
++            break;
+           case InterfaceTest:
+-            panic("i8042 \"Interface test\" command not implemented.\n");
++            // Hard code no errors detected.
++            writeData(0x00);
++            break;
+           case DiagnosticDump:
+             panic("i8042 \"Diagnostic dump\" command not implemented.\n");
+           case DisableKeyboard:
+-- 
+1.8.3.1
+

@@ -1,0 +1,68 @@
+From 73b59bccd035d28435b0e58c8f4d3d9dd85a1e6c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 8 Dec 2021 23:42:02 -0800
+Subject: [PATCH 015/757] configs: Fix terminology to 'ticks' in NPB configs
+
+Instructions was not the correct terminolgy here. It should be ticks.
+
+Change-Id: I08c125049e8dc2cc8c488a820530c6c6a45d7367
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53847
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/x86-npb-benchmarks.py | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/configs/example/gem5_library/x86-npb-benchmarks.py b/configs/example/gem5_library/x86-npb-benchmarks.py
+index ba7b17c..1609521 100644
+--- a/configs/example/gem5_library/x86-npb-benchmarks.py
++++ b/configs/example/gem5_library/x86-npb-benchmarks.py
+@@ -108,10 +108,10 @@ parser.add_argument(
+ )
+ 
+ parser.add_argument(
+-    "--maxinsts",
++    "--ticks",
+     type = int,
+-    help = "Optionally put the maximum number of instructions to execute \
+-    during ROI simulation. It accepts an integer number."
++    help = "Optionally put the maximum number of ticks to execute during the "\
++        "ROI. It accepts an integer value."
+ )
+ 
+ args = parser.parse_args()
+@@ -259,13 +259,13 @@ else:
+ # The next exit_event is to simulate the ROI. It should be exited with a cause
+ # marked by `workend`.
+ 
+-# Next, we need to check if the user passed a value for --maxinsts. If yes,
+-# then we limit out execution to this time only. Otherwise, we simulate until
+-# the ROI ends.
+-if args.maxinsts is None:
+-    exit_event = m5.simulate()
++# Next, we need to check if the user passed a value for --ticks. If yes,
++# then we limit out execution to this number of ticks during the ROI.
++# Otherwise, we simulate until the ROI ends.
++if args.ticks:
++    exit_event = m5.simulate(args.ticks)
+ else:
+-    exit_event = m5.simulate(args.maxinsts)
++    exit_event = m5.simulate()
+ 
+ 
+ # Reached the end of ROI.
+@@ -279,8 +279,8 @@ if exit_event.getCause() == "workend":
+     m5.stats.dump()
+     end_tick = m5.curTick()
+ elif exit_event.getCause() == "simulate() limit reached" and \
+-    args.maxinsts is not None:
+-    print("Dump stats at the end of {} instructions".format(args.maxinsts))
++    args.ticks is not None:
++    print("Dump stats at the end of {} ticks in the ROI".format(args.ticks))
+ 
+     m5.stats.dump()
+     end_tick = m5.curTick()
+-- 
+1.8.3.1
+

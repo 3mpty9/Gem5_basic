@@ -1,0 +1,106 @@
+From 35f70086026bbed9eeaea528a5ae1304936ff226 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 18 Apr 2022 12:44:45 -0700
+Subject: [PATCH 566/757] tests: Fix 'valid_hosts' field for KVM tests
+
+In some cases where we wish to use X86 KVM the 'valid_hosts' field was
+set to 'constants.supported_hosts'. This can cause problems as the only
+valid host for an X86 KVM test is X86. This patch fixes this.
+
+This fix will likely fix some flakey errors observed in the Nightly
+tests.
+
+Change-Id: Id0a906ca6602c0358ae632cce314769807bf6e07
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58970
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../gem5/gem5_library_example_tests/test_gem5_library_examples.py | 8 ++++----
+ tests/gem5/kvm-fork-tests/test_kvm_fork_run.py                    | 2 +-
+ tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py                | 2 +-
+ tests/gem5/parsec-benchmarks/test_parsec.py                       | 2 +-
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+index f05bb6d..f90a077 100644
+--- a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
++++ b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+@@ -68,7 +68,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         ),
+         config_args=[],
+         valid_isas=(constants.x86_tag,),
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         length=constants.long_tag,
+         uses_kvm=True,
+     )
+@@ -107,7 +107,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         config_args=["--benchmark","blackscholes","--size","simsmall"],
+         valid_isas=(constants.x86_tag,),
+         protocol="MESI_Two_Level",
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         length=constants.long_tag,
+         uses_kvm=True,
+     )
+@@ -135,7 +135,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         ],
+         valid_isas=(constants.x86_tag,),
+         protocol="MESI_Two_Level",
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         length=constants.long_tag,
+         uses_kvm=True,
+     )
+@@ -157,7 +157,7 @@ if os.access("/dev/kvm", mode=os.R_OK | os.W_OK):
+         config_args=["--benchmark","bfs","--synthetic","1","--size","1"],
+         valid_isas=(constants.x86_tag,),
+         protocol="MESI_Two_Level",
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         length=constants.long_tag,
+         uses_kvm=True,
+     )
+diff --git a/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py b/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
+index ddb91c1..0ddc350 100644
+--- a/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
++++ b/tests/gem5/kvm-fork-tests/test_kvm_fork_run.py
+@@ -86,7 +86,7 @@ def test_kvm_fork_run(cpu: str, num_cpus: int, mem_system: str, length: str):
+             "--kernel-args=''",
+         ],
+         valid_isas=(isa_to_use,),
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         protocol=protocol_to_use,
+         length=length,
+         uses_kvm=True,
+diff --git a/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py b/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
+index ffddaa0..4d501e4 100644
+--- a/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
++++ b/tests/gem5/kvm-switch-tests/test_kvm_cpu_switch.py
+@@ -84,7 +84,7 @@ def test_kvm_switch(cpu: str, num_cpus: int, mem_system: str, length: str):
+             "--kernel-args=''",
+         ],
+         valid_isas=(isa_to_use,),
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         protocol=protocol_to_use,
+         length=length,
+         uses_kvm=True,
+diff --git a/tests/gem5/parsec-benchmarks/test_parsec.py b/tests/gem5/parsec-benchmarks/test_parsec.py
+index b659046..1104cf1 100644
+--- a/tests/gem5/parsec-benchmarks/test_parsec.py
++++ b/tests/gem5/parsec-benchmarks/test_parsec.py
+@@ -86,7 +86,7 @@ def test_parsec(
+             resource_path,
+         ],
+         valid_isas=(constants.x86_tag,),
+-        valid_hosts=constants.supported_hosts,
++        valid_hosts=(constants.host_x86_64_tag,),
+         length=length,
+         uses_kvm=True,
+     )
+-- 
+1.8.3.1
+

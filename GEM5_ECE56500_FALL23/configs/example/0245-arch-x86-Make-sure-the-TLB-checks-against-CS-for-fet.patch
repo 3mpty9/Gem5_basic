@@ -1,0 +1,41 @@
+From b4c285b3c096649937d485de2026e657a1d62901 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 9 Jan 2022 01:48:33 -0800
+Subject: [PATCH 245/757] arch-x86: Make sure the TLB checks against CS for
+ fetches.
+
+When instructions perform accesses, they embed the segment being used
+into the request flags. When the CPU creates a request instead, for
+instance when fetching an instruction, it doesn't know to do that.
+
+This change adds a check in the TLB when makes sure CS is used when
+checking a fetch, even if the flags didn't say to.
+
+Change-Id: Ie9da3afc0b10eeb96247353150c64f1829cea41b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55247
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/tlb.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/arch/x86/tlb.cc b/src/arch/x86/tlb.cc
+index 7d20e00..3992d73 100644
+--- a/src/arch/x86/tlb.cc
++++ b/src/arch/x86/tlb.cc
+@@ -335,6 +335,11 @@ TLB::translate(const RequestPtr &req,
+         if (m5Reg.mode != LongMode) {
+             DPRINTF(TLB, "Not in long mode. Checking segment protection.\n");
+ 
++            // CPUs won't know to use CS when building fetch requests, so we
++            // need to override the value of "seg" here if this is a fetch.
++            if (mode == BaseMMU::Execute)
++                seg = SEGMENT_REG_CS;
++
+             SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
+             // Check for an unusable segment.
+             if (attr.unusable) {
+-- 
+1.8.3.1
+

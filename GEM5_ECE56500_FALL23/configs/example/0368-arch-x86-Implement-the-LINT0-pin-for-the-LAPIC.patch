@@ -1,0 +1,162 @@
+From e62c0a6df3d0b53900f7d0d7c9ee01643a8d1f1f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 21 Jan 2022 00:13:44 -0800
+Subject: [PATCH 368/757] arch-x86: Implement the LINT0 pin for the LAPIC.
+
+This pin should be connected to the master I8259 output which is used to
+bypass the IOAPIC when it is disabled and the local APIC is in virtual
+wire mode. This is how the system is supposed to start, and can later be
+switched into symmetric multiprocessing mode later on by an SMP aware OS
+(most of them). Only the BSP should have it's LINT0 pin connected to the
+I8259, since I8259 type interrupts are only usable by a single CPU at a
+time.
+
+Change-Id: I0e3e3338f14d384c26da660cf54779579eb0d641
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55696
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/X86LocalApic.py |  5 ++++-
+ src/arch/x86/interrupts.cc   | 36 ++++++++++++++++++++++++++++++++++++
+ src/arch/x86/interrupts.hh   | 22 ++++++++++++++++++----
+ 3 files changed, 58 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/x86/X86LocalApic.py b/src/arch/x86/X86LocalApic.py
+index baf4216..e9a31aa 100644
+--- a/src/arch/x86/X86LocalApic.py
++++ b/src/arch/x86/X86LocalApic.py
+@@ -42,7 +42,7 @@ from m5.proxy import *
+ 
+ from m5.objects.BaseInterrupts import BaseInterrupts
+ from m5.objects.ClockDomain import DerivedClockDomain
+-from m5.SimObject import SimObject
++from m5.objects.IntPin import IntSinkPin
+ 
+ class X86LocalApic(BaseInterrupts):
+     type = 'X86LocalApic'
+@@ -57,6 +57,9 @@ class X86LocalApic(BaseInterrupts):
+     int_slave     = DeprecatedParam(int_responder,
+                         '`int_slave` is now called `int_responder`')
+ 
++    lint0 = IntSinkPin('Local interrupt pin 0')
++    lint1 = IntSinkPin('Local interrupt pin 1')
++
+     int_latency = Param.Latency('1ns', \
+             "Latency for an interrupt to propagate through this device.")
+     pio = ResponsePort("Programmed I/O port")
+diff --git a/src/arch/x86/interrupts.cc b/src/arch/x86/interrupts.cc
+index c2ee1bc..ecaa194 100644
+--- a/src/arch/x86/interrupts.cc
++++ b/src/arch/x86/interrupts.cc
+@@ -275,6 +275,40 @@ X86ISA::Interrupts::requestInterrupt(uint8_t vector,
+ 
+ 
+ void
++X86ISA::Interrupts::raiseInterruptPin(int number)
++{
++    panic_if(number < 0 || number > 1,
++            "Asked to raise unrecognized int pin %d.", number);
++    DPRINTF(LocalApic, "Raised wired interrupt pin LINT%d.\n", number);
++
++    const LVTEntry entry =
++        regs[(number == 0) ? APIC_LVT_LINT0 : APIC_LVT_LINT1];
++
++    if (entry.masked) {
++        DPRINTF(LocalApic, "The interrupt was masked.\n");
++        return;
++    }
++
++    PacketPtr pkt = buildIntAcknowledgePacket();
++    auto on_completion = [this, dm=entry.deliveryMode, trigger=entry.trigger](
++            PacketPtr pkt) {
++        requestInterrupt(pkt->getLE<uint8_t>(), dm, trigger);
++        delete pkt;
++    };
++    intRequestPort.sendMessage(pkt, sys->isTimingMode(), on_completion);
++}
++
++
++void
++X86ISA::Interrupts::lowerInterruptPin(int number)
++{
++    panic_if(number < 0 || number > 1,
++            "Asked to lower unrecognized int pin %d.", number);
++    DPRINTF(LocalApic, "Lowered wired interrupt pin LINT%d.\n", number);
++}
++
++
++void
+ X86ISA::Interrupts::setThreadContext(ThreadContext *_tc)
+ {
+     assert(_tc);
+@@ -602,6 +636,8 @@ X86ISA::Interrupts::Interrupts(const Params &p)
+       apicTimerEvent([this]{ processApicTimerEvent(); }, name()),
+       intResponsePort(name() + ".int_responder", this, this),
+       intRequestPort(name() + ".int_requestor", this, this, p.int_latency),
++      lint0Pin(name() + ".lint0", 0, this, 0),
++      lint1Pin(name() + ".lint1", 0, this, 1),
+       pioPort(this), pioDelay(p.pio_latency)
+ {
+     memset(regs, 0, sizeof(regs));
+diff --git a/src/arch/x86/interrupts.hh b/src/arch/x86/interrupts.hh
+index 52fe475..ebe32fa 100644
+--- a/src/arch/x86/interrupts.hh
++++ b/src/arch/x86/interrupts.hh
+@@ -56,6 +56,7 @@
+ #include "arch/x86/regs/apic.hh"
+ #include "base/bitfield.hh"
+ #include "cpu/thread_context.hh"
++#include "dev/intpin.hh"
+ #include "dev/io_device.hh"
+ #include "dev/x86/intdev.hh"
+ #include "params/X86LocalApic.hh"
+@@ -176,10 +177,14 @@ class Interrupts : public BaseInterrupts
+ 
+     int initialApicId = 0;
+ 
+-    // Ports for interrupts.
++    // Ports for interrupt messages.
+     IntResponsePort<Interrupts> intResponsePort;
+     IntRequestPort<Interrupts> intRequestPort;
+ 
++    // Pins for wired interrupts.
++    IntSinkPin<Interrupts> lint0Pin;
++    IntSinkPin<Interrupts> lint1Pin;
++
+     // Port for memory mapped register accesses.
+     PioPort<Interrupts> pioPort;
+ 
+@@ -222,8 +227,12 @@ class Interrupts : public BaseInterrupts
+     AddrRangeList getAddrRanges() const;
+     AddrRangeList getIntAddrRange() const;
+ 
+-    Port &getPort(const std::string &if_name,
+-                  PortID idx=InvalidPortID) override
++    void raiseInterruptPin(int number);
++    void lowerInterruptPin(int number);
++
++    Port &
++    getPort(const std::string &if_name,
++            PortID idx=InvalidPortID) override
+     {
+         if (if_name == "int_requestor") {
+             return intRequestPort;
+@@ -231,8 +240,13 @@ class Interrupts : public BaseInterrupts
+             return intResponsePort;
+         } else if (if_name == "pio") {
+             return pioPort;
++        } else if (if_name == "lint0") {
++            return lint0Pin;
++        } else if (if_name == "lint1") {
++            return lint1Pin;
++        } else {
++            return SimObject::getPort(if_name, idx);
+         }
+-        return SimObject::getPort(if_name, idx);
+     }
+ 
+     /*
+-- 
+1.8.3.1
+

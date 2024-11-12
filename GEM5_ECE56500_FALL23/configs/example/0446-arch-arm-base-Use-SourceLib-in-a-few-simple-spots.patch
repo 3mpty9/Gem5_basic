@@ -1,0 +1,62 @@
+From c11dc40f069004d7c9ee046ab1ee37e0ca630564 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Mon, 21 Mar 2022 17:53:27 -0700
+Subject: [PATCH 446/757] arch-arm,base: Use SourceLib() in a few simple spots.
+
+There are a couple places where SourceLib(), an interface to SCons's
+LIB variable that respects tags, can be used simply in existing
+SConscripts. Do that so that SourceLib is used, and as an example if
+someone wants to see it in action.
+
+Change-Id: Idb27da17724990093252b710f5f9fde8351a4bc5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58070
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 13 +++++--------
+ src/base/SConscript               |  2 +-
+ 2 files changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index 00aec93..32faa3c 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -140,15 +140,12 @@ fm_static_libs = (
+     'fmruntime',
+     'IrisSupport',
+ )
+-env.Append(LIBS=list(staticify(env, lib) for lib in fm_static_libs))
+-
+-system_libs = (
+-    'atomic',
+-    'dl',
+-    'rt',
+-)
+-env.Append(LIBS=system_libs)
++for lib in fm_static_libs:
++    SourceLib(staticify(env, lib))
+ 
++SourceLib('atomic')
++SourceLib('dl')
++SourceLib('rt')
+ 
+ class ProjectFileParser(Grammar):
+     class Param(object):
+diff --git a/src/base/SConscript b/src/base/SConscript
+index 21ebde9..574a64f 100644
+--- a/src/base/SConscript
++++ b/src/base/SConscript
+@@ -48,7 +48,7 @@ else:
+     warning("No IEEE FP rounding mode control.\n"
+             "FP results may deviate slightly from other platforms.")
+ if env['HAVE_PNG']:
+-    env.Append(LIBS=['png'])
++    SourceLib('png')
+     Source('pngwriter.cc')
+ Source('fiber.cc')
+ GTest('fiber.test', 'fiber.test.cc', 'fiber.cc')
+-- 
+1.8.3.1
+

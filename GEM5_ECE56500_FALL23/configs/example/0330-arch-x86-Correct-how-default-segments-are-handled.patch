@@ -1,0 +1,55 @@
+From 911a8762e8b9aba8a3278196083f5353cea50229 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 11:20:17 -0800
+Subject: [PATCH 330/757] arch-x86: Correct how default segments are handled.
+
+The stack segment is the default for instructions that use rSP or rBP in
+their address calculations at all, except if they're used as a base.
+Even though the wording in the AMD manual is a bit misleading, the
+presence of a displacement does not make the default DS.
+
+Also, allow segment override prefixes even if the default is SS. If an
+instruction *must* use SS (like push or pop) it will have explicitly
+specified that in the microcode.
+
+Change-Id: I73c6e367440a664c5c7c483337c16d4ab14f0e34
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55589
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/emulenv.cc | 14 ++++++--------
+ 1 file changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/src/arch/x86/emulenv.cc b/src/arch/x86/emulenv.cc
+index 44afc5a..b628293 100644
+--- a/src/arch/x86/emulenv.cc
++++ b/src/arch/x86/emulenv.cc
+@@ -100,18 +100,16 @@ void EmulEnv::doModRM(const ExtMachInst & machInst)
+             }
+         }
+     }
+-    //Figure out what segment to use. This won't be entirely accurate since
+-    //the presence of a displacement is supposed to make the instruction
+-    //default to the data segment.
+-    if ((base != INTREG_RBP && base != INTREG_RSP) || machInst.dispSize) {
++    //Figure out what segment to use.
++    if (base != INTREG_RBP && base != INTREG_RSP) {
+         seg = SEGMENT_REG_DS;
+-        //Handle any segment override that might have been in the instruction
+-        int segFromInst = machInst.legacy.seg;
+-        if (segFromInst)
+-            seg = (SegmentRegIndex)(segFromInst - 1);
+     } else {
+         seg = SEGMENT_REG_SS;
+     }
++    //Handle any segment override that might have been in the instruction
++    int segFromInst = machInst.legacy.seg;
++    if (segFromInst)
++        seg = (SegmentRegIndex)(segFromInst - 1);
+ }
+ 
+ void EmulEnv::setSeg(const ExtMachInst & machInst)
+-- 
+1.8.3.1
+

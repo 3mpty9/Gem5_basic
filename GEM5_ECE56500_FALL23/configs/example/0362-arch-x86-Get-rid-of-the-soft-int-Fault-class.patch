@@ -1,0 +1,73 @@
+From 0d1bca9e216f0d53a0e7208f718b453ac489963d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 20 Jan 2022 22:10:26 -0800
+Subject: [PATCH 362/757] arch-x86: Get rid of the soft int Fault class.
+
+This was never instantiated, and not fully implemented.
+
+Change-Id: I2011e49345e48e194ed9f1540446f0f5a699401d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55689
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/faults.cc |  6 +-----
+ src/arch/x86/faults.hh | 11 -----------
+ 2 files changed, 1 insertion(+), 16 deletions(-)
+
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 235f75a..2e9b2e5 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -71,8 +71,7 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     HandyM5Reg m5reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
+     MicroPC entry;
+     if (m5reg.mode == LongMode) {
+-        entry = isSoft() ? extern_label_longModeSoftInterrupt :
+-                           extern_label_longModeInterrupt;
++        entry = extern_label_longModeInterrupt;
+     } else {
+         if (m5reg.submode == RealMode)
+             entry = extern_label_realModeInterrupt;
+@@ -88,9 +87,6 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+             panic("Legacy mode interrupts with error codes "
+                     "aren't implemented.");
+         }
+-        // Software interrupts shouldn't have error codes. If one
+-        // does, there would need to be microcode to set it up.
+-        assert(!isSoft());
+         tc->setIntReg(INTREG_MICRO(15), errorCode);
+     }
+     pc.upc(romMicroPC(entry));
+diff --git a/src/arch/x86/faults.hh b/src/arch/x86/faults.hh
+index a8d19d9..a1ff1b0 100644
+--- a/src/arch/x86/faults.hh
++++ b/src/arch/x86/faults.hh
+@@ -70,7 +70,6 @@ class X86FaultBase : public FaultBase
+     const char *name() const override { return faultName; }
+     virtual bool isBenign() { return true; }
+     virtual const char *mnemonic() const { return mnem; }
+-    virtual bool isSoft() { return false; }
+ 
+     void invoke(ThreadContext *tc, const StaticInstPtr &inst=
+                 nullStaticInstPtr) override;
+@@ -369,16 +368,6 @@ class StartupInterrupt : public X86Interrupt
+                 nullStaticInstPtr) override;
+ };
+ 
+-class SoftwareInterrupt : public X86Interrupt
+-{
+-  public:
+-    SoftwareInterrupt(uint8_t _vector) :
+-        X86Interrupt("Software Interrupt", "#INTR", _vector)
+-    {}
+-
+-    bool isSoft() override { return true; }
+-};
+-
+ } // namespace X86ISA
+ } // namespace gem5
+ 
+-- 
+1.8.3.1
+

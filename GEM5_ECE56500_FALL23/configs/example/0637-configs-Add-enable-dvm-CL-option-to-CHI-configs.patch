@@ -1,0 +1,49 @@
+From 128b78177c39e572c89d4018210f56095441b5b1 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 8 Nov 2021 14:52:45 +0000
+Subject: [PATCH 637/757] configs: Add --enable-dvm CL option to CHI configs
+
+By using the "--enable-dvm" command line option it is possible
+to issue DVM messages from Arm CPUs
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I0a2b683ad3403590515bd406e241b66961cee964
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57301
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ configs/ruby/CHI.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/configs/ruby/CHI.py b/configs/ruby/CHI.py
+index 7cac5ed..c94dc94 100644
+--- a/configs/ruby/CHI.py
++++ b/configs/ruby/CHI.py
+@@ -43,6 +43,7 @@ def define_options(parser):
+                         default=None,
+                         help="NoC config. parameters and bindings. "
+                            "Required for CustomMesh topology")
++    parser.add_argument("--enable-dvm", default=False, action="store_true")
+ 
+ def read_config_file(file):
+     ''' Read file as a module and return it '''
+@@ -65,6 +66,13 @@ def create_system(options, full_system, system, dma_ports, bootmem,
+     if options.num_l3caches < 1:
+         m5.fatal('--num-l3caches must be at least 1')
+ 
++    if full_system and options.enable_dvm:
++        if len(cpus) <= 1:
++            m5.fatal("--enable-dvm can't be used with a single CPU")
++        for cpu in cpus:
++            for decoder in cpu.decoder:
++                decoder.dvm_enabled = True
++
+     # read specialized classes from config file if provided
+     if options.chi_config:
+         chi_defs = read_config_file(options.chi_config)
+-- 
+1.8.3.1
+

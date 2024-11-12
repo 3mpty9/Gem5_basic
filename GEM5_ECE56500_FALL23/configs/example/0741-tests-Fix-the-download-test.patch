@@ -1,0 +1,37 @@
+From fdfa1e38b3aa9c893b1be6ca1014dec49cc3faab Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 7 Jun 2022 11:24:24 -0700
+Subject: [PATCH 741/757] tests: Fix the download test
+
+Weekly tests were failing: https://jenkins.gem5.org/job/weekly/56
+
+This was due to the test passing the wrong parameter to the script.
+
+Change-Id: Ief810d6b39859129a95fe8a2914e47d21bf879aa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60410
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+(cherry picked from commit f4f40f44f1996f275015bf26f4911eb5e5315e91)
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61731
+---
+ tests/gem5/gem5-resources/test_download_resources.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/gem5/gem5-resources/test_download_resources.py b/tests/gem5/gem5-resources/test_download_resources.py
+index acc72d7..55b57db 100644
+--- a/tests/gem5/gem5-resources/test_download_resources.py
++++ b/tests/gem5/gem5-resources/test_download_resources.py
+@@ -40,7 +40,7 @@ gem5_verify_config(
+     config=joinpath(
+         config.base_dir, "tests", "gem5", "configs", "download_check.py"
+     ),
+-    config_args=["--resource-directory", resource_path],
++    config_args=["--download-directory", resource_path],
+     valid_isas=(constants.null_tag,),
+     length=constants.very_long_tag,
+ )
+-- 
+1.8.3.1
+

@@ -1,0 +1,34 @@
+From db921c890e2133ebc1dbc2f91848f06df0374e49 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 23 Dec 2021 23:34:14 -0800
+Subject: [PATCH 078/757] scons: Fix 'CheckLinkFlag' so '-Werror' is not
+ enabled
+
+A small error in 'CheckLinkFlag' was resulting in `-Werror` being set
+as a CXXFLAG after the function was run. This patch fixes this.
+
+Change-Id: I786f81a4f94be0356573eb6d4673d04ee5aa844d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54863
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ site_scons/gem5_scons/configure.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/site_scons/gem5_scons/configure.py b/site_scons/gem5_scons/configure.py
+index 835ef44..24a4a3d 100644
+--- a/site_scons/gem5_scons/configure.py
++++ b/site_scons/gem5_scons/configure.py
+@@ -62,7 +62,7 @@ def CheckLinkFlag(context, flag, autoadd=True, set_for_shared=True):
+     last_linkflags = context.env['LINKFLAGS']
+     context.env.Append(LINKFLAGS=[flag])
+     pre_werror = context.env['LINKFLAGS']
+-    context.env.Append(CXXFLAGS=['-Werror'])
++    context.env.Append(LINKFLAGS=['-Werror'])
+     ret = context.TryLink('int main(int, char *[]) { return 0; }', '.cc')
+     context.env['LINKFLAGS'] = pre_werror
+     if not (ret and autoadd):
+-- 
+1.8.3.1
+

@@ -1,0 +1,70 @@
+From 9bd3f9588ab2910e4d57b33368651baae7d5ff96 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 9 Dec 2021 14:49:24 -0800
+Subject: [PATCH 017/757] tests: Add test for the lupv example
+
+Change-Id: Ib17f59b5b6ab9704be14e73d203bbab61caada90
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53903
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/lupv/run_lupv.py                        |  9 ++++++++-
+ .../test_gem5_library_examples.py                       | 17 +++++++++++++++++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/configs/example/lupv/run_lupv.py b/configs/example/lupv/run_lupv.py
+index 721adcd..93eaa86 100644
+--- a/configs/example/lupv/run_lupv.py
++++ b/configs/example/lupv/run_lupv.py
+@@ -64,6 +64,13 @@ parser.add_argument(
+ parser.add_argument(
+     "num_cpus", type=int, help="The number of CPU in the system"
+ )
++parser.add_argument(
++    "--max-ticks",
++    type=int,
++    required=False,
++    default=m5.MaxTick,
++    help="The maximum number of ticks to simulate. Used for testing.",
++)
+ 
+ args = parser.parse_args()
+ 
+@@ -105,7 +112,7 @@ root = Root(full_system=True, system=board)
+ m5.instantiate()
+ print("Beginning simulation!")
+ 
+-exit_event = m5.simulate()
++exit_event = m5.simulate(args.max_ticks)
+ 
+ print(
+     "Exiting @ tick {} because {}.".format(m5.curTick(), exit_event.getCause())
+diff --git a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+index 8b0c48b..2aca184 100644
+--- a/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
++++ b/tests/gem5/gem5_library_example_tests/test_gem5_library_examples.py
+@@ -174,3 +174,20 @@ gem5_verify_config(
+     valid_hosts=constants.supported_hosts,
+     length=constants.long_tag,
+ )
++
++gem5_verify_config(
++    name="test-lupv-example",
++    fixtures=(),
++    verifiers=(),
++    config=joinpath(
++        config.base_dir,
++        "configs",
++        "example",
++        "lupv",
++        "run_lupv.py",
++    ),
++    config_args=["timing", "1", "--max-ticks", "1000000000"],
++    valid_isas=(constants.riscv_tag,),
++    valid_hosts=constants.supported_hosts,
++    length=constants.long_tag,
++)
+-- 
+1.8.3.1
+

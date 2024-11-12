@@ -1,0 +1,167 @@
+From af534729c4d68afeb0fdde59d46922c8e2cc664a Mon Sep 17 00:00:00 2001
+From: Sungkeun Kim <ksungkeun84@tamu.edu>
+Date: Mon, 18 Apr 2022 13:48:04 +0000
+Subject: [PATCH 571/757] mem-garnet: Packet Tracing of garnet network
+
+This is a patch to keep track of
+a single packet in the garnet network.
+This patch would help for finding a deadlock issue
+during the extending the garnet network.
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1181
+
+Change-Id: I1138484807ef127a3240b46154e29ae77678f1e9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58857
+Reviewed-by: Srikant Bharadwaj <srikant.bharadwaj@amd.com>
+Maintainer: Srikant Bharadwaj <srikant.bharadwaj@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/garnet/Credit.cc           | 2 +-
+ src/mem/ruby/network/garnet/GarnetNetwork.cc    | 1 +
+ src/mem/ruby/network/garnet/GarnetNetwork.hh    | 2 ++
+ src/mem/ruby/network/garnet/NetworkInterface.cc | 4 +++-
+ src/mem/ruby/network/garnet/flit.cc             | 8 +++++---
+ src/mem/ruby/network/garnet/flit.hh             | 4 +++-
+ 6 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/src/mem/ruby/network/garnet/Credit.cc b/src/mem/ruby/network/garnet/Credit.cc
+index 65ff488..74d6611 100644
+--- a/src/mem/ruby/network/garnet/Credit.cc
++++ b/src/mem/ruby/network/garnet/Credit.cc
+@@ -46,7 +46,7 @@ namespace garnet
+ // and m_is_free_signal (whether VC is free or not)
+ 
+ Credit::Credit(int vc, bool is_free_signal, Tick curTime)
+-    : flit(0, vc, 0, RouteInfo(), 0, nullptr, 0, 0, curTime)
++    : flit(0, 0, vc, 0, RouteInfo(), 0, nullptr, 0, 0, curTime)
+ {
+     m_is_free_signal = is_free_signal;
+     m_type = CREDIT_;
+diff --git a/src/mem/ruby/network/garnet/GarnetNetwork.cc b/src/mem/ruby/network/garnet/GarnetNetwork.cc
+index de566a5..01b2473 100644
+--- a/src/mem/ruby/network/garnet/GarnetNetwork.cc
++++ b/src/mem/ruby/network/garnet/GarnetNetwork.cc
+@@ -70,6 +70,7 @@ GarnetNetwork::GarnetNetwork(const Params &p)
+     m_buffers_per_data_vc = p.buffers_per_data_vc;
+     m_buffers_per_ctrl_vc = p.buffers_per_ctrl_vc;
+     m_routing_algorithm = p.routing_algorithm;
++    m_next_packet_id = 0;
+ 
+     m_enable_fault_model = p.enable_fault_model;
+     if (m_enable_fault_model)
+diff --git a/src/mem/ruby/network/garnet/GarnetNetwork.hh b/src/mem/ruby/network/garnet/GarnetNetwork.hh
+index 912445b..d18caae 100644
+--- a/src/mem/ruby/network/garnet/GarnetNetwork.hh
++++ b/src/mem/ruby/network/garnet/GarnetNetwork.hh
+@@ -153,6 +153,7 @@ class GarnetNetwork : public Network
+     }
+ 
+     void update_traffic_distribution(RouteInfo route);
++    int getNextPacketID() { return m_next_packet_id++; }
+ 
+   protected:
+     // Configuration
+@@ -209,6 +210,7 @@ class GarnetNetwork : public Network
+     std::vector<NetworkLink *> m_networklinks; // All flit links in the network
+     std::vector<CreditLink *> m_creditlinks; // All credit links in the network
+     std::vector<NetworkInterface *> m_nis;   // All NI's in Network
++    int m_next_packet_id; // static vairable for packet id allocation
+ };
+ 
+ inline std::ostream&
+diff --git a/src/mem/ruby/network/garnet/NetworkInterface.cc b/src/mem/ruby/network/garnet/NetworkInterface.cc
+index a33102a..1154718 100644
+--- a/src/mem/ruby/network/garnet/NetworkInterface.cc
++++ b/src/mem/ruby/network/garnet/NetworkInterface.cc
+@@ -436,9 +436,11 @@ NetworkInterface::flitisizeMessage(MsgPtr msg_ptr, int vnet)
+ 
+         m_net_ptr->increment_injected_packets(vnet);
+         m_net_ptr->update_traffic_distribution(route);
++        int packet_id = m_net_ptr->getNextPacketID();
+         for (int i = 0; i < num_flits; i++) {
+             m_net_ptr->increment_injected_flits(vnet);
+-            flit *fl = new flit(i, vc, vnet, route, num_flits, new_msg_ptr,
++            flit *fl = new flit(packet_id,
++                i, vc, vnet, route, num_flits, new_msg_ptr,
+                 m_net_ptr->MessageSizeType_to_int(
+                 net_msg_ptr->getMessageSize()),
+                 oPort->bitWidth(), curTick());
+diff --git a/src/mem/ruby/network/garnet/flit.cc b/src/mem/ruby/network/garnet/flit.cc
+index 6e6ed5f..b65297c 100644
+--- a/src/mem/ruby/network/garnet/flit.cc
++++ b/src/mem/ruby/network/garnet/flit.cc
+@@ -43,7 +43,7 @@ namespace garnet
+ {
+ 
+ // Constructor for the flit
+-flit::flit(int id, int  vc, int vnet, RouteInfo route, int size,
++flit::flit(int packet_id, int id, int  vc, int vnet, RouteInfo route, int size,
+     MsgPtr msg_ptr, int MsgSize, uint32_t bWidth, Tick curTime)
+ {
+     m_size = size;
+@@ -51,6 +51,7 @@ flit::flit(int id, int  vc, int vnet, RouteInfo route, int size,
+     m_enqueue_time = curTime;
+     m_dequeue_time = curTime;
+     m_time = curTime;
++    m_packet_id = id;
+     m_id = id;
+     m_vnet = vnet;
+     m_vc = vc;
+@@ -82,7 +83,7 @@ flit::serialize(int ser_id, int parts, uint32_t bWidth)
+     int new_size = (int)divCeil((float)msgSize, (float)bWidth);
+     assert(new_id < new_size);
+ 
+-    flit *fl = new flit(new_id, m_vc, m_vnet, m_route,
++    flit *fl = new flit(m_packet_id, new_id, m_vc, m_vnet, m_route,
+                     new_size, m_msg_ptr, msgSize, bWidth, m_time);
+     fl->set_enqueue_time(m_enqueue_time);
+     fl->set_src_delay(src_delay);
+@@ -97,7 +98,7 @@ flit::deserialize(int des_id, int num_flits, uint32_t bWidth)
+     int new_size = (int)divCeil((float)msgSize, (float)bWidth);
+     assert(new_id < new_size);
+ 
+-    flit *fl = new flit(new_id, m_vc, m_vnet, m_route,
++    flit *fl = new flit(m_packet_id, new_id, m_vc, m_vnet, m_route,
+                     new_size, m_msg_ptr, msgSize, bWidth, m_time);
+     fl->set_enqueue_time(m_enqueue_time);
+     fl->set_src_delay(src_delay);
+@@ -109,6 +110,7 @@ void
+ flit::print(std::ostream& out) const
+ {
+     out << "[flit:: ";
++    out << "PacketId=" << m_packet_id << " ";
+     out << "Id=" << m_id << " ";
+     out << "Type=" << m_type << " ";
+     out << "Size=" << m_size << " ";
+diff --git a/src/mem/ruby/network/garnet/flit.hh b/src/mem/ruby/network/garnet/flit.hh
+index 8814d3c..a84dc57 100644
+--- a/src/mem/ruby/network/garnet/flit.hh
++++ b/src/mem/ruby/network/garnet/flit.hh
+@@ -51,7 +51,7 @@ class flit
+ {
+   public:
+     flit() {}
+-    flit(int id, int vc, int vnet, RouteInfo route, int size,
++    flit(int packet_id, int id, int vc, int vnet, RouteInfo route, int size,
+          MsgPtr msg_ptr, int MsgSize, uint32_t bWidth, Tick curTime);
+ 
+     virtual ~flit(){};
+@@ -60,6 +60,7 @@ class flit
+     int get_size() { return m_size; }
+     Tick get_enqueue_time() { return m_enqueue_time; }
+     Tick get_dequeue_time() { return m_dequeue_time; }
++    int getPacketID() { return m_packet_id; }
+     int get_id() { return m_id; }
+     Tick get_time() { return m_time; }
+     int get_vnet() { return m_vnet; }
+@@ -114,6 +115,7 @@ class flit
+     uint32_t m_width;
+     int msgSize;
+   protected:
++    int m_packet_id;
+     int m_id;
+     int m_vnet;
+     int m_vc;
+-- 
+1.8.3.1
+

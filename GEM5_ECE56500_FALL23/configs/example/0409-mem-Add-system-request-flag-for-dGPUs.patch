@@ -1,0 +1,51 @@
+From 7cfe88df74d2d8afc27781a9aca87af2e3034bd4 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 1 Sep 2021 18:27:02 -0500
+Subject: [PATCH 409/757] mem: Add system request flag for dGPUs
+
+dGPUs can translate a virtual address and will not know if the address
+resides in system/host memory or device/dGPU memory until the
+translation is complete. In order to mark requests as going to either
+system memory or device memory we add a field to the Request class.
+
+Change-Id: Ib1e80e8d03ecdfeb11c24d979ccc4b912ce07f91
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/51852
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/request.hh | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 85a9bed..b68edd2 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -436,6 +436,12 @@ class Request
+      */
+     uint32_t _substreamId = 0;
+ 
++    /**
++     * For fullsystem GPU simulation, this determines if a requests
++     * destination is system (host) memory or dGPU (device) memory.
++     */
++    bool _systemReq = 0;
++
+     /** The virtual address of the request. */
+     Addr _vaddr = MaxAddr;
+ 
+@@ -862,6 +868,10 @@ class Request
+         return _contextId;
+     }
+ 
++    /* For GPU fullsystem mark this request is not to device memory. */
++    void setSystemReq(bool sysReq) { _systemReq = sysReq; }
++    bool systemReq() const { return _systemReq; }
++
+     bool
+     hasStreamId() const
+     {
+-- 
+1.8.3.1
+

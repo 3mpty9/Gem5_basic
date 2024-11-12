@@ -1,0 +1,87 @@
+From 5d45c50b480d6ff31c9a461c1b6d3d212ef5ff0e Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 29 Sep 2021 21:15:38 +0100
+Subject: [PATCH 614/757] misc: Add VExpress_GEM5_Foundation bootloader
+
+The VExpress_GEM5_Foundation platform cannot use the VExpress_GEM5_V2
+bootloader as the GIC has a different memory map
+
+A new tarball has been uploaded to dist.gem5.org with the new bootloader
+
+Change-Id: Ie0c16e623c3323b7be2a333cd6b0ffcf891b7b9b
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59392
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/RealView.py              |  2 +-
+ system/arm/bootloader/arm64/makefile | 11 +++++++++--
+ tests/gem5/fs/linux/arm/test.py      |  2 +-
+ 3 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 2c76bbf..6645b39 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -1449,5 +1449,5 @@ class VExpress_GEM5_Foundation(VExpress_GEM5_Base):
+ 
+     def setupBootLoader(self, cur_sys, loc, boot_loader=None):
+         if boot_loader is None:
+-            boot_loader = [ loc('boot_v2.arm64') ]
++            boot_loader = [ loc('boot_foundation.arm64') ]
+         super().setupBootLoader(cur_sys, boot_loader)
+diff --git a/system/arm/bootloader/arm64/makefile b/system/arm/bootloader/arm64/makefile
+index dbf7128..f434f46 100644
+--- a/system/arm/bootloader/arm64/makefile
++++ b/system/arm/bootloader/arm64/makefile
+@@ -41,7 +41,8 @@ LDFLAGS = -N -Ttext 0x00000010 -static
+ 
+ all: mkdir $(BUILDDIR)/boot_emm.arm64 \
+ 	$(BUILDDIR)/boot.arm64  \
+-	$(BUILDDIR)/boot_v2.arm64
++	$(BUILDDIR)/boot_v2.arm64 \
++	$(BUILDDIR)/boot_foundation.arm64
+ 
+ #v1 has a GIC V2
+ $(BUILDDIR)/boot_emm.o: CPPFLAGS += -UGICV3 -DGIC_CPU_BASE=0x2c002000 \
+@@ -53,6 +54,10 @@ $(BUILDDIR)/boot.o: CPPFLAGS += -UGICV3 -DGIC_CPU_BASE=0x2c002000 \
+ $(BUILDDIR)/boot_v2.o: CPPFLAGS += -DGICV3 -DGIC_REDIST_BASE=0x2c010000 \
+ 	-DGIC_DIST_BASE=0x2c000000
+ 
++#Foundation has a GIC V3
++$(BUILDDIR)/boot_foundation.o: CPPFLAGS += -DGICV3 -DGIC_REDIST_BASE=0x2f100000 \
++	-DGIC_DIST_BASE=0x2f000000
++
+ $(BUILDDIR)/%.arm64: $(BUILDDIR)/%.o
+ 	$(LD) -o $@ $< $(LDFLAGS)
+ 
+@@ -64,6 +69,7 @@ install:
+ 	install -m 644 $(BUILDDIR)/boot_emm.arm64 \
+ 		$(BUILDDIR)/boot.arm64 \
+ 		$(BUILDDIR)/boot_v2.arm64 \
++		$(BUILDDIR)/boot_foundation.arm64 \
+ 		$(DESTDIR)/.
+ 
+ mkdir:
+@@ -71,4 +77,5 @@ mkdir:
+ 
+ clean:
+ 	rm -f $(BUILDDIR)/*.o
+-	rm -f $(BUILDDIR)/boot_emm.arm64 $(BUILDDIR)/boot.arm64 $(BUILDDIR)/boot_v2.arm64
++	rm -f $(BUILDDIR)/boot_emm.arm64 $(BUILDDIR)/boot.arm64 \
++        $(BUILDDIR)/boot_v2.arm64 $(BUILDDIR)/boot_foundation.arm64
+diff --git a/tests/gem5/fs/linux/arm/test.py b/tests/gem5/fs/linux/arm/test.py
+index 6184a75..42bd706 100644
+--- a/tests/gem5/fs/linux/arm/test.py
++++ b/tests/gem5/fs/linux/arm/test.py
+@@ -92,7 +92,7 @@ arm_fs_long_tests = [
+     #'realview-simple-timing-dual-ruby',
+ ]
+ 
+-tarball = 'aarch-system-20210904.tar.bz2'
++tarball = 'aarch-system-20220505.tar.bz2'
+ url = config.resource_url + "/arm/" + tarball
+ filepath = os.path.dirname(os.path.abspath(__file__))
+ path = joinpath(config.bin_path, 'arm')
+-- 
+1.8.3.1
+

@@ -1,0 +1,35 @@
+From c96409f301340f16e16052a1ade117119959591a Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 8 Dec 2021 11:12:59 -0800
+Subject: [PATCH 003/757] dev: Remove unused private variable in lupio_tmr.hh
+
+This was causing the compiler-checks to fail:
+https://jenkins.gem5.org/job/compiler-checks/71
+
+Clang-11 complained of an unused private variable. This variable is
+removed in this commit.
+
+Change-Id: I4a43d3cae0fe4ffed4e1df3d94849ac7dc24cc0b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53823
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/lupio/lupio_tmr.hh | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/dev/lupio/lupio_tmr.hh b/src/dev/lupio/lupio_tmr.hh
+index feea5ab..7a69fb7 100644
+--- a/src/dev/lupio/lupio_tmr.hh
++++ b/src/dev/lupio/lupio_tmr.hh
+@@ -50,7 +50,6 @@ class LupioTMR : public BasicPioDevice
+     System *system;
+     int nThread;
+     int intType;
+-    int nCPUs = 0;
+ 
+     // Register map
+     enum
+-- 
+1.8.3.1
+

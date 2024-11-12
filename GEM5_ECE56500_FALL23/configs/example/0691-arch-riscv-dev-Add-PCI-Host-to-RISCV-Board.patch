@@ -1,0 +1,429 @@
+From f3e948496957beebdf5216529bca019e0aa8138b Mon Sep 17 00:00:00 2001
+From: ntampouratzis <ntampouratzis@isc.tuc.gr>
+Date: Tue, 24 May 2022 23:30:58 +0300
+Subject: [PATCH 691/757] arch-riscv,dev: Add PCI Host to RISCV Board
+
+Add GenericRiscvPciHost to RISCV Board. In addition, we connect the IGbE_e1000
+ethernet card to PCI in order to verify the correct functionality.
+
+To be noticed that we build a new Linux kernel v5.10 (with Bootloader) according to these steps (
+https://github.com/gem5/gem5-resources/tree/stable/src/riscv-fs) adding the the PCI and e1000 drivers:
+
+CONFIG_PCI_SYSCALL=y
+CONFIG_PCI_STUB=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_NET_VENDOR_INTEL=y
+CONFIG_E1000=y
+CONFIG_E1000E=y
+CONFIG_IGB=y
+CONFIG_NET_VENDOR_I825XX=y
+
+Here you can find the kernel.config and our prebuild kernel to verify the correct behaviour:
+https://www.dropbox.com/scl/fo/sz9s37vybpfecbfilxqzz/h?dl=0&rlkey=klkxh33anjqnzwj3sopucqqzx
+
+You can verify it with the following command:
+build/RISCV/gem5.fast configs/example/gem5_library/riscv-fs.py
+
+Dear Jason Lowe-Power,
+
+Thank you for your comments! We have addressed all of them.
+
+Best regards,
+Nikolaos Tampouratzis
+
+Dear Jason,
+
+I think that it is ok now! :)
+
+Thanks!
+
+Best regards,
+Nikolaos Tampouratzis
+
+Change-Id: Id27d84a5588648b82cbfd5c88471927157ae6759
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59969
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/riscv/HiFive.py                          | 26 ++++++-
+ src/dev/riscv/SConscript                         |  6 +-
+ src/dev/riscv/pci_host.cc                        | 60 ++++++++++++++++
+ src/dev/riscv/pci_host.hh                        | 65 +++++++++++++++++
+ src/python/gem5/components/boards/riscv_board.py | 88 ++++++++++++++++++++++++
+ 5 files changed, 241 insertions(+), 4 deletions(-)
+ create mode 100755 src/dev/riscv/pci_host.cc
+ create mode 100755 src/dev/riscv/pci_host.hh
+
+diff --git a/src/dev/riscv/HiFive.py b/src/dev/riscv/HiFive.py
+index a76e456..08ef943 100755
+--- a/src/dev/riscv/HiFive.py
++++ b/src/dev/riscv/HiFive.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) 2021 Huawei International
++# Copyright (c) 2022 EXAscale Performance SYStems (EXAPSYS)
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -44,6 +45,20 @@ from m5.params import *
+ from m5.proxy import *
+ from m5.util.fdthelper import *
+ 
++from m5.objects.PciHost import GenericPciHost
++
++class GenericRiscvPciHost(GenericPciHost):
++    type = 'GenericRiscvPciHost'
++    cxx_header = "dev/riscv/pci_host.hh"
++    cxx_class = 'gem5::GenericRiscvPciHost'
++    int_base = Param.Int(0x10,
++                        "Base number used as interrupt line and PLIC source.")
++    int_count = Param.Unsigned(4,
++                        "Maximum number of interrupts used by this host")
++    # This python parameter can be used in configuration scripts to turn
++    # on/off the fdt dma-coherent flag when doing dtb autogeneration
++    _dma_coherent = True
++
+ class HiFive(Platform):
+     """HiFive Platform
+ 
+@@ -105,6 +120,10 @@ class HiFive(Platform):
+     # PLIC
+     plic = Param.Plic(Plic(pio_addr=0xc000000), "PLIC")
+ 
++    #PCI
++    pci_host = GenericRiscvPciHost(conf_base=0x30000000, conf_size='256MB',
++        conf_device_bits=12, pci_pio_base=0x2f000000, pci_mem_base=0x40000000)
++
+     # Uart
+     uart = RiscvUart8250(pio_addr=0x10000000)
+     # Int source ID to redirect console interrupts to
+@@ -151,7 +170,8 @@ class HiFive(Platform):
+     def attachPlic(self):
+         """Count number of PLIC interrupt sources
+         """
+-        plic_srcs = [self.uart_int_id]
++        plic_srcs = [self.uart_int_id, self.pci_host.int_base
++                     + self.pci_host.int_count]
+         for device in self._off_chip_devices():
+             if hasattr(device, "interrupt_id"):
+                 plic_srcs.append(device.interrupt_id)
+@@ -159,14 +179,14 @@ class HiFive(Platform):
+ 
+     def attachOnChipIO(self, bus):
+         """Attach on-chip IO devices, needs modification
+-            to support DMA and PCI
++            to support DMA
+         """
+         for device in self._on_chip_devices():
+             device.pio = bus.mem_side_ports
+ 
+     def attachOffChipIO(self, bus):
+         """Attach off-chip IO devices, needs modification
+-            to support DMA and PCI
++            to support DMA
+         """
+         for device in self._off_chip_devices():
+             device.pio = bus.mem_side_ports
+diff --git a/src/dev/riscv/SConscript b/src/dev/riscv/SConscript
+index d0ef5eb..af0b96b 100755
+--- a/src/dev/riscv/SConscript
++++ b/src/dev/riscv/SConscript
+@@ -1,6 +1,7 @@
+ # -*- mode:python -*-
+ 
+ # Copyright (c) 2021 Huawei International
++# Copyright (c) 2022 EXAscale Performance SYStems (EXAPSYS)
+ # All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+@@ -28,7 +29,8 @@
+ 
+ Import('*')
+ 
+-SimObject('HiFive.py', sim_objects=['HiFive'], tags='riscv isa')
++SimObject('HiFive.py', sim_objects=['HiFive', 'GenericRiscvPciHost'],
++          tags='riscv isa')
+ SimObject('LupV.py', sim_objects=['LupV'], tags='riscv isa')
+ SimObject('Clint.py', sim_objects=['Clint'], tags='riscv isa')
+ SimObject('PlicDevice.py', sim_objects=['PlicIntDevice'], tags='riscv isa')
+@@ -41,6 +43,8 @@ DebugFlag('Clint', tags='riscv isa')
+ DebugFlag('Plic', tags='riscv isa')
+ DebugFlag('VirtIOMMIO', tags='riscv isa')
+ 
++Source('pci_host.cc', tags='riscv isa')
++
+ Source('hifive.cc', tags='riscv isa')
+ Source('lupv.cc', tags='riscv isa')
+ Source('clint.cc', tags='riscv isa')
+diff --git a/src/dev/riscv/pci_host.cc b/src/dev/riscv/pci_host.cc
+new file mode 100755
+index 0000000..e4248a9
+--- /dev/null
++++ b/src/dev/riscv/pci_host.cc
+@@ -0,0 +1,60 @@
++/*
++ * Copyright (c) 2022 EXAscale Performance SYStems (EXAPSYS)
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/riscv/pci_host.hh"
++#include "params/GenericRiscvPciHost.hh"
++
++namespace gem5
++{
++
++GenericRiscvPciHost::GenericRiscvPciHost(const GenericRiscvPciHostParams &p)
++    : GenericPciHost(p), intBase(p.int_base), intCount(p.int_count)
++{
++}
++
++uint32_t
++GenericRiscvPciHost::mapPciInterrupt(
++    const PciBusAddr &addr, PciIntPin pin) const
++{
++    fatal_if(pin == PciIntPin::NO_INT,
++             "%02x:%02x.%i: Interrupt from a device without interrupts\n",
++             addr.bus, addr.dev, addr.func);
++
++    return intBase + (addr.dev % intCount);
++}
++
++}
+diff --git a/src/dev/riscv/pci_host.hh b/src/dev/riscv/pci_host.hh
+new file mode 100755
+index 0000000..db4d152
+--- /dev/null
++++ b/src/dev/riscv/pci_host.hh
+@@ -0,0 +1,65 @@
++/*
++ * Copyright (c) 2022 EXAscale Performance SYStems (EXAPSYS)
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_RISCV_PCI_HOST_HH__
++#define __DEV_RISCV_PCI_HOST_HH__
++
++#include "dev/pci/host.hh"
++#include "params/GenericRiscvPciHost.hh"
++
++namespace gem5
++{
++
++class GenericRiscvPciHost : public GenericPciHost
++{
++  private:
++    const uint32_t intBase;
++    const uint32_t intCount;
++
++  public:
++    PARAMS(GenericRiscvPciHost);
++    GenericRiscvPciHost(const GenericRiscvPciHostParams &p);
++
++  protected:
++    uint32_t mapPciInterrupt(const PciBusAddr &addr,
++                             PciIntPin pin) const override;
++};
++
++}
++
++#endif // __DEV_RISCV_PCI_HOST_HH__
+diff --git a/src/python/gem5/components/boards/riscv_board.py b/src/python/gem5/components/boards/riscv_board.py
+index 15cf84c..9f8b1c0 100644
+--- a/src/python/gem5/components/boards/riscv_board.py
++++ b/src/python/gem5/components/boards/riscv_board.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) 2021 The Regents of the University of California
++# Copyright (c) 2022 EXAscale Performance SYStems (EXAPSYS)
+ # All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+@@ -49,6 +50,8 @@ from m5.objects import (
+     IOXBar,
+     RiscvRTC,
+     HiFive,
++    GenericRiscvPciHost,
++    IGbE_e1000,
+     CowDiskImage,
+     RawDiskImage,
+     RiscvMmioVirtIO,
+@@ -138,6 +141,16 @@ class RiscvBoard(AbstractSystemBoard, KernelDiskWorkload):
+ 
+     def _setup_io_devices(self) -> None:
+         """Connect the I/O devices to the I/O bus"""
++        #Add PCI
++        self.platform.pci_host.pio = self.iobus.mem_side_ports
++
++        #Add Ethernet card
++        self.ethernet = IGbE_e1000(pci_bus=0, pci_dev=0, pci_func=0,
++                                   InterruptLine=1, InterruptPin=1)
++
++        self.ethernet.host = self.platform.pci_host
++        self.ethernet.pio  = self.iobus.mem_side_ports
++        self.ethernet.dma  = self.iobus.cpu_side_ports
+ 
+         if self.get_cache_hierarchy().is_ruby():
+             for device in self._off_chip_devices + self._on_chip_devices:
+@@ -159,6 +172,11 @@ class RiscvBoard(AbstractSystemBoard, KernelDiskWorkload):
+                 for dev in self._off_chip_devices
+             ]
+ 
++            #PCI
++            self.bridge.ranges.append(AddrRange(0x2F000000, size='16MB'))
++            self.bridge.ranges.append(AddrRange(0x30000000, size='256MB'))
++            self.bridge.ranges.append(AddrRange(0x40000000, size='512MB'))
++
+     def _setup_pma(self) -> None:
+         """Set the PMA devices on each core"""
+ 
+@@ -167,6 +185,11 @@ class RiscvBoard(AbstractSystemBoard, KernelDiskWorkload):
+             for dev in self._on_chip_devices + self._off_chip_devices
+         ]
+ 
++        #PCI
++        uncacheable_range.append(AddrRange(0x2F000000, size='16MB'))
++        uncacheable_range.append(AddrRange(0x30000000, size='256MB'))
++        uncacheable_range.append(AddrRange(0x40000000, size='512MB'))
++
+         # TODO: Not sure if this should be done per-core like in the example
+         for cpu in self.get_processor().get_cores():
+             cpu.get_mmu().pma_checker = PMAChecker(
+@@ -322,6 +345,71 @@ class RiscvBoard(AbstractSystemBoard, KernelDiskWorkload):
+ 
+         soc_node.append(plic_node)
+ 
++        # PCI
++        pci_state = FdtState(addr_cells=3, size_cells=2,
++                             cpu_cells=1, interrupt_cells=1)
++        pci_node = FdtNode("pci")
++
++        if int(self.platform.pci_host.conf_device_bits) == 8:
++            pci_node.appendCompatible("pci-host-cam-generic")
++        elif int(self.platform.pci_host.conf_device_bits) == 12:
++            pci_node.appendCompatible("pci-host-ecam-generic")
++        else:
++            m5.fatal("No compatibility string for the set conf_device_width")
++
++        pci_node.append(FdtPropertyStrings("device_type", ["pci"]))
++
++        # Cell sizes of child nodes/peripherals
++        pci_node.append(pci_state.addrCellsProperty())
++        pci_node.append(pci_state.sizeCellsProperty())
++        pci_node.append(pci_state.interruptCellsProperty())
++        # PCI address for CPU
++        pci_node.append(FdtPropertyWords("reg",
++            soc_state.addrCells(self.platform.pci_host.conf_base) +
++            soc_state.sizeCells(self.platform.pci_host.conf_size) ))
++
++        # Ranges mapping
++        # For now some of this is hard coded, because the PCI module does not
++        # have a proper full understanding of the memory map, but adapting the
++        # PCI module is beyond the scope of what I'm trying to do here.
++        # Values are taken from the ARM VExpress_GEM5_V1 platform.
++        ranges = []
++        # Pio address range
++        ranges += self.platform.pci_host.pciFdtAddr(space=1, addr=0)
++        ranges += soc_state.addrCells(self.platform.pci_host.pci_pio_base)
++        ranges += pci_state.sizeCells(0x10000)  # Fixed size
++
++        # AXI memory address range
++        ranges += self.platform.pci_host.pciFdtAddr(space=2, addr=0)
++        ranges += soc_state.addrCells(self.platform.pci_host.pci_mem_base)
++        ranges += pci_state.sizeCells(0x40000000) # Fixed size
++        pci_node.append(FdtPropertyWords("ranges", ranges))
++
++        # Interrupt mapping
++        plic_handle = int_state.phandle(plic)
++        int_base    = self.platform.pci_host.int_base
++
++        interrupts = []
++
++        for i in range(int(self.platform.pci_host.int_count)):
++            interrupts += self.platform.pci_host.pciFdtAddr(device=i,
++                addr=0) + [int(i) + 1, plic_handle, int(int_base) + i]
++
++        pci_node.append(FdtPropertyWords("interrupt-map", interrupts))
++
++        int_count = int(self.platform.pci_host.int_count)
++        if int_count & (int_count - 1):
++            fatal("PCI interrupt count should be power of 2")
++
++        intmask = self.platform.pci_host.pciFdtAddr(device=int_count - 1,
++                                                    addr=0) + [0x0]
++        pci_node.append(FdtPropertyWords("interrupt-map-mask", intmask))
++
++        if self.platform.pci_host._dma_coherent:
++            pci_node.append(FdtProperty("dma-coherent"))
++
++        soc_node.append(pci_node)
++
+         # UART node
+         uart = self.platform.uart
+         uart_node = uart.generateBasicPioDeviceNode(
+-- 
+1.8.3.1
+

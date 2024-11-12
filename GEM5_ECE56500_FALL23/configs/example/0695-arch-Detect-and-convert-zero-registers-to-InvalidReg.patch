@@ -1,0 +1,341 @@
+From caffb4e1ffcaf3d7e3b842abcfe676a9ad727b24 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 05:19:51 -0700
+Subject: [PATCH 695/757] arch: Detect and convert zero registers to
+ InvalidRegClass.
+
+Change-Id: Ic5e070d303bf05ed1640b441e498d879764b8778
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49745
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/operands.isa   |  8 ++++++
+ src/arch/arm/regs/int.hh        | 30 ++++++++++++++++-----
+ src/arch/mips/isa/operands.isa  | 56 ++++++++++++++++++++++-----------------
+ src/arch/riscv/isa/operands.isa | 30 +++++++++++++--------
+ src/arch/sparc/isa/operands.isa | 58 +++++++++++++++++++++++------------------
+ src/arch/x86/isa/operands.isa   |  4 +++
+ 6 files changed, 120 insertions(+), 66 deletions(-)
+
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index a66aa3d..a7ce94f 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -100,6 +100,10 @@ let {{
+             super().__init__('pc', idx, sort_pri=srtNormal)
+ 
+     class IntRegNPC(IntRegOp):
++        @overrideInOperand
++        def regId(self):
++            return f'gem5::ArmISA::couldBeZero({self.reg_spec}) ? RegId() : ' \
++                   f'RegId({self.reg_class}, {self.reg_spec})'
+         def __init__(self, idx, ctype='uw', id=srtNormal):
+             super().__init__(ctype, idx, 'IsInteger', id)
+ 
+@@ -165,6 +169,10 @@ let {{
+ 
+     class IntReg64(IntRegOp):
+         @overrideInOperand
++        def regId(self):
++            return f'gem5::ArmISA::couldBeZero({self.reg_spec}) ? RegId() : ' \
++                   f'RegId({self.reg_class}, {self.reg_spec})'
++        @overrideInOperand
+         def makeRead(self, predRead, op_idx):
+             '''aarch64 read'''
+             return f'{self.base_name} = ' \
+diff --git a/src/arch/arm/regs/int.hh b/src/arch/arm/regs/int.hh
+index 59f8a6d..3646a36 100644
+--- a/src/arch/arm/regs/int.hh
++++ b/src/arch/arm/regs/int.hh
+@@ -516,20 +516,38 @@ makeSP(IntRegIndex reg)
+     return reg;
+ }
+ 
+-static inline IntRegIndex
+-makeZero(IntRegIndex reg)
++static inline bool
++couldBeSP(RegIndex reg)
+ {
+-    if (reg == INTREG_X31)
+-        reg = INTREG_ZERO;
+-    return reg;
++    return (reg == INTREG_X31 || reg == INTREG_SPX);
+ }
+ 
+ static inline bool
+-isSP(IntRegIndex reg)
++isSP(RegIndex reg)
+ {
+     return reg == INTREG_SPX;
+ }
+ 
++static inline bool
++couldBeZero(RegIndex reg)
++{
++    return (reg == INTREG_X31 || reg == INTREG_ZERO);
++}
++
++static inline bool
++isZero(RegIndex reg)
++{
++    return reg == INTREG_ZERO;
++}
++
++static inline IntRegIndex
++makeZero(IntRegIndex reg)
++{
++    if (reg == INTREG_X31)
++        reg = INTREG_ZERO;
++    return reg;
++}
++
+ // Semantically meaningful register indices
+ const int ReturnValueReg = 0;
+ const int ReturnValueReg1 = 1;
+diff --git a/src/arch/mips/isa/operands.isa b/src/arch/mips/isa/operands.isa
+index 2db0f7d..16c34a7 100644
+--- a/src/arch/mips/isa/operands.isa
++++ b/src/arch/mips/isa/operands.isa
+@@ -39,42 +39,50 @@ def operand_types {{
+     'df' : 'double'
+ }};
+ 
++let {{
++    class IntReg(IntRegOp):
++        @overrideInOperand
++        def regId(self):
++            return f'(({self.reg_spec}) == 0) ? RegId() : ' \
++                   f'RegId({self.reg_class}, {self.reg_spec})'
++}};
++
+ def operands {{
+     #General Purpose Integer Reg Operands
+-    'Rd': IntRegOp('uw', 'RD', 'IsInteger', 1),
+-    'Rs': IntRegOp('uw', 'RS', 'IsInteger', 2),
+-    'Rt': IntRegOp('uw', 'RT', 'IsInteger', 3),
++    'Rd': IntReg('uw', 'RD', 'IsInteger', 1),
++    'Rs': IntReg('uw', 'RS', 'IsInteger', 2),
++    'Rt': IntReg('uw', 'RT', 'IsInteger', 3),
+ 
+     #Immediate Value operand
+-    'IntImm': IntRegOp('uw', 'INTIMM', 'IsInteger', 3),
++    'IntImm': IntReg('uw', 'INTIMM', 'IsInteger', 3),
+ 
+     #Operands used for Link Insts
+-    'R31': IntRegOp('uw', '31', 'IsInteger', 4),
++    'R31': IntReg('uw', '31', 'IsInteger', 4),
+ 
+     #Special Integer Reg operands
+-    'LO0':  IntRegOp('uw', 'INTREG_LO', 'IsInteger', 6),
+-    'HI0':  IntRegOp('uw', 'INTREG_HI', 'IsInteger', 7),
++    'LO0':  IntReg('uw', 'INTREG_LO', 'IsInteger', 6),
++    'HI0':  IntReg('uw', 'INTREG_HI', 'IsInteger', 7),
+ 
+     #Bitfield-dependent HI/LO Register Access
+-    'LO_RD_SEL': IntRegOp('uw', 'INTREG_DSP_LO0 + ACDST*3', None, 6),
+-    'HI_RD_SEL': IntRegOp('uw', 'INTREG_DSP_HI0 + ACDST*3', None, 7),
+-    'LO_RS_SEL': IntRegOp('uw', 'INTREG_DSP_LO0 + ACSRC*3', None, 6),
+-    'HI_RS_SEL': IntRegOp('uw', 'INTREG_DSP_HI0 + ACSRC*3', None, 7),
++    'LO_RD_SEL': IntReg('uw', 'INTREG_DSP_LO0 + ACDST*3', None, 6),
++    'HI_RD_SEL': IntReg('uw', 'INTREG_DSP_HI0 + ACDST*3', None, 7),
++    'LO_RS_SEL': IntReg('uw', 'INTREG_DSP_LO0 + ACSRC*3', None, 6),
++    'HI_RS_SEL': IntReg('uw', 'INTREG_DSP_HI0 + ACSRC*3', None, 7),
+ 
+     #DSP Special Purpose Integer Operands
+-    'DSPControl': IntRegOp('uw', 'INTREG_DSP_CONTROL', None, 8),
+-    'DSPLo0': IntRegOp('uw', 'INTREG_LO', None, 1),
+-    'DSPHi0': IntRegOp('uw', 'INTREG_HI', None, 1),
+-    'DSPACX0': IntRegOp('uw', 'INTREG_DSP_ACX0', None, 1),
+-    'DSPLo1': IntRegOp('uw', 'INTREG_DSP_LO1', None, 1),
+-    'DSPHi1': IntRegOp('uw', 'INTREG_DSP_HI1', None, 1),
+-    'DSPACX1': IntRegOp('uw', 'INTREG_DSP_ACX1', None, 1),
+-    'DSPLo2': IntRegOp('uw', 'INTREG_DSP_LO2', None, 1),
+-    'DSPHi2': IntRegOp('uw', 'INTREG_DSP_HI2', None, 1),
+-    'DSPACX2': IntRegOp('uw', 'INTREG_DSP_ACX2', None, 1),
+-    'DSPLo3': IntRegOp('uw', 'INTREG_DSP_LO3', None, 1),
+-    'DSPHi3': IntRegOp('uw', 'INTREG_DSP_HI3', None, 1),
+-    'DSPACX3': IntRegOp('uw', 'INTREG_DSP_ACX3', None, 1),
++    'DSPControl': IntReg('uw', 'INTREG_DSP_CONTROL', None, 8),
++    'DSPLo0': IntReg('uw', 'INTREG_LO', None, 1),
++    'DSPHi0': IntReg('uw', 'INTREG_HI', None, 1),
++    'DSPACX0': IntReg('uw', 'INTREG_DSP_ACX0', None, 1),
++    'DSPLo1': IntReg('uw', 'INTREG_DSP_LO1', None, 1),
++    'DSPHi1': IntReg('uw', 'INTREG_DSP_HI1', None, 1),
++    'DSPACX1': IntReg('uw', 'INTREG_DSP_ACX1', None, 1),
++    'DSPLo2': IntReg('uw', 'INTREG_DSP_LO2', None, 1),
++    'DSPHi2': IntReg('uw', 'INTREG_DSP_HI2', None, 1),
++    'DSPACX2': IntReg('uw', 'INTREG_DSP_ACX2', None, 1),
++    'DSPLo3': IntReg('uw', 'INTREG_DSP_LO3', None, 1),
++    'DSPHi3': IntReg('uw', 'INTREG_DSP_HI3', None, 1),
++    'DSPACX3': IntReg('uw', 'INTREG_DSP_ACX3', None, 1),
+ 
+     #Floating Point Reg Operands
+     'Fd': FloatRegOp('sf', 'FD', 'IsFloating', 1),
+diff --git a/src/arch/riscv/isa/operands.isa b/src/arch/riscv/isa/operands.isa
+index 8d0a1a2..4f0c3ed 100644
+--- a/src/arch/riscv/isa/operands.isa
++++ b/src/arch/riscv/isa/operands.isa
+@@ -41,20 +41,28 @@ def operand_types {{
+     'df' : 'double'
+ }};
+ 
++let {{
++    class IntReg(IntRegOp):
++        @overrideInOperand
++        def regId(self):
++            return f'(({self.reg_spec}) == 0) ? RegId() : ' \
++                   f'RegId({self.reg_class}, {self.reg_spec})'
++}};
++
+ def operands {{
+ #General Purpose Integer Reg Operands
+-    'Rd': IntRegOp('ud', 'RD', 'IsInteger', 1),
+-    'Rs1': IntRegOp('ud', 'RS1', 'IsInteger', 2),
+-    'Rs2': IntRegOp('ud', 'RS2', 'IsInteger', 3),
+-    'Rt': IntRegOp('ud', 'AMOTempReg', 'IsInteger', 4),
+-    'Rc1': IntRegOp('ud', 'RC1', 'IsInteger', 2),
+-    'Rc2': IntRegOp('ud', 'RC2', 'IsInteger', 3),
+-    'Rp1': IntRegOp('ud', 'RP1 + 8', 'IsInteger', 2),
+-    'Rp2': IntRegOp('ud', 'RP2 + 8', 'IsInteger', 3),
+-    'ra': IntRegOp('ud', 'ReturnAddrReg', 'IsInteger', 1),
+-    'sp': IntRegOp('ud', 'StackPointerReg', 'IsInteger', 2),
++    'Rd': IntReg('ud', 'RD', 'IsInteger', 1),
++    'Rs1': IntReg('ud', 'RS1', 'IsInteger', 2),
++    'Rs2': IntReg('ud', 'RS2', 'IsInteger', 3),
++    'Rt': IntReg('ud', 'AMOTempReg', 'IsInteger', 4),
++    'Rc1': IntReg('ud', 'RC1', 'IsInteger', 2),
++    'Rc2': IntReg('ud', 'RC2', 'IsInteger', 3),
++    'Rp1': IntReg('ud', 'RP1 + 8', 'IsInteger', 2),
++    'Rp2': IntReg('ud', 'RP2 + 8', 'IsInteger', 3),
++    'ra': IntReg('ud', 'ReturnAddrReg', 'IsInteger', 1),
++    'sp': IntReg('ud', 'StackPointerReg', 'IsInteger', 2),
+ 
+-    'a0': IntRegOp('ud', '10', 'IsInteger', 1),
++    'a0': IntReg('ud', '10', 'IsInteger', 1),
+ 
+     'Fd': FloatRegOp('df', 'FD', 'IsFloating', 1),
+     'Fd_bits': FloatRegOp('ud', 'FD', 'IsFloating', 1),
+diff --git a/src/arch/sparc/isa/operands.isa b/src/arch/sparc/isa/operands.isa
+index 24ac5cf..5e10017 100644
+--- a/src/arch/sparc/isa/operands.isa
++++ b/src/arch/sparc/isa/operands.isa
+@@ -65,29 +65,37 @@ output header {{
+     }
+ }};
+ 
++let {{
++    class IntReg(IntRegOp):
++        @overrideInOperand
++        def regId(self):
++            return f'(({self.reg_spec}) == 0) ? RegId() : ' \
++                   f'RegId({self.reg_class}, {self.reg_spec})'
++}};
++
+ def operands {{
+     # Int regs default to unsigned, but code should not count on this.
+     # For clarity, descriptions that depend on unsigned behavior should
+     # explicitly specify '.uq'.
+ 
+-    'Rd':               IntRegOp('udw', 'RD', 'IsInteger', 1),
++    'Rd':               IntReg('udw', 'RD', 'IsInteger', 1),
+     # The Rd from the previous window
+-    'Rd_prev':          IntRegOp('udw',
++    'Rd_prev':          IntReg('udw',
+             'RD + NumIntArchRegs + NumMicroIntRegs', 'IsInteger', 2),
+     # The Rd from the next window
+-    'Rd_next':          IntRegOp('udw',
++    'Rd_next':          IntReg('udw',
+             'RD + 2 * NumIntArchRegs + NumMicroIntRegs', 'IsInteger', 3),
+     # For microcoded twin load instructions, RdTwin appears in the "code"
+     # for the instruction is replaced by RdLow or RdHigh by the format
+     # before it's processed by the iop.
+     # The low (even) register of a two register pair
+-    'RdLow':            IntRegOp('udw', 'RD & (~1)', 'IsInteger', 4),
++    'RdLow':            IntReg('udw', 'RD & (~1)', 'IsInteger', 4),
+     # The high (odd) register of a two register pair
+     'RdHigh':           IntRegOp('udw', 'RD | 1', 'IsInteger', 5),
+-    'Rs1':              IntRegOp('udw', 'RS1', 'IsInteger', 6),
+-    'Rs2':              IntRegOp('udw', 'RS2', 'IsInteger', 7),
++    'Rs1':              IntReg('udw', 'RS1', 'IsInteger', 6),
++    'Rs2':              IntReg('udw', 'RS2', 'IsInteger', 7),
+     # A microcode register. Right now, this is the only one.
+-    'uReg0':            IntRegOp('udw', 'INTREG_UREG0', 'IsInteger', 8),
++    'uReg0':            IntReg('udw', 'INTREG_UREG0', 'IsInteger', 8),
+     # Because double and quad precision register numbers are decoded
+     # differently, they get different operands. The single precision versions
+     # have an s post pended to their name.
+@@ -134,25 +142,25 @@ def operands {{
+     'NNPC':             PCStateOp('udw', 'nnpc',
+                                   (None, None, 'IsControl'), 30),
+     # Registers which are used explicitly in instructions
+-    'R0':               IntRegOp('udw', '0', None, 6),
+-    'R1':               IntRegOp('udw', '1', None, 7),
+-    'R15':              IntRegOp('udw', '15', 'IsInteger', 8),
+-    'R16':              IntRegOp('udw', '16', None, 9),
+-    'O0':               IntRegOp('udw', 'INTREG_O0', 'IsInteger', 10),
+-    'O1':               IntRegOp('udw', 'INTREG_O1', 'IsInteger', 11),
+-    'O2':               IntRegOp('udw', 'INTREG_O2', 'IsInteger', 12),
+-    'O3':               IntRegOp('udw', 'INTREG_O3', 'IsInteger', 13),
+-    'O4':               IntRegOp('udw', 'INTREG_O4', 'IsInteger', 14),
+-    'O5':               IntRegOp('udw', 'INTREG_O5', 'IsInteger', 15),
++    'R0':               IntReg('udw', '0', None, 6),
++    'R1':               IntReg('udw', '1', None, 7),
++    'R15':              IntReg('udw', '15', 'IsInteger', 8),
++    'R16':              IntReg('udw', '16', None, 9),
++    'O0':               IntReg('udw', 'INTREG_O0', 'IsInteger', 10),
++    'O1':               IntReg('udw', 'INTREG_O1', 'IsInteger', 11),
++    'O2':               IntReg('udw', 'INTREG_O2', 'IsInteger', 12),
++    'O3':               IntReg('udw', 'INTREG_O3', 'IsInteger', 13),
++    'O4':               IntReg('udw', 'INTREG_O4', 'IsInteger', 14),
++    'O5':               IntReg('udw', 'INTREG_O5', 'IsInteger', 15),
+ 
+     # Control registers
+-    'Y':                IntRegOp('udw', 'INTREG_Y', None, 40),
+-    'Ccr':              IntRegOp('udw', 'INTREG_CCR', None, 41),
++    'Y':                IntReg('udw', 'INTREG_Y', None, 40),
++    'Ccr':              IntReg('udw', 'INTREG_CCR', None, 41),
+     'Asi':              ControlRegOp('udw', 'MISCREG_ASI', None, 42),
+     'Fprs':             ControlRegOp('udw', 'MISCREG_FPRS', None, 43),
+     'Pcr':              ControlRegOp('udw', 'MISCREG_PCR', None, 44),
+     'Pic':              ControlRegOp('udw', 'MISCREG_PIC', None, 45),
+-    'Gsr':              IntRegOp('udw', 'INTREG_GSR', None, 46),
++    'Gsr':              IntReg('udw', 'INTREG_GSR', None, 46),
+     'Softint':          ControlRegOp('udw', 'MISCREG_SOFTINT', None, 47),
+     'SoftintSet':       ControlRegOp('udw', 'MISCREG_SOFTINT_SET', None, 48),
+     'SoftintClr':       ControlRegOp('udw', 'MISCREG_SOFTINT_CLR', None, 49),
+@@ -173,11 +181,11 @@ def operands {{
+             (None, None, ['IsSerializeAfter',
+                           'IsSerializing',
+                           'IsNonSpeculative']), 62),
+-    'Cansave':          IntRegOp('udw', 'INTREG_CANSAVE', None, 63),
+-    'Canrestore':       IntRegOp('udw', 'INTREG_CANRESTORE', None, 64),
+-    'Cleanwin':         IntRegOp('udw', 'INTREG_CLEANWIN', None, 65),
+-    'Otherwin':         IntRegOp('udw', 'INTREG_OTHERWIN', None, 66),
+-    'Wstate':           IntRegOp('udw', 'INTREG_WSTATE', None, 67),
++    'Cansave':          IntReg('udw', 'INTREG_CANSAVE', None, 63),
++    'Canrestore':       IntReg('udw', 'INTREG_CANRESTORE', None, 64),
++    'Cleanwin':         IntReg('udw', 'INTREG_CLEANWIN', None, 65),
++    'Otherwin':         IntReg('udw', 'INTREG_OTHERWIN', None, 66),
++    'Wstate':           IntReg('udw', 'INTREG_WSTATE', None, 67),
+     'Gl':               ControlRegOp('udw', 'MISCREG_GL', None, 68),
+ 
+     'Hpstate':          ControlRegOp('hpstate', 'MISCREG_HPSTATE', None, 69),
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index afbb8a0..2e4ebda 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -55,6 +55,10 @@ def operand_types {{
+ 
+ let {{
+     class IntReg(IntRegOp):
++        @overrideInOperand
++        def regId(self):
++            return f'(({self.reg_spec}) == gem5::X86ISA::INTREG_T0) ? ' \
++                   f'RegId() : RegId({self.reg_class}, {self.reg_spec})'
+         def __init__(self, idx, id, data_size='dataSize', *args, **kwargs):
+             super().__init__('uqw', idx, 'IsInteger', id, *args, **kwargs)
+             self.attrs['data_size'] = data_size
+-- 
+1.8.3.1
+

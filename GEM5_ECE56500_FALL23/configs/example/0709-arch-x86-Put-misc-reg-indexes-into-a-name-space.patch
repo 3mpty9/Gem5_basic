@@ -1,0 +1,3539 @@
+From 84ae0afa5981aa128242797612e0298356e29f77 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 24 Aug 2021 00:39:26 -0700
+Subject: [PATCH 709/757] arch-x86: Put misc reg indexes into a name space.
+
+Also make them match the style guide.
+
+Change-Id: I845f141f85d4499a5acf56c2161240764906a232
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49758
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/amdgpu/common/tlb.cc                      |  30 +-
+ src/arch/x86/faults.cc                             | 102 ++--
+ src/arch/x86/fs_workload.cc                        |  48 +-
+ src/arch/x86/interrupts.cc                         |   2 +-
+ src/arch/x86/isa.cc                                | 220 +++----
+ src/arch/x86/isa.hh                                |   6 +-
+ src/arch/x86/isa/decoder/two_byte_opcodes.isa      |   8 +-
+ .../save_and_restore_control_and_status.py         |   8 +-
+ .../save_and_restore_state.py                      |  36 +-
+ src/arch/x86/isa/insts/system/msrs.py              |   2 +-
+ .../control/save_and_restore_x87_environment.py    |  22 +-
+ src/arch/x86/isa/microasm.isa                      |  18 +-
+ src/arch/x86/isa/microops/regop.isa                |  36 +-
+ src/arch/x86/isa/operands.isa                      |  73 +--
+ src/arch/x86/kvm/x86_cpu.cc                        | 240 ++++----
+ src/arch/x86/linux/linux.hh                        |   4 +-
+ src/arch/x86/linux/se_workload.cc                  |   4 +-
+ src/arch/x86/linux/syscalls.cc                     |  12 +-
+ src/arch/x86/pagetable_walker.cc                   |   8 +-
+ src/arch/x86/process.cc                            | 102 ++--
+ src/arch/x86/regs/misc.hh                          | 651 ++++++++++-----------
+ src/arch/x86/regs/msr.cc                           | 212 +++----
+ src/arch/x86/regs/msr.hh                           |   4 +-
+ src/arch/x86/remote_gdb.cc                         |  58 +-
+ src/arch/x86/tlb.cc                                |  20 +-
+ src/arch/x86/utility.cc                            |   8 +-
+ src/arch/x86/utility.hh                            |   8 +-
+ 27 files changed, 969 insertions(+), 973 deletions(-)
+
+diff --git a/src/arch/amdgpu/common/tlb.cc b/src/arch/amdgpu/common/tlb.cc
+index ab8b11e..f1e2e5f 100644
+--- a/src/arch/amdgpu/common/tlb.cc
++++ b/src/arch/amdgpu/common/tlb.cc
+@@ -282,7 +282,7 @@ namespace X86ISA
+     {
+ 
+     Cycles
+-    localMiscRegAccess(bool read, MiscRegIndex regNum,
++    localMiscRegAccess(bool read, RegIndex regNum,
+                        ThreadContext *tc, PacketPtr pkt)
+     {
+         if (read) {
+@@ -310,12 +310,12 @@ namespace X86ISA
+         } else if (prefix == IntAddrPrefixMSR) {
+             vaddr = (vaddr >> 3) & ~IntAddrPrefixMask;
+ 
+-            MiscRegIndex regNum;
++            RegIndex regNum;
+             if (!msrAddrToIndex(regNum, vaddr))
+                 return std::make_shared<GeneralProtection>(0);
+ 
+             req->setLocalAccessor(
+-                [read,regNum](ThreadContext *tc, PacketPtr pkt)
++                [read, regNum](ThreadContext *tc, PacketPtr pkt)
+                 {
+                     return localMiscRegAccess(read, regNum, tc, pkt);
+                 }
+@@ -335,13 +335,13 @@ namespace X86ISA
+                     [read](ThreadContext *tc, PacketPtr pkt)
+                     {
+                         return localMiscRegAccess(
+-                                read, MISCREG_PCI_CONFIG_ADDRESS, tc, pkt);
++                                read, misc_reg::PciConfigAddress, tc, pkt);
+                     }
+                 );
+             } else if ((IOPort & ~mask(2)) == 0xCFC) {
+                 req->setFlags(Request::UNCACHEABLE | Request::STRICT_ORDER);
+                 Addr configAddress =
+-                    tc->readMiscRegNoEffect(MISCREG_PCI_CONFIG_ADDRESS);
++                    tc->readMiscRegNoEffect(misc_reg::PciConfigAddress);
+                 if (bits(configAddress, 31, 31)) {
+                     req->setPaddr(PhysAddrPrefixPciConfig |
+                             mbits(configAddress, 30, 2) |
+@@ -380,7 +380,7 @@ namespace X86ISA
+         assert(seg != segment_idx::Ms);
+         Addr vaddr = req->getVaddr();
+         DPRINTF(GPUTLB, "TLB Lookup for vaddr %#x.\n", vaddr);
+-        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+ 
+         if (m5Reg.prot) {
+             DPRINTF(GPUTLB, "In protected mode.\n");
+@@ -435,7 +435,7 @@ namespace X86ISA
+         Addr vaddr = req->getVaddr();
+         DPRINTF(GPUTLB, "Translating vaddr %#x.\n", vaddr);
+ 
+-        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+ 
+         // If protected mode has been enabled...
+         if (m5Reg.prot) {
+@@ -448,12 +448,12 @@ namespace X86ISA
+                 // Check for a null segment selector.
+                 if (!(seg == segment_idx::Tsg || seg == segment_idx::Idtr ||
+                     seg == segment_idx::Hs || seg == segment_idx::Ls)
+-                    && !tc->readMiscRegNoEffect(MISCREG_SEG_SEL(seg))) {
++                    && !tc->readMiscRegNoEffect(misc_reg::segSel(seg))) {
+                     return std::make_shared<GeneralProtection>(0);
+                 }
+ 
+                 bool expandDown = false;
+-                SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
++                SegAttr attr = tc->readMiscRegNoEffect(misc_reg::segAttr(seg));
+ 
+                 if (seg >= segment_idx::Es && seg <= segment_idx::Hs) {
+                     if (!attr.writable && (mode == BaseMMU::Write ||
+@@ -467,8 +467,8 @@ namespace X86ISA
+ 
+                 }
+ 
+-                Addr base = tc->readMiscRegNoEffect(MISCREG_SEG_BASE(seg));
+-                Addr limit = tc->readMiscRegNoEffect(MISCREG_SEG_LIMIT(seg));
++                Addr base = tc->readMiscRegNoEffect(misc_reg::segBase(seg));
++                Addr limit = tc->readMiscRegNoEffect(misc_reg::segLimit(seg));
+                 Addr logSize = (flags >> AddrSizeFlagShift) & AddrSizeFlagMask;
+                 int size = 8 << logSize;
+ 
+@@ -548,7 +548,7 @@ namespace X86ISA
+                 // Do paging protection checks.
+                 bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
+ 
+-                CR0 cr0 = tc->readMiscRegNoEffect(MISCREG_CR0);
++                CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
+                 bool badWrite = (!entry->writable && (inUser || cr0.wp));
+ 
+                 if ((inUser && !entry->user) || (mode == BaseMMU::Write &&
+@@ -595,7 +595,7 @@ namespace X86ISA
+         // Check for an access to the local APIC
+         if (FullSystem) {
+             LocalApicBase localApicBase =
+-                tc->readMiscRegNoEffect(MISCREG_APIC_BASE);
++                tc->readMiscRegNoEffect(misc_reg::ApicBase);
+ 
+             Addr baseAddr = localApicBase.base * PageBytes;
+             Addr paddr = req->getPaddr();
+@@ -753,13 +753,13 @@ namespace X86ISA
+     GpuTLB::pagingProtectionChecks(ThreadContext *tc, PacketPtr pkt,
+             TlbEntry * tlb_entry, Mode mode)
+     {
+-        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++        HandyM5Reg m5Reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+         uint32_t flags = pkt->req->getFlags();
+         bool storeCheck = flags & Request::READ_MODIFY_WRITE;
+ 
+         // Do paging protection checks.
+         bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
+-        CR0 cr0 = tc->readMiscRegNoEffect(MISCREG_CR0);
++        CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
+ 
+         bool badWrite = (!tlb_entry->writable && (inUser || cr0.wp));
+ 
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index 1a07a81..3ef886e 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -68,7 +68,7 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     PCState pc = tc->pcState().as<PCState>();
+     DPRINTF(Faults, "RIP %#x: vector %d: %s\n", pc.pc(), vector, describe());
+     using namespace X86ISAInst::rom_labels;
+-    HandyM5Reg m5reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++    HandyM5Reg m5reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+     MicroPC entry;
+     if (m5reg.mode == LongMode) {
+         entry = extern_label_longModeInterrupt;
+@@ -79,7 +79,7 @@ X86FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+             entry = extern_label_legacyModeInterrupt;
+     }
+     tc->setReg(intRegMicro(1), vector);
+-    Addr cs_base = tc->readMiscRegNoEffect(MISCREG_CS_EFF_BASE);
++    Addr cs_base = tc->readMiscRegNoEffect(misc_reg::CsEffBase);
+     tc->setReg(intRegMicro(7), pc.pc() - cs_base);
+     if (errorCode != (uint64_t)(-1)) {
+         if (m5reg.mode == LongMode) {
+@@ -138,16 +138,16 @@ PageFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     if (FullSystem) {
+         // Invalidate any matching TLB entries before handling the page fault.
+         tc->getMMUPtr()->demapPage(addr, 0);
+-        HandyM5Reg m5reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++        HandyM5Reg m5reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+         X86FaultBase::invoke(tc);
+         // If something bad happens while trying to enter the page fault
+         // handler, I'm pretty sure that's a double fault and then all
+         // bets are off. That means it should be safe to update this
+         // state now.
+         if (m5reg.mode == LongMode)
+-            tc->setMiscReg(MISCREG_CR2, addr);
++            tc->setMiscReg(misc_reg::Cr2, addr);
+         else
+-            tc->setMiscReg(MISCREG_CR2, (uint32_t)addr);
++            tc->setMiscReg(misc_reg::Cr2, (uint32_t)addr);
+     } else if (!tc->getProcessPtr()->fixupFault(addr)) {
+         PageFaultErrorCode code = errorCode;
+         const char *modeStr = "";
+@@ -187,18 +187,18 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+         tc->setReg(RegId(IntRegClass, index), (RegVal)0);
+     }
+ 
+-    CR0 cr0 = tc->readMiscReg(MISCREG_CR0);
++    CR0 cr0 = tc->readMiscReg(misc_reg::Cr0);
+     CR0 newCR0 = 1 << 4;
+     newCR0.cd = cr0.cd;
+     newCR0.nw = cr0.nw;
+-    tc->setMiscReg(MISCREG_CR0, newCR0);
+-    tc->setMiscReg(MISCREG_CR2, 0);
+-    tc->setMiscReg(MISCREG_CR3, 0);
+-    tc->setMiscReg(MISCREG_CR4, 0);
++    tc->setMiscReg(misc_reg::Cr0, newCR0);
++    tc->setMiscReg(misc_reg::Cr2, 0);
++    tc->setMiscReg(misc_reg::Cr3, 0);
++    tc->setMiscReg(misc_reg::Cr4, 0);
+ 
+-    tc->setMiscReg(MISCREG_RFLAGS, 0x0000000000000002ULL);
++    tc->setMiscReg(misc_reg::Rflags, 0x0000000000000002ULL);
+ 
+-    tc->setMiscReg(MISCREG_EFER, 0);
++    tc->setMiscReg(misc_reg::Efer, 0);
+ 
+     SegAttr dataAttr = 0;
+     dataAttr.dpl = 0;
+@@ -215,11 +215,11 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     dataAttr.system = 1;
+ 
+     for (int seg = 0; seg != segment_idx::NumIdxs; seg++) {
+-        tc->setMiscReg(MISCREG_SEG_SEL(seg), 0);
+-        tc->setMiscReg(MISCREG_SEG_BASE(seg), 0);
+-        tc->setMiscReg(MISCREG_SEG_EFF_BASE(seg), 0);
+-        tc->setMiscReg(MISCREG_SEG_LIMIT(seg), 0xffff);
+-        tc->setMiscReg(MISCREG_SEG_ATTR(seg), dataAttr);
++        tc->setMiscReg(misc_reg::segSel(seg), 0);
++        tc->setMiscReg(misc_reg::segBase(seg), 0);
++        tc->setMiscReg(misc_reg::segEffBase(seg), 0);
++        tc->setMiscReg(misc_reg::segLimit(seg), 0xffff);
++        tc->setMiscReg(misc_reg::segAttr(seg), dataAttr);
+     }
+ 
+     SegAttr codeAttr = 0;
+@@ -236,62 +236,60 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     codeAttr.expandDown = 0;
+     codeAttr.system = 1;
+ 
+-    tc->setMiscReg(MISCREG_CS, 0xf000);
+-    tc->setMiscReg(MISCREG_CS_BASE,
+-            0x00000000ffff0000ULL);
+-    tc->setMiscReg(MISCREG_CS_EFF_BASE,
+-            0x00000000ffff0000ULL);
++    tc->setMiscReg(misc_reg::Cs, 0xf000);
++    tc->setMiscReg(misc_reg::CsBase, 0x00000000ffff0000ULL);
++    tc->setMiscReg(misc_reg::CsEffBase, 0x00000000ffff0000ULL);
+     // This has the base value pre-added.
+-    tc->setMiscReg(MISCREG_CS_LIMIT, 0xffffffff);
+-    tc->setMiscReg(MISCREG_CS_ATTR, codeAttr);
++    tc->setMiscReg(misc_reg::CsLimit, 0xffffffff);
++    tc->setMiscReg(misc_reg::CsAttr, codeAttr);
+ 
+-    PCState pc(0x000000000000fff0ULL + tc->readMiscReg(MISCREG_CS_BASE));
++    PCState pc(0x000000000000fff0ULL + tc->readMiscReg(misc_reg::CsBase));
+     tc->pcState(pc);
+ 
+-    tc->setMiscReg(MISCREG_TSG_BASE, 0);
+-    tc->setMiscReg(MISCREG_TSG_LIMIT, 0xffff);
++    tc->setMiscReg(misc_reg::TsgBase, 0);
++    tc->setMiscReg(misc_reg::TsgLimit, 0xffff);
+ 
+-    tc->setMiscReg(MISCREG_IDTR_BASE, 0);
+-    tc->setMiscReg(MISCREG_IDTR_LIMIT, 0xffff);
++    tc->setMiscReg(misc_reg::IdtrBase, 0);
++    tc->setMiscReg(misc_reg::IdtrLimit, 0xffff);
+ 
+     SegAttr tslAttr = 0;
+     tslAttr.unusable = 1;
+     tslAttr.present = 1;
+     tslAttr.type = 2; // LDT
+-    tc->setMiscReg(MISCREG_TSL, 0);
+-    tc->setMiscReg(MISCREG_TSL_BASE, 0);
+-    tc->setMiscReg(MISCREG_TSL_LIMIT, 0xffff);
+-    tc->setMiscReg(MISCREG_TSL_ATTR, tslAttr);
++    tc->setMiscReg(misc_reg::Tsl, 0);
++    tc->setMiscReg(misc_reg::TslBase, 0);
++    tc->setMiscReg(misc_reg::TslLimit, 0xffff);
++    tc->setMiscReg(misc_reg::TslAttr, tslAttr);
+ 
+     SegAttr trAttr = 0;
+     trAttr.unusable = 0;
+     trAttr.present = 1;
+     trAttr.type = 3; // Busy 16-bit TSS
+-    tc->setMiscReg(MISCREG_TR, 0);
+-    tc->setMiscReg(MISCREG_TR_BASE, 0);
+-    tc->setMiscReg(MISCREG_TR_LIMIT, 0xffff);
+-    tc->setMiscReg(MISCREG_TR_ATTR, trAttr);
++    tc->setMiscReg(misc_reg::Tr, 0);
++    tc->setMiscReg(misc_reg::TrBase, 0);
++    tc->setMiscReg(misc_reg::TrLimit, 0xffff);
++    tc->setMiscReg(misc_reg::TrAttr, trAttr);
+ 
+     // This value should be the family/model/stepping of the processor.
+     // (page 418). It should be consistent with the value from CPUID, but
+     // the actual value probably doesn't matter much.
+     tc->setReg(int_reg::Rdx, (RegVal)0);
+ 
+-    tc->setMiscReg(MISCREG_DR0, 0);
+-    tc->setMiscReg(MISCREG_DR1, 0);
+-    tc->setMiscReg(MISCREG_DR2, 0);
+-    tc->setMiscReg(MISCREG_DR3, 0);
++    tc->setMiscReg(misc_reg::Dr0, 0);
++    tc->setMiscReg(misc_reg::Dr1, 0);
++    tc->setMiscReg(misc_reg::Dr2, 0);
++    tc->setMiscReg(misc_reg::Dr3, 0);
+ 
+-    tc->setMiscReg(MISCREG_DR6, 0x00000000ffff0ff0ULL);
+-    tc->setMiscReg(MISCREG_DR7, 0x0000000000000400ULL);
++    tc->setMiscReg(misc_reg::Dr6, 0x00000000ffff0ff0ULL);
++    tc->setMiscReg(misc_reg::Dr7, 0x0000000000000400ULL);
+ 
+-    tc->setMiscReg(MISCREG_MXCSR, 0x1f80);
++    tc->setMiscReg(misc_reg::Mxcsr, 0x1f80);
+ 
+     // Flag all elements on the x87 stack as empty.
+-    tc->setMiscReg(MISCREG_FTW, 0xFFFF);
++    tc->setMiscReg(misc_reg::Ftw, 0xFFFF);
+ 
+     // Update the handy M5 Reg.
+-    tc->setMiscReg(MISCREG_M5_REG, 0);
++    tc->setMiscReg(misc_reg::M5Reg, 0);
+     MicroPC entry = X86ISAInst::rom_labels::extern_label_initIntHalt;
+     pc.upc(romMicroPC(entry));
+     pc.nupc(romMicroPC(entry) + 1);
+@@ -302,19 +300,19 @@ void
+ StartupInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ {
+     DPRINTF(Faults, "Startup interrupt with vector %#x.\n", vector);
+-    HandyM5Reg m5Reg = tc->readMiscReg(MISCREG_M5_REG);
++    HandyM5Reg m5Reg = tc->readMiscReg(misc_reg::M5Reg);
+     if (m5Reg.mode != LegacyMode || m5Reg.submode != RealMode) {
+         panic("Startup IPI recived outside of real mode. "
+                 "Don't know what to do. %d, %d", m5Reg.mode, m5Reg.submode);
+     }
+ 
+-    tc->setMiscReg(MISCREG_CS, vector << 8);
+-    tc->setMiscReg(MISCREG_CS_BASE, vector << 12);
+-    tc->setMiscReg(MISCREG_CS_EFF_BASE, vector << 12);
++    tc->setMiscReg(misc_reg::Cs, vector << 8);
++    tc->setMiscReg(misc_reg::CsBase, vector << 12);
++    tc->setMiscReg(misc_reg::CsEffBase, vector << 12);
+     // This has the base value pre-added.
+-    tc->setMiscReg(MISCREG_CS_LIMIT, 0xffff);
++    tc->setMiscReg(misc_reg::CsLimit, 0xffff);
+ 
+-    tc->pcState(tc->readMiscReg(MISCREG_CS_BASE));
++    tc->pcState(tc->readMiscReg(misc_reg::CsBase));
+ }
+ 
+ } // namespace X86ISA
+diff --git a/src/arch/x86/fs_workload.cc b/src/arch/x86/fs_workload.cc
+index 7355a0d..1a41238 100644
+--- a/src/arch/x86/fs_workload.cc
++++ b/src/arch/x86/fs_workload.cc
+@@ -96,10 +96,10 @@ installSegDesc(ThreadContext *tc, int seg, SegDescriptor desc, bool longmode)
+         attr.expandDown = 0;
+     }
+ 
+-    tc->setMiscReg(MISCREG_SEG_BASE(seg), desc.base);
+-    tc->setMiscReg(MISCREG_SEG_EFF_BASE(seg), honorBase ? desc.base : 0);
+-    tc->setMiscReg(MISCREG_SEG_LIMIT(seg), desc.limit);
+-    tc->setMiscReg(MISCREG_SEG_ATTR(seg), (RegVal)attr);
++    tc->setMiscReg(misc_reg::segBase(seg), desc.base);
++    tc->setMiscReg(misc_reg::segEffBase(seg), honorBase ? desc.base : 0);
++    tc->setMiscReg(misc_reg::segLimit(seg), desc.limit);
++    tc->setMiscReg(misc_reg::segAttr(seg), (RegVal)attr);
+ }
+ 
+ void
+@@ -186,7 +186,7 @@ FsWorkload::initState()
+     SegSelector cs = 0;
+     cs.si = numGDTEntries - 1;
+ 
+-    tc->setMiscReg(MISCREG_CS, (RegVal)cs);
++    tc->setMiscReg(misc_reg::Cs, (RegVal)cs);
+ 
+     // 32 bit data segment
+     SegDescriptor dsDesc = initDesc;
+@@ -204,18 +204,18 @@ FsWorkload::initState()
+     SegSelector ds = 0;
+     ds.si = numGDTEntries - 1;
+ 
+-    tc->setMiscReg(MISCREG_DS, (RegVal)ds);
+-    tc->setMiscReg(MISCREG_ES, (RegVal)ds);
+-    tc->setMiscReg(MISCREG_FS, (RegVal)ds);
+-    tc->setMiscReg(MISCREG_GS, (RegVal)ds);
+-    tc->setMiscReg(MISCREG_SS, (RegVal)ds);
++    tc->setMiscReg(misc_reg::Ds, (RegVal)ds);
++    tc->setMiscReg(misc_reg::Es, (RegVal)ds);
++    tc->setMiscReg(misc_reg::Fs, (RegVal)ds);
++    tc->setMiscReg(misc_reg::Gs, (RegVal)ds);
++    tc->setMiscReg(misc_reg::Ss, (RegVal)ds);
+ 
+-    tc->setMiscReg(MISCREG_TSL, 0);
++    tc->setMiscReg(misc_reg::Tsl, 0);
+     SegAttr ldtAttr = 0;
+     ldtAttr.unusable = 1;
+-    tc->setMiscReg(MISCREG_TSL_ATTR, ldtAttr);
+-    tc->setMiscReg(MISCREG_TSG_BASE, GDTBase);
+-    tc->setMiscReg(MISCREG_TSG_LIMIT, 8 * numGDTEntries - 1);
++    tc->setMiscReg(misc_reg::TslAttr, ldtAttr);
++    tc->setMiscReg(misc_reg::TsgBase, GDTBase);
++    tc->setMiscReg(misc_reg::TsgLimit, 8 * numGDTEntries - 1);
+ 
+     SegDescriptor tssDesc = initDesc;
+     tssDesc.type = 0xB;
+@@ -229,7 +229,7 @@ FsWorkload::initState()
+     SegSelector tss = 0;
+     tss.si = numGDTEntries - 1;
+ 
+-    tc->setMiscReg(MISCREG_TR, (RegVal)tss);
++    tc->setMiscReg(misc_reg::Tr, (RegVal)tss);
+     installSegDesc(tc, segment_idx::Tr, tssDesc, true);
+ 
+     /*
+@@ -284,26 +284,26 @@ FsWorkload::initState()
+     /*
+      * Transition from real mode all the way up to Long mode
+      */
+-    CR0 cr0 = tc->readMiscRegNoEffect(MISCREG_CR0);
++    CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
+     // Turn off paging.
+     cr0.pg = 0;
+-    tc->setMiscReg(MISCREG_CR0, cr0);
++    tc->setMiscReg(misc_reg::Cr0, cr0);
+     // Turn on protected mode.
+     cr0.pe = 1;
+-    tc->setMiscReg(MISCREG_CR0, cr0);
++    tc->setMiscReg(misc_reg::Cr0, cr0);
+ 
+-    CR4 cr4 = tc->readMiscRegNoEffect(MISCREG_CR4);
++    CR4 cr4 = tc->readMiscRegNoEffect(misc_reg::Cr4);
+     // Turn on pae.
+     cr4.pae = 1;
+-    tc->setMiscReg(MISCREG_CR4, cr4);
++    tc->setMiscReg(misc_reg::Cr4, cr4);
+ 
+     // Point to the page tables.
+-    tc->setMiscReg(MISCREG_CR3, PageMapLevel4);
++    tc->setMiscReg(misc_reg::Cr3, PageMapLevel4);
+ 
+-    Efer efer = tc->readMiscRegNoEffect(MISCREG_EFER);
++    Efer efer = tc->readMiscRegNoEffect(misc_reg::Efer);
+     // Enable long mode.
+     efer.lme = 1;
+-    tc->setMiscReg(MISCREG_EFER, efer);
++    tc->setMiscReg(misc_reg::Efer, efer);
+ 
+     // Start using longmode segments.
+     installSegDesc(tc, segment_idx::Cs, csDesc, true);
+@@ -315,7 +315,7 @@ FsWorkload::initState()
+ 
+     // Activate long mode.
+     cr0.pg = 1;
+-    tc->setMiscReg(MISCREG_CR0, cr0);
++    tc->setMiscReg(misc_reg::Cr0, cr0);
+ 
+     tc->pcState(kernelObj->entryPoint());
+ 
+diff --git a/src/arch/x86/interrupts.cc b/src/arch/x86/interrupts.cc
+index ecaa194..74df9ab 100644
+--- a/src/arch/x86/interrupts.cc
++++ b/src/arch/x86/interrupts.cc
+@@ -664,7 +664,7 @@ X86ISA::Interrupts::Interrupts(const Params &p)
+ bool
+ X86ISA::Interrupts::checkInterrupts() const
+ {
+-    RFLAGS rflags = tc->readMiscRegNoEffect(MISCREG_RFLAGS);
++    RFLAGS rflags = tc->readMiscRegNoEffect(misc_reg::Rflags);
+     if (pendingUnmaskableInt) {
+         DPRINTF(LocalApic, "Reported pending unmaskable interrupt.\n");
+         return true;
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index b33913a..6fdb5d0 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -105,7 +105,7 @@ ISA::updateHandyM5Reg(Efer efer, CR0 cr0,
+         m5reg.stack = 1;
+     }
+ 
+-    regVal[MISCREG_M5_REG] = m5reg;
++    regVal[misc_reg::M5Reg] = m5reg;
+     if (tc)
+         tc->getDecoderPtr()->as<Decoder>().setM5Reg(m5reg);
+ }
+@@ -115,30 +115,30 @@ ISA::clear()
+ {
+     // Blank everything. 0 might not be an appropriate value for some things,
+     // but it is for most.
+-    memset(regVal, 0, NUM_MISCREGS * sizeof(RegVal));
++    memset(regVal, 0, misc_reg::NumRegs * sizeof(RegVal));
+ 
+     // If some state should be non-zero after a reset, set those values here.
+-    regVal[MISCREG_CR0] = 0x0000000060000010ULL;
++    regVal[misc_reg::Cr0] = 0x0000000060000010ULL;
+ 
+-    regVal[MISCREG_MTRRCAP] = 0x0508;
++    regVal[misc_reg::Mtrrcap] = 0x0508;
+ 
+-    regVal[MISCREG_MCG_CAP] = 0x104;
++    regVal[misc_reg::McgCap] = 0x104;
+ 
+-    regVal[MISCREG_PAT] = 0x0007040600070406ULL;
++    regVal[misc_reg::Pat] = 0x0007040600070406ULL;
+ 
+-    regVal[MISCREG_SYSCFG] = 0x20601;
++    regVal[misc_reg::Syscfg] = 0x20601;
+ 
+-    regVal[MISCREG_TOP_MEM] = 0x4000000;
++    regVal[misc_reg::TopMem] = 0x4000000;
+ 
+-    regVal[MISCREG_DR6] = (mask(8) << 4) | (mask(16) << 16);
+-    regVal[MISCREG_DR7] = 1 << 10;
++    regVal[misc_reg::Dr6] = (mask(8) << 4) | (mask(16) << 16);
++    regVal[misc_reg::Dr7] = 1 << 10;
+ 
+     LocalApicBase lApicBase = 0;
+     lApicBase.base = 0xFEE00000 >> 12;
+     lApicBase.enable = 1;
+     // The "bsp" bit will be set when this register is read, since then we'll
+     // have a ThreadContext to check the contextId from.
+-    regVal[MISCREG_APIC_BASE] = lApicBase;
++    regVal[misc_reg::ApicBase] = lApicBase;
+ }
+ 
+ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+@@ -152,7 +152,7 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
+-    _regClasses.emplace_back(NUM_MISCREGS, debug::MiscRegs);
++    _regClasses.emplace_back(misc_reg::NumRegs, debug::MiscRegs);
+ 
+     clear();
+ }
+@@ -163,8 +163,8 @@ copyMiscRegs(ThreadContext *src, ThreadContext *dest)
+     // This function assumes no side effects other than TLB invalidation
+     // need to be considered while copying state. That will likely not be
+     // true in the future.
+-    for (int i = 0; i < NUM_MISCREGS; ++i) {
+-        if (!isValidMiscReg(i))
++    for (int i = 0; i < misc_reg::NumRegs; ++i) {
++        if (!misc_reg::isValid(i))
+              continue;
+ 
+         dest->setMiscRegNoEffect(i, src->readMiscRegNoEffect(i));
+@@ -172,7 +172,7 @@ copyMiscRegs(ThreadContext *src, ThreadContext *dest)
+ 
+     // The TSC has to be updated with side-effects if the CPUs in a
+     // CPU switch have different frequencies.
+-    dest->setMiscReg(MISCREG_TSC, src->readMiscReg(MISCREG_TSC));
++    dest->setMiscReg(misc_reg::Tsc, src->readMiscReg(misc_reg::Tsc));
+ 
+     dest->getMMUPtr()->flushAll();
+ }
+@@ -201,7 +201,7 @@ ISA::readMiscRegNoEffect(int miscReg) const
+     // Make sure we're not dealing with an illegal control register.
+     // Instructions should filter out these indexes, and nothing else should
+     // attempt to read them directly.
+-    assert(isValidMiscReg(miscReg));
++    assert(misc_reg::isValid(miscReg));
+ 
+     return regVal[miscReg];
+ }
+@@ -209,18 +209,18 @@ ISA::readMiscRegNoEffect(int miscReg) const
+ RegVal
+ ISA::readMiscReg(int miscReg)
+ {
+-    if (miscReg == MISCREG_TSC) {
+-        return regVal[MISCREG_TSC] + tc->getCpuPtr()->curCycle();
++    if (miscReg == misc_reg::Tsc) {
++        return regVal[misc_reg::Tsc] + tc->getCpuPtr()->curCycle();
+     }
+ 
+-    if (miscReg == MISCREG_FSW) {
+-        RegVal fsw = regVal[MISCREG_FSW];
+-        RegVal top = regVal[MISCREG_X87_TOP];
++    if (miscReg == misc_reg::Fsw) {
++        RegVal fsw = regVal[misc_reg::Fsw];
++        RegVal top = regVal[misc_reg::X87Top];
+         return insertBits(fsw, 13, 11, top);
+     }
+ 
+-    if (miscReg == MISCREG_APIC_BASE) {
+-        LocalApicBase base = regVal[MISCREG_APIC_BASE];
++    if (miscReg == misc_reg::ApicBase) {
++        LocalApicBase base = regVal[misc_reg::ApicBase];
+         base.bsp = (tc->contextId() == 0);
+         return base;
+     }
+@@ -234,32 +234,32 @@ ISA::setMiscRegNoEffect(int miscReg, RegVal val)
+     // Make sure we're not dealing with an illegal control register.
+     // Instructions should filter out these indexes, and nothing else should
+     // attempt to write to them directly.
+-    assert(isValidMiscReg(miscReg));
++    assert(misc_reg::isValid(miscReg));
+ 
+-    HandyM5Reg m5Reg = regVal[MISCREG_M5_REG];
++    HandyM5Reg m5Reg = regVal[misc_reg::M5Reg];
+     int reg_width = 64;
+     switch (miscReg) {
+-      case MISCREG_X87_TOP:
++      case misc_reg::X87Top:
+         reg_width = 3;
+         break;
+-      case MISCREG_FTW:
++      case misc_reg::Ftw:
+         reg_width = 8;
+         break;
+-      case MISCREG_FSW:
+-      case MISCREG_FCW:
+-      case MISCREG_FOP:
++      case misc_reg::Fsw:
++      case misc_reg::Fcw:
++      case misc_reg::Fop:
+         reg_width = 16;
+         break;
+-      case MISCREG_MXCSR:
++      case misc_reg::Mxcsr:
+         reg_width = 32;
+         break;
+-      case MISCREG_FISEG:
+-      case MISCREG_FOSEG:
++      case misc_reg::Fiseg:
++      case misc_reg::Foseg:
+         if (m5Reg.submode != SixtyFourBitMode)
+             reg_width = 16;
+         break;
+-      case MISCREG_FIOFF:
+-      case MISCREG_FOOFF:
++      case misc_reg::Fioff:
++      case misc_reg::Fooff:
+         if (m5Reg.submode != SixtyFourBitMode)
+             reg_width = 32;
+         break;
+@@ -276,20 +276,20 @@ ISA::setMiscReg(int miscReg, RegVal val)
+     RegVal newVal = val;
+     switch(miscReg)
+     {
+-      case MISCREG_CR0:
++      case misc_reg::Cr0:
+         {
+             CR0 toggled = regVal[miscReg] ^ val;
+             CR0 newCR0 = val;
+-            Efer efer = regVal[MISCREG_EFER];
++            Efer efer = regVal[misc_reg::Efer];
+             if (toggled.pg && efer.lme) {
+                 if (newCR0.pg) {
+                     //Turning on long mode
+                     efer.lma = 1;
+-                    regVal[MISCREG_EFER] = efer;
++                    regVal[misc_reg::Efer] = efer;
+                 } else {
+                     //Turning off long mode
+                     efer.lma = 0;
+-                    regVal[MISCREG_EFER] = efer;
++                    regVal[misc_reg::Efer] = efer;
+                 }
+             }
+             if (toggled.pg) {
+@@ -298,19 +298,19 @@ ISA::setMiscReg(int miscReg, RegVal val)
+             //This must always be 1.
+             newCR0.et = 1;
+             newVal = newCR0;
+-            updateHandyM5Reg(regVal[MISCREG_EFER],
++            updateHandyM5Reg(regVal[misc_reg::Efer],
+                              newCR0,
+-                             regVal[MISCREG_CS_ATTR],
+-                             regVal[MISCREG_SS_ATTR],
+-                             regVal[MISCREG_RFLAGS]);
++                             regVal[misc_reg::CsAttr],
++                             regVal[misc_reg::SsAttr],
++                             regVal[misc_reg::Rflags]);
+         }
+         break;
+-      case MISCREG_CR2:
++      case misc_reg::Cr2:
+         break;
+-      case MISCREG_CR3:
++      case misc_reg::Cr3:
+         static_cast<MMU *>(tc->getMMUPtr())->flushNonGlobal();
+         break;
+-      case MISCREG_CR4:
++      case misc_reg::Cr4:
+         {
+             CR4 toggled = regVal[miscReg] ^ val;
+             if (toggled.pae || toggled.pse || toggled.pge) {
+@@ -318,85 +318,85 @@ ISA::setMiscReg(int miscReg, RegVal val)
+             }
+         }
+         break;
+-      case MISCREG_CR8:
++      case misc_reg::Cr8:
+         break;
+-      case MISCREG_RFLAGS:
++      case misc_reg::Rflags:
+         {
+             RFLAGS rflags = val;
+             panic_if(rflags.vm, "Virtual 8086 mode is not supported.");
+             break;
+         }
+-      case MISCREG_CS_ATTR:
++      case misc_reg::CsAttr:
+         {
+             SegAttr toggled = regVal[miscReg] ^ val;
+             SegAttr newCSAttr = val;
+             if (toggled.longMode) {
+                 if (newCSAttr.longMode) {
+-                    regVal[MISCREG_ES_EFF_BASE] = 0;
+-                    regVal[MISCREG_CS_EFF_BASE] = 0;
+-                    regVal[MISCREG_SS_EFF_BASE] = 0;
+-                    regVal[MISCREG_DS_EFF_BASE] = 0;
++                    regVal[misc_reg::EsEffBase] = 0;
++                    regVal[misc_reg::CsEffBase] = 0;
++                    regVal[misc_reg::SsEffBase] = 0;
++                    regVal[misc_reg::DsEffBase] = 0;
+                 } else {
+-                    regVal[MISCREG_ES_EFF_BASE] = regVal[MISCREG_ES_BASE];
+-                    regVal[MISCREG_CS_EFF_BASE] = regVal[MISCREG_CS_BASE];
+-                    regVal[MISCREG_SS_EFF_BASE] = regVal[MISCREG_SS_BASE];
+-                    regVal[MISCREG_DS_EFF_BASE] = regVal[MISCREG_DS_BASE];
++                    regVal[misc_reg::EsEffBase] = regVal[misc_reg::EsBase];
++                    regVal[misc_reg::CsEffBase] = regVal[misc_reg::CsBase];
++                    regVal[misc_reg::SsEffBase] = regVal[misc_reg::SsBase];
++                    regVal[misc_reg::DsEffBase] = regVal[misc_reg::DsBase];
+                 }
+             }
+-            updateHandyM5Reg(regVal[MISCREG_EFER],
+-                             regVal[MISCREG_CR0],
++            updateHandyM5Reg(regVal[misc_reg::Efer],
++                             regVal[misc_reg::Cr0],
+                              newCSAttr,
+-                             regVal[MISCREG_SS_ATTR],
+-                             regVal[MISCREG_RFLAGS]);
++                             regVal[misc_reg::SsAttr],
++                             regVal[misc_reg::Rflags]);
+         }
+         break;
+-      case MISCREG_SS_ATTR:
+-        updateHandyM5Reg(regVal[MISCREG_EFER],
+-                         regVal[MISCREG_CR0],
+-                         regVal[MISCREG_CS_ATTR],
++      case misc_reg::SsAttr:
++        updateHandyM5Reg(regVal[misc_reg::Efer],
++                         regVal[misc_reg::Cr0],
++                         regVal[misc_reg::CsAttr],
+                          val,
+-                         regVal[MISCREG_RFLAGS]);
++                         regVal[misc_reg::Rflags]);
+         break;
+       // These segments always actually use their bases, or in other words
+       // their effective bases must stay equal to their actual bases.
+-      case MISCREG_FS_BASE:
+-      case MISCREG_GS_BASE:
+-      case MISCREG_HS_BASE:
+-      case MISCREG_TSL_BASE:
+-      case MISCREG_TSG_BASE:
+-      case MISCREG_TR_BASE:
+-      case MISCREG_IDTR_BASE:
+-        regVal[MISCREG_SEG_EFF_BASE(miscReg - MISCREG_SEG_BASE_BASE)] = val;
++      case misc_reg::FsBase:
++      case misc_reg::GsBase:
++      case misc_reg::HsBase:
++      case misc_reg::TslBase:
++      case misc_reg::TsgBase:
++      case misc_reg::TrBase:
++      case misc_reg::IdtrBase:
++        regVal[misc_reg::segEffBase(miscReg - misc_reg::SegBaseBase)] = val;
+         break;
+       // These segments ignore their bases in 64 bit mode.
+       // their effective bases must stay equal to their actual bases.
+-      case MISCREG_ES_BASE:
+-      case MISCREG_CS_BASE:
+-      case MISCREG_SS_BASE:
+-      case MISCREG_DS_BASE:
++      case misc_reg::EsBase:
++      case misc_reg::CsBase:
++      case misc_reg::SsBase:
++      case misc_reg::DsBase:
+         {
+-            Efer efer = regVal[MISCREG_EFER];
+-            SegAttr csAttr = regVal[MISCREG_CS_ATTR];
++            Efer efer = regVal[misc_reg::Efer];
++            SegAttr csAttr = regVal[misc_reg::CsAttr];
+             if (!efer.lma || !csAttr.longMode) // Check for non 64 bit mode.
+-                regVal[MISCREG_SEG_EFF_BASE(miscReg -
+-                        MISCREG_SEG_BASE_BASE)] = val;
++                regVal[misc_reg::segEffBase(miscReg -
++                        misc_reg::SegBaseBase)] = val;
+         }
+         break;
+-      case MISCREG_TSC:
+-        regVal[MISCREG_TSC] = val - tc->getCpuPtr()->curCycle();
++      case misc_reg::Tsc:
++        regVal[misc_reg::Tsc] = val - tc->getCpuPtr()->curCycle();
+         return;
+-      case MISCREG_DR0:
+-      case MISCREG_DR1:
+-      case MISCREG_DR2:
+-      case MISCREG_DR3:
++      case misc_reg::Dr0:
++      case misc_reg::Dr1:
++      case misc_reg::Dr2:
++      case misc_reg::Dr3:
+         /* These should eventually set up breakpoints. */
+         break;
+-      case MISCREG_DR4:
+-        miscReg = MISCREG_DR6;
++      case misc_reg::Dr4:
++        miscReg = misc_reg::Dr6;
+         [[fallthrough]];
+-      case MISCREG_DR6:
++      case misc_reg::Dr6:
+         {
+-            DR6 dr6 = regVal[MISCREG_DR6];
++            DR6 dr6 = regVal[misc_reg::Dr6];
+             DR6 newDR6 = val;
+             dr6.b0 = newDR6.b0;
+             dr6.b1 = newDR6.b1;
+@@ -408,12 +408,12 @@ ISA::setMiscReg(int miscReg, RegVal val)
+             newVal = dr6;
+         }
+         break;
+-      case MISCREG_DR5:
+-        miscReg = MISCREG_DR7;
++      case misc_reg::Dr5:
++        miscReg = misc_reg::Dr7;
+         [[fallthrough]];
+-      case MISCREG_DR7:
++      case misc_reg::Dr7:
+         {
+-            DR7 dr7 = regVal[MISCREG_DR7];
++            DR7 dr7 = regVal[misc_reg::Dr7];
+             DR7 newDR7 = val;
+             dr7.l0 = newDR7.l0;
+             dr7.g0 = newDR7.g0;
+@@ -454,15 +454,15 @@ ISA::setMiscReg(int miscReg, RegVal val)
+             dr7.len3 = newDR7.len3;
+         }
+         break;
+-      case MISCREG_M5_REG:
++      case misc_reg::M5Reg:
+         // Writing anything to the m5reg with side effects makes it update
+         // based on the current values of the relevant registers. The actual
+         // value written is discarded.
+-        updateHandyM5Reg(regVal[MISCREG_EFER],
+-                         regVal[MISCREG_CR0],
+-                         regVal[MISCREG_CS_ATTR],
+-                         regVal[MISCREG_SS_ATTR],
+-                         regVal[MISCREG_RFLAGS]);
++        updateHandyM5Reg(regVal[misc_reg::Efer],
++                         regVal[misc_reg::Cr0],
++                         regVal[misc_reg::CsAttr],
++                         regVal[misc_reg::SsAttr],
++                         regVal[misc_reg::Rflags]);
+         return;
+       default:
+         break;
+@@ -473,25 +473,25 @@ ISA::setMiscReg(int miscReg, RegVal val)
+ void
+ ISA::serialize(CheckpointOut &cp) const
+ {
+-    SERIALIZE_ARRAY(regVal, NUM_MISCREGS);
++    SERIALIZE_ARRAY(regVal, misc_reg::NumRegs);
+ }
+ 
+ void
+ ISA::unserialize(CheckpointIn &cp)
+ {
+-    UNSERIALIZE_ARRAY(regVal, NUM_MISCREGS);
+-    updateHandyM5Reg(regVal[MISCREG_EFER],
+-                     regVal[MISCREG_CR0],
+-                     regVal[MISCREG_CS_ATTR],
+-                     regVal[MISCREG_SS_ATTR],
+-                     regVal[MISCREG_RFLAGS]);
++    UNSERIALIZE_ARRAY(regVal, misc_reg::NumRegs);
++    updateHandyM5Reg(regVal[misc_reg::Efer],
++                     regVal[misc_reg::Cr0],
++                     regVal[misc_reg::CsAttr],
++                     regVal[misc_reg::SsAttr],
++                     regVal[misc_reg::Rflags]);
+ }
+ 
+ void
+ ISA::setThreadContext(ThreadContext *_tc)
+ {
+     BaseISA::setThreadContext(_tc);
+-    tc->getDecoderPtr()->as<Decoder>().setM5Reg(regVal[MISCREG_M5_REG]);
++    tc->getDecoderPtr()->as<Decoder>().setM5Reg(regVal[misc_reg::M5Reg]);
+ }
+ 
+ std::string
+diff --git a/src/arch/x86/isa.hh b/src/arch/x86/isa.hh
+index 413ae1b..4a32a21 100644
+--- a/src/arch/x86/isa.hh
++++ b/src/arch/x86/isa.hh
+@@ -52,7 +52,7 @@ namespace X86ISA
+ class ISA : public BaseISA
+ {
+   private:
+-    RegVal regVal[NUM_MISCREGS];
++    RegVal regVal[misc_reg::NumRegs];
+     void updateHandyM5Reg(Efer efer, CR0 cr0,
+             SegAttr csAttr, SegAttr ssAttr, RFLAGS rflags);
+ 
+@@ -102,7 +102,7 @@ class ISA : public BaseISA
+     {
+         if (reg >= NUM_FLOATREGS) {
+             reg = FLOATREG_STACK(reg - NUM_FLOATREGS,
+-                                 regVal[MISCREG_X87_TOP]);
++                                 regVal[misc_reg::X87Top]);
+         }
+         return reg;
+     }
+@@ -116,7 +116,7 @@ class ISA : public BaseISA
+     bool
+     inUserMode() const override
+     {
+-        HandyM5Reg m5reg = readMiscRegNoEffect(MISCREG_M5_REG);
++        HandyM5Reg m5reg = readMiscRegNoEffect(misc_reg::M5Reg);
+         return m5reg.cpl == 3;
+     }
+ 
+diff --git a/src/arch/x86/isa/decoder/two_byte_opcodes.isa b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+index 3931c40..22c20e5 100644
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+@@ -283,19 +283,19 @@
+                 // no prefix
+                 0x0: decode OPCODE_OP_BOTTOM3 {
+                     0x0: Cpl0CondInst::MOV(
+-                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Rd,Cd);
++                        {{misc_reg::isValid(misc_reg::cr(MODRM_REG))}},Rd,Cd);
+                     0x1: Cpl0CondInst::MOV({{MODRM_REG < 8}},Rd,Dd);
+                     0x2: Cpl0CondInst::MOV(
+-                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Cd,Rd);
++                        {{misc_reg::isValid(misc_reg::cr(MODRM_REG))}},Cd,Rd);
+                     0x3: Cpl0CondInst::MOV({{MODRM_REG < 8}},Dd,Rd);
+                     default: UD2();
+                 }
+                 // operand size (0x66)
+                 0x1: decode OPCODE_OP_BOTTOM3 {
+                     0x0: Cpl0CondInst::MOV(
+-                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Rd,Cd);
++                        {{misc_reg::isValid(misc_reg::cr(MODRM_REG))}},Rd,Cd);
+                     0x2: Cpl0CondInst::MOV(
+-                        {{isValidMiscReg(MISCREG_CR(MODRM_REG))}},Cd,Rd);
++                        {{misc_reg::isValid(misc_reg::cr(MODRM_REG))}},Cd,Rd);
+                 }
+                 default: UD2();
+             }
+diff --git a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_control_and_status.py b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_control_and_status.py
+index cab4735..0fcc3dc 100644
+--- a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_control_and_status.py
++++ b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_control_and_status.py
+@@ -35,24 +35,24 @@
+ 
+ microcode = '''
+ def macroop STMXCSR_M {
+-    rdval t1, ctrlRegIdx("MISCREG_MXCSR")
++    rdval t1, ctrlRegIdx("misc_reg::Mxcsr")
+     st t1, seg, sib, disp
+ };
+ 
+ def macroop STMXCSR_P {
+-    rdval t1, ctrlRegIdx("MISCREG_MXCSR")
++    rdval t1, ctrlRegIdx("misc_reg::Mxcsr")
+     rdip t7
+     st t1, seg, riprel, disp
+ };
+ 
+ def macroop LDMXCSR_M {
+     ld t1, seg, sib, disp
+-    wrval ctrlRegIdx("MISCREG_MXCSR"), t1
++    wrval ctrlRegIdx("misc_reg::Mxcsr"), t1
+ };
+ 
+ def macroop LDMXCSR_P {
+     rdip t7
+     ld t1, seg, riprel, disp
+-    wrval ctrlRegIdx("MISCREG_MXCSR"), t1
++    wrval ctrlRegIdx("misc_reg::Mxcsr"), t1
+ };
+ '''
+diff --git a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
+index 906f270..410fe69 100644
+--- a/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
++++ b/src/arch/x86/isa/insts/simd128/integer/save_and_restore_state/save_and_restore_state.py
+@@ -80,10 +80,10 @@ fxsaveCommonTemplate = """
+     rdxftw t1
+     st t1, seg, %(mode)s, "DISPLACEMENT + 4", dataSize=1
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOP")
++    rdval t1, ctrlRegIdx("misc_reg::Fop")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 6", dataSize=2
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_MXCSR")
++    rdval t1, ctrlRegIdx("misc_reg::Mxcsr")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 8", dataSize=4
+ 
+     # MXCSR_MASK, software assumes the default (0xFFBF) if 0.
+@@ -92,24 +92,24 @@ fxsaveCommonTemplate = """
+ """ + storeAllDataRegs
+ 
+ fxsave32Template = """
+-    rdval t1, ctrlRegIdx("MISCREG_FIOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fioff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 8", dataSize=4
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FISEG")
++    rdval t1, ctrlRegIdx("misc_reg::Fiseg")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 12", dataSize=2
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fooff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=4
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOSEG")
++    rdval t1, ctrlRegIdx("misc_reg::Foseg")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 4", dataSize=2
+ """ + fxsaveCommonTemplate
+ 
+ fxsave64Template = """
+-    rdval t1, ctrlRegIdx("MISCREG_FIOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fioff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 8", dataSize=8
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fooff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=8
+ """ + fxsaveCommonTemplate
+ 
+@@ -126,36 +126,36 @@ fxrstorCommonTemplate = """
+     wrxftw t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 6", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FOP"), t1
++    wrval ctrlRegIdx("misc_reg::Fop"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 8", dataSize=4
+-    wrval ctrlRegIdx("MISCREG_MXCSR"), t1
++    wrval ctrlRegIdx("misc_reg::Mxcsr"), t1
+ """ + loadAllDataRegs
+ 
+ fxrstor32Template = """
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 8", dataSize=4
+-    wrval ctrlRegIdx("MISCREG_FIOFF"), t1
++    wrval ctrlRegIdx("misc_reg::Fioff"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 12", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FISEG"), t1
++    wrval ctrlRegIdx("misc_reg::Fiseg"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=4
+-    wrval ctrlRegIdx("MISCREG_FOOFF"), t1
++    wrval ctrlRegIdx("misc_reg::Fooff"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 4", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FOSEG"), t1
++    wrval ctrlRegIdx("misc_reg::Foseg"), t1
+ """ + fxrstorCommonTemplate
+ 
+ fxrstor64Template = """
+     limm t2, 0, dataSize=8
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 8", dataSize=8
+-    wrval ctrlRegIdx("MISCREG_FIOFF"), t1
+-    wrval ctrlRegIdx("MISCREG_FISEG"), t2
++    wrval ctrlRegIdx("misc_reg::Fioff"), t1
++    wrval ctrlRegIdx("misc_reg::Fiseg"), t2
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=8
+-    wrval ctrlRegIdx("MISCREG_FOOFF"), t1
+-    wrval ctrlRegIdx("MISCREG_FOSEG"), t2
++    wrval ctrlRegIdx("misc_reg::Fooff"), t1
++    wrval ctrlRegIdx("misc_reg::Foseg"), t2
+ """ + fxrstorCommonTemplate
+ 
+ microcode = '''
+diff --git a/src/arch/x86/isa/insts/system/msrs.py b/src/arch/x86/isa/insts/system/msrs.py
+index e216898..78a9fa1 100644
+--- a/src/arch/x86/isa/insts/system/msrs.py
++++ b/src/arch/x86/isa/insts/system/msrs.py
+@@ -71,6 +71,6 @@ def macroop RDTSCP
+     rdtsc t1
+     mov rax, rax, t1, dataSize=4
+     srli rdx, t1, 32, dataSize=8
+-    rdval rcx, ctrlRegIdx("MISCREG_TSC_AUX"), dataSize=4
++    rdval rcx, ctrlRegIdx("misc_reg::TscAux"), dataSize=4
+ };
+ '''
+diff --git a/src/arch/x86/isa/insts/x87/control/save_and_restore_x87_environment.py b/src/arch/x86/isa/insts/x87/control/save_and_restore_x87_environment.py
+index 3fb14be..4e49ff6 100644
+--- a/src/arch/x86/isa/insts/x87/control/save_and_restore_x87_environment.py
++++ b/src/arch/x86/isa/insts/x87/control/save_and_restore_x87_environment.py
+@@ -39,19 +39,19 @@ fldenvTemplate = """
+     wrval ftw, t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 12", dataSize=4
+-    wrval ctrlRegIdx("MISCREG_FIOFF"), t1
++    wrval ctrlRegIdx("misc_reg::Fioff"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FISEG"), t1
++    wrval ctrlRegIdx("misc_reg::Fiseg"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 16 + 2", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FOP"), t1
++    wrval ctrlRegIdx("misc_reg::Fop"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 20", dataSize=4
+-    wrval ctrlRegIdx("MISCREG_FOOFF"), t1
++    wrval ctrlRegIdx("misc_reg::Fooff"), t1
+ 
+     ld t1, seg, %(mode)s, "DISPLACEMENT + 24", dataSize=2
+-    wrval ctrlRegIdx("MISCREG_FOSEG"), t1
++    wrval ctrlRegIdx("misc_reg::Foseg"), t1
+ """
+ 
+ fnstenvTemplate = """
+@@ -63,24 +63,24 @@ fnstenvTemplate = """
+     st t1, seg, %(mode)s, "DISPLACEMENT + 4", dataSize=2
+     srli t1, t1, 11, dataSize=2
+     andi t1, t1, 0x7, dataSize=2
+-    wrval ctrlRegIdx("MISCREG_X87_TOP"), t1
++    wrval ctrlRegIdx("misc_reg::X87Top"), t1
+ 
+     rdval t1, ftw
+     st t1, seg, %(mode)s, "DISPLACEMENT + 8", dataSize=2
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FIOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fioff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 12", dataSize=4
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FISEG")
++    rdval t1, ctrlRegIdx("misc_reg::Fiseg")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 0", dataSize=2
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOP")
++    rdval t1, ctrlRegIdx("misc_reg::Fop")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 16 + 2", dataSize=2
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOOFF")
++    rdval t1, ctrlRegIdx("misc_reg::Fooff")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 20", dataSize=4
+ 
+-    rdval t1, ctrlRegIdx("MISCREG_FOSEG")
++    rdval t1, ctrlRegIdx("misc_reg::Foseg")
+     st t1, seg, %(mode)s, "DISPLACEMENT + 24", dataSize=2
+ 
+     # Mask exceptions
+diff --git a/src/arch/x86/isa/microasm.isa b/src/arch/x86/isa/microasm.isa
+index e99578d..02d8f1c 100644
+--- a/src/arch/x86/isa/microasm.isa
++++ b/src/arch/x86/isa/microasm.isa
+@@ -178,10 +178,14 @@ let {{
+     assembler.symbols["CTrue"] = "condition_tests::True"
+     assembler.symbols["CFalse"] = "condition_tests::False"
+ 
+-    for reg in ('sysenter_cs', 'sysenter_esp', 'sysenter_eip',
+-                'star', 'lstar', 'cstar', 'sf_mask',
+-                'kernel_gs_base'):
+-        assembler.symbols[reg] = ctrlRegIdx("MISCREG_%s" % reg.upper())
++    for reg in (('sysenter_cs', 'SysenterCs'), ('sysenter_esp', 'SysenterEsp'),
++                ('sysenter_eip', 'SysenterEip'), 'star', 'lstar', 'cstar',
++                ('sf_mask', 'SfMask'), ('kernel_gs_base', 'KernelGsBase')):
++        if isinstance(reg, tuple):
++            assembler.symbols[reg[0]] = ctrlRegIdx(f"misc_reg::{reg[1]}")
++        else:
++            assembler.symbols[reg] = \
++                ctrlRegIdx(f"misc_reg::{reg.capitalize()}")
+ 
+     for flag in ('Scalar', 'MultHi', 'Signed'):
+         assembler.symbols[flag] = 'Media%sOp' % flag
+@@ -232,9 +236,9 @@ let {{
+     assembler.symbols["sti"] = stack_index("env.reg")
+     assembler.symbols["stim"] = stack_index("env.regm")
+ 
+-    assembler.symbols["fsw"] = ctrlRegIdx("MISCREG_FSW")
+-    assembler.symbols["fcw"] = ctrlRegIdx("MISCREG_FCW")
+-    assembler.symbols["ftw"] = ctrlRegIdx("MISCREG_FTW")
++    assembler.symbols["fsw"] = ctrlRegIdx("misc_reg::Fsw")
++    assembler.symbols["fcw"] = ctrlRegIdx("misc_reg::Fcw")
++    assembler.symbols["ftw"] = ctrlRegIdx("misc_reg::Ftw")
+ 
+     macroopDict = assembler.assemble(microcode)
+ 
+diff --git a/src/arch/x86/isa/microops/regop.isa b/src/arch/x86/isa/microops/regop.isa
+index 97ab143..404abb2 100644
+--- a/src/arch/x86/isa/microops/regop.isa
++++ b/src/arch/x86/isa/microops/regop.isa
+@@ -404,7 +404,7 @@ let {{
+                     PredezfBit, ext & ~mask, result, PSrcReg1, op2);
+             PredezfBit = newFlags & EZFBit;
+             PreddfBit = newFlags & DFBit;
+-            PredccFlagBits = newFlags & ccFlagMask;
++            PredccFlagBits = newFlags & CcFlagMask;
+ 
+             //If a logic microop wants to set these, it wants to set them to 0.
+             PredcfofBits = PredcfofBits & ~((CFBit | OFBit) & ext);
+@@ -418,11 +418,11 @@ let {{
+                                     PreddfBit | PredecfBit | PredezfBit,
+                                     ext, result, PSrcReg1, op2);
+ 
+-            PredcfofBits = newFlags & cfofMask;
++            PredcfofBits = newFlags & CfofMask;
+             PredecfBit = newFlags & ECFBit;
+             PredezfBit = newFlags & EZFBit;
+             PreddfBit = newFlags & DFBit;
+-            PredccFlagBits = newFlags & ccFlagMask;
++            PredccFlagBits = newFlags & CcFlagMask;
+         '''
+ 
+     class SubRegOp(BasicRegOp):
+@@ -432,11 +432,11 @@ let {{
+                                          PreddfBit | PredecfBit | PredezfBit,
+                                          ext, result, PSrcReg1, ~op2, true);
+ 
+-            PredcfofBits = newFlags & cfofMask;
++            PredcfofBits = newFlags & CfofMask;
+             PredecfBit = newFlags & ECFBit;
+             PredezfBit = newFlags & EZFBit;
+             PreddfBit = newFlags & DFBit;
+-            PredccFlagBits = newFlags & ccFlagMask;
++            PredccFlagBits = newFlags & CcFlagMask;
+         '''
+ 
+     class CondRegOp(RegOp):
+@@ -748,7 +748,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -794,7 +794,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -840,7 +840,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -884,7 +884,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -933,7 +933,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -978,7 +978,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -1028,7 +1028,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -1088,7 +1088,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -1154,7 +1154,7 @@ let {{
+ 
+                 PredezfBit = newFlags & EZFBit;
+                 PreddfBit = newFlags & DFBit;
+-                PredccFlagBits = newFlags & ccFlagMask;
++                PredccFlagBits = newFlags & CcFlagMask;
+             }
+         '''
+ 
+@@ -1168,11 +1168,11 @@ let {{
+     class Wruflags(WrRegOp):
+         code = '''
+             uint64_t newFlags = PSrcReg1 ^ op2;
+-            cfofBits = newFlags & cfofMask;
++            cfofBits = newFlags & CfofMask;
+             ecfBit = newFlags & ECFBit;
+             ezfBit = newFlags & EZFBit;
+             dfBit = newFlags & DFBit;
+-            ccFlagBits = newFlags & ccFlagMask;
++            ccFlagBits = newFlags & CcFlagMask;
+         '''
+ 
+     class Wrflags(WrRegOp):
+@@ -1180,9 +1180,9 @@ let {{
+             const RegVal new_flags = PSrcReg1 ^ op2;
+ 
+             // Get only the user flags
+-            ccFlagBits = new_flags & ccFlagMask;
++            ccFlagBits = new_flags & CcFlagMask;
+             dfBit = new_flags & DFBit;
+-            cfofBits = new_flags & cfofMask;
++            cfofBits = new_flags & CfofMask;
+             ecfBit = 0;
+             ezfBit = 0;
+ 
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index b1f0a48..6247040 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -197,13 +197,13 @@ def operands {{
+         # are being written.
+ 
+         'PredccFlagBits': CCRegPred('X86ISA::CCREG_ZAPS', 60,
+-                read_predicate='(ext & X86ISA::ccFlagMask) != '
+-                'X86ISA::ccFlagMask && (ext & X86ISA::ccFlagMask) != 0',
+-                write_predicate='(ext & X86ISA::ccFlagMask) != 0'),
++                read_predicate='(ext & X86ISA::CcFlagMask) != '
++                'X86ISA::CcFlagMask && (ext & X86ISA::CcFlagMask) != 0',
++                write_predicate='(ext & X86ISA::CcFlagMask) != 0'),
+         'PredcfofBits':  CCRegPred('X86ISA::CCREG_CFOF', 61,
+-                read_predicate='(ext & X86ISA::cfofMask) '
+-                '!= X86ISA::cfofMask && (ext & X86ISA::cfofMask) != 0',
+-                write_predicate='(ext & X86ISA::cfofMask) != 0'),
++                read_predicate='(ext & X86ISA::CfofMask) '
++                '!= X86ISA::CfofMask && (ext & X86ISA::CfofMask) != 0',
++                write_predicate='(ext & X86ISA::CfofMask) != 0'),
+         'PreddfBit':     CCRegPred('X86ISA::CCREG_DF', 62,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::DFBit) != 0'),
+@@ -216,47 +216,48 @@ def operands {{
+ 
+         # These register should needs to be more protected so that later
+         # instructions don't map their indexes with an old value.
+-        'nccFlagBits':   ControlReg('X86ISA::MISCREG_RFLAGS', 65),
++        'nccFlagBits':   ControlReg('X86ISA::misc_reg::Rflags', 65),
+ 
+         # Registers related to the state of x87 floating point unit.
+-        'TOP':           ControlReg('X86ISA::MISCREG_X87_TOP', 66, ctype='ub'),
+-        'FSW':           ControlReg('X86ISA::MISCREG_FSW', 67, ctype='uw'),
+-        'FTW':           ControlReg('X86ISA::MISCREG_FTW', 68, ctype='uw'),
+-        'FCW':           ControlReg('X86ISA::MISCREG_FCW', 69, ctype='uw'),
++        'TOP':           ControlReg('X86ISA::misc_reg::X87Top', 66,
++                ctype='ub'),
++        'FSW':           ControlReg('X86ISA::misc_reg::Fsw', 67, ctype='uw'),
++        'FTW':           ControlReg('X86ISA::misc_reg::Ftw', 68, ctype='uw'),
++        'FCW':           ControlReg('X86ISA::misc_reg::Fcw', 69, ctype='uw'),
+ 
+         # The segment base as used by memory instructions.
+-        'SegBase':       ControlReg('X86ISA::MISCREG_SEG_EFF_BASE(segment)',
++        'SegBase':       ControlReg('X86ISA::misc_reg::segEffBase(segment)',
+                 70),
+ 
+         # Operands to get and set registers indexed by the operands of the
+         # original instruction.
+-        'ControlDest':   SquashCR0Reg('X86ISA::MISCREG_CR(dest)', 100),
+-        'ControlSrc1':   ControlReg('X86ISA::MISCREG_CR(src1)', 101),
+-        'DebugDest':     ControlReg('X86ISA::MISCREG_DR(dest)', 102),
+-        'DebugSrc1':     ControlReg('X86ISA::MISCREG_DR(src1)', 103),
+-        'SegBaseDest':   SquashCSReg('X86ISA::MISCREG_SEG_BASE(dest)', 104),
+-        'SegBaseSrc1':   ControlReg('X86ISA::MISCREG_SEG_BASE(src1)', 105),
+-        'SegLimitDest':  SquashCSReg('X86ISA::MISCREG_SEG_LIMIT(dest)', 106),
+-        'SegLimitSrc1':  ControlReg('X86ISA::MISCREG_SEG_LIMIT(src1)', 107),
+-        'SegSelDest':    ControlReg('X86ISA::MISCREG_SEG_SEL(dest)', 108),
+-        'SegSelSrc1':    ControlReg('X86ISA::MISCREG_SEG_SEL(src1)', 109),
+-        'SegAttrDest':   SquashCSReg('X86ISA::MISCREG_SEG_ATTR(dest)', 110),
+-        'SegAttrSrc1':   ControlReg('X86ISA::MISCREG_SEG_ATTR(src1)', 111),
++        'ControlDest':   SquashCR0Reg('X86ISA::misc_reg::cr(dest)', 100),
++        'ControlSrc1':   ControlReg('X86ISA::misc_reg::cr(src1)', 101),
++        'DebugDest':     ControlReg('X86ISA::misc_reg::dr(dest)', 102),
++        'DebugSrc1':     ControlReg('X86ISA::misc_reg::dr(src1)', 103),
++        'SegBaseDest':   SquashCSReg('X86ISA::misc_reg::segBase(dest)', 104),
++        'SegBaseSrc1':   ControlReg('X86ISA::misc_reg::segBase(src1)', 105),
++        'SegLimitDest':  SquashCSReg('X86ISA::misc_reg::segLimit(dest)', 106),
++        'SegLimitSrc1':  ControlReg('X86ISA::misc_reg::segLimit(src1)', 107),
++        'SegSelDest':    ControlReg('X86ISA::misc_reg::segSel(dest)', 108),
++        'SegSelSrc1':    ControlReg('X86ISA::misc_reg::segSel(src1)', 109),
++        'SegAttrDest':   SquashCSReg('X86ISA::misc_reg::segAttr(dest)', 110),
++        'SegAttrSrc1':   ControlReg('X86ISA::misc_reg::segAttr(src1)', 111),
+ 
+         # Operands to access specific control registers directly.
+-        'EferOp':        SquashCReg('X86ISA::MISCREG_EFER', 200),
+-        'CR4Op':         ControlReg('X86ISA::MISCREG_CR4', 201),
+-        'DR7Op':         ControlReg('X86ISA::MISCREG_DR7', 202),
+-        'LDTRBase':      ControlReg('X86ISA::MISCREG_TSL_BASE', 203),
+-        'LDTRLimit':     ControlReg('X86ISA::MISCREG_TSL_LIMIT', 204),
+-        'LDTRSel':       ControlReg('X86ISA::MISCREG_TSL', 205),
+-        'GDTRBase':      ControlReg('X86ISA::MISCREG_TSG_BASE', 206),
+-        'GDTRLimit':     ControlReg('X86ISA::MISCREG_TSG_LIMIT', 207),
+-        'CSBase':        SquashCReg('X86ISA::MISCREG_CS_EFF_BASE', 208),
+-        'CSAttr':        SquashCReg('X86ISA::MISCREG_CS_ATTR', 209),
++        'EferOp':        SquashCReg('X86ISA::misc_reg::Efer', 200),
++        'CR4Op':         ControlReg('X86ISA::misc_reg::Cr4', 201),
++        'DR7Op':         ControlReg('X86ISA::misc_reg::Dr7', 202),
++        'LDTRBase':      ControlReg('X86ISA::misc_reg::TslBase', 203),
++        'LDTRLimit':     ControlReg('X86ISA::misc_reg::TslLimit', 204),
++        'LDTRSel':       ControlReg('X86ISA::misc_reg::Tsl', 205),
++        'GDTRBase':      ControlReg('X86ISA::misc_reg::TsgBase', 206),
++        'GDTRLimit':     ControlReg('X86ISA::misc_reg::TsgLimit', 207),
++        'CSBase':        SquashCReg('X86ISA::misc_reg::CsEffBase', 208),
++        'CSAttr':        SquashCReg('X86ISA::misc_reg::CsAttr', 209),
+         'MiscRegDest':   ControlReg('dest', 210),
+         'MiscRegSrc1':   ControlReg('src1', 211),
+-        'TscOp':         ControlReg('X86ISA::MISCREG_TSC', 212),
+-        'M5Reg':         SquashCReg('X86ISA::MISCREG_M5_REG', 213),
++        'TscOp':         ControlReg('X86ISA::misc_reg::Tsc', 212),
++        'M5Reg':         SquashCReg('X86ISA::misc_reg::M5Reg', 213),
+         'Mem':           MemOp('uqw', None, (None, 'IsLoad', 'IsStore'), 300)
+ }};
+diff --git a/src/arch/x86/kvm/x86_cpu.cc b/src/arch/x86/kvm/x86_cpu.cc
+index 6b488d9..00d92b6 100644
+--- a/src/arch/x86/kvm/x86_cpu.cc
++++ b/src/arch/x86/kvm/x86_cpu.cc
+@@ -128,43 +128,43 @@ static_assert(sizeof(FXSave) == 512, "Unexpected size of FXSave");
+         APPLY_IREG(r15, int_reg::R15); \
+     } while (0)
+ 
+-#define FOREACH_SREG()                                  \
+-    do {                                                \
+-        APPLY_SREG(cr0, MISCREG_CR0);                   \
+-        APPLY_SREG(cr2, MISCREG_CR2);                   \
+-        APPLY_SREG(cr3, MISCREG_CR3);                   \
+-        APPLY_SREG(cr4, MISCREG_CR4);                   \
+-        APPLY_SREG(cr8, MISCREG_CR8);                   \
+-        APPLY_SREG(efer, MISCREG_EFER);                 \
+-        APPLY_SREG(apic_base, MISCREG_APIC_BASE);       \
++#define FOREACH_SREG() \
++    do { \
++        APPLY_SREG(cr0, misc_reg::Cr0); \
++        APPLY_SREG(cr2, misc_reg::Cr2); \
++        APPLY_SREG(cr3, misc_reg::Cr3); \
++        APPLY_SREG(cr4, misc_reg::Cr4); \
++        APPLY_SREG(cr8, misc_reg::Cr8); \
++        APPLY_SREG(efer, misc_reg::Efer); \
++        APPLY_SREG(apic_base, misc_reg::ApicBase); \
+     } while (0)
+ 
+-#define FOREACH_DREG()                          \
+-    do {                                        \
+-        APPLY_DREG(db[0], MISCREG_DR0);         \
+-        APPLY_DREG(db[1], MISCREG_DR1);         \
+-        APPLY_DREG(db[2], MISCREG_DR2);         \
+-        APPLY_DREG(db[3], MISCREG_DR3);         \
+-        APPLY_DREG(dr6, MISCREG_DR6);           \
+-        APPLY_DREG(dr7, MISCREG_DR7);           \
++#define FOREACH_DREG() \
++    do { \
++        APPLY_DREG(db[0], misc_reg::Dr0); \
++        APPLY_DREG(db[1], misc_reg::Dr1); \
++        APPLY_DREG(db[2], misc_reg::Dr2); \
++        APPLY_DREG(db[3], misc_reg::Dr3); \
++        APPLY_DREG(dr6, misc_reg::Dr6); \
++        APPLY_DREG(dr7, misc_reg::Dr7); \
+     } while (0)
+ 
+-#define FOREACH_SEGMENT()                                       \
+-    do {                                                        \
+-        APPLY_SEGMENT(cs, MISCREG_CS - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(ds, MISCREG_DS - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(es, MISCREG_ES - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(fs, MISCREG_FS - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(gs, MISCREG_GS - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(ss, MISCREG_SS - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(tr, MISCREG_TR - MISCREG_SEG_SEL_BASE);   \
+-        APPLY_SEGMENT(ldt, MISCREG_TSL - MISCREG_SEG_SEL_BASE); \
++#define FOREACH_SEGMENT() \
++    do { \
++        APPLY_SEGMENT(cs, misc_reg::Cs - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(ds, misc_reg::Ds - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(es, misc_reg::Es - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(fs, misc_reg::Fs - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(gs, misc_reg::Gs - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(ss, misc_reg::Ss - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(tr, misc_reg::Tr - misc_reg::SegSelBase); \
++        APPLY_SEGMENT(ldt, misc_reg::Tsl - misc_reg::SegSelBase); \
+     } while (0)
+ 
+-#define FOREACH_DTABLE()                                        \
+-    do {                                                        \
+-        APPLY_DTABLE(gdt, MISCREG_TSG - MISCREG_SEG_SEL_BASE);  \
+-        APPLY_DTABLE(idt, MISCREG_IDTR - MISCREG_SEG_SEL_BASE); \
++#define FOREACH_DTABLE() \
++    do { \
++        APPLY_DTABLE(gdt, misc_reg::Tsg - misc_reg::SegSelBase); \
++        APPLY_DTABLE(idt, misc_reg::Idtr - misc_reg::SegSelBase); \
+     } while (0)
+ 
+ template<typename Struct, typename Entry>
+@@ -182,7 +182,7 @@ dumpKvm(const struct kvm_regs &regs)
+ {
+     inform("KVM register state:\n");
+ 
+-#define APPLY_IREG(kreg, mreg)                  \
++#define APPLY_IREG(kreg, mreg) \
+     inform("\t" # kreg ": 0x%llx\n", regs.kreg)
+ 
+     FOREACH_IREG();
+@@ -396,21 +396,21 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+ {
+     // Check the register base
+     switch (idx) {
+-      case MISCREG_TSL:
+-      case MISCREG_TR:
+-      case MISCREG_FS:
+-      case MISCREG_GS:
++      case misc_reg::Tsl:
++      case misc_reg::Tr:
++      case misc_reg::Fs:
++      case misc_reg::Gs:
+         if (!isCanonicalAddress(seg.base))
+             warn("Illegal %s base: 0x%x\n", name, seg.base);
+         break;
+ 
+-      case MISCREG_SS:
+-      case MISCREG_DS:
+-      case MISCREG_ES:
++      case misc_reg::Ss:
++      case misc_reg::Ds:
++      case misc_reg::Es:
+         if (seg.unusable)
+             break;
+         [[fallthrough]];
+-      case MISCREG_CS:
++      case misc_reg::Cs:
+         if (seg.base & 0xffffffff00000000ULL)
+             warn("Illegal %s base: 0x%x\n", name, seg.base);
+         break;
+@@ -418,7 +418,7 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+ 
+     // Check the type
+     switch (idx) {
+-      case MISCREG_CS:
++      case misc_reg::Cs:
+         switch (seg.type) {
+           case 3:
+             if (seg.dpl != 0)
+@@ -440,7 +440,7 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+         }
+         break;
+ 
+-      case MISCREG_SS:
++      case misc_reg::Ss:
+         if (seg.unusable)
+             break;
+         switch (seg.type) {
+@@ -458,10 +458,10 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+         }
+         break;
+ 
+-      case MISCREG_DS:
+-      case MISCREG_ES:
+-      case MISCREG_FS:
+-      case MISCREG_GS:
++      case misc_reg::Ds:
++      case misc_reg::Es:
++      case misc_reg::Fs:
++      case misc_reg::Gs:
+         if (seg.unusable)
+             break;
+         if (!(seg.type & 0x1) ||
+@@ -469,13 +469,13 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+             warn("%s has an illegal type field: %i\n", name, seg.type);
+         break;
+ 
+-      case MISCREG_TR:
++      case misc_reg::Tr:
+         // TODO: We should check the CPU mode
+         if (seg.type != 3 && seg.type != 11)
+             warn("%s: Illegal segment type (%i)\n", name, seg.type);
+         break;
+ 
+-      case MISCREG_TSL:
++      case misc_reg::Tsl:
+         if (seg.unusable)
+             break;
+         if (seg.type != 2)
+@@ -484,41 +484,41 @@ checkSeg(const char *name, const int idx, const struct kvm_segment &seg,
+     }
+ 
+     switch (idx) {
+-      case MISCREG_SS:
+-      case MISCREG_DS:
+-      case MISCREG_ES:
+-      case MISCREG_FS:
+-      case MISCREG_GS:
++      case misc_reg::Ss:
++      case misc_reg::Ds:
++      case misc_reg::Es:
++      case misc_reg::Fs:
++      case misc_reg::Gs:
+         if (seg.unusable)
+             break;
+         [[fallthrough]];
+-      case MISCREG_CS:
++      case misc_reg::Cs:
+         if (!seg.s)
+             warn("%s: S flag not set\n", name);
+         break;
+ 
+-      case MISCREG_TSL:
++      case misc_reg::Tsl:
+         if (seg.unusable)
+             break;
+         [[fallthrough]];
+-      case MISCREG_TR:
++      case misc_reg::Tr:
+         if (seg.s)
+             warn("%s: S flag is set\n", name);
+         break;
+     }
+ 
+     switch (idx) {
+-      case MISCREG_SS:
+-      case MISCREG_DS:
+-      case MISCREG_ES:
+-      case MISCREG_FS:
+-      case MISCREG_GS:
+-      case MISCREG_TSL:
++      case misc_reg::Ss:
++      case misc_reg::Ds:
++      case misc_reg::Es:
++      case misc_reg::Fs:
++      case misc_reg::Gs:
++      case misc_reg::Tsl:
+         if (seg.unusable)
+             break;
+         [[fallthrough]];
+-      case MISCREG_TR:
+-      case MISCREG_CS:
++      case misc_reg::Tr:
++      case misc_reg::Cs:
+         if (!seg.present)
+             warn("%s: P flag not set\n", name);
+ 
+@@ -711,10 +711,10 @@ X86KvmCPU::updateKvmStateRegs()
+     FOREACH_IREG();
+ #undef APPLY_IREG
+ 
+-    regs.rip = tc->pcState().instAddr() - tc->readMiscReg(MISCREG_CS_BASE);
++    regs.rip = tc->pcState().instAddr() - tc->readMiscReg(misc_reg::CsBase);
+ 
+     /* You might think that setting regs.rflags to the contents
+-     * MISCREG_RFLAGS here would suffice. In that case you're
++     * misc_reg::Rflags here would suffice. In that case you're
+      * mistaken. We need to reconstruct it from a bunch of ucode
+      * registers and wave a dead chicken over it (aka mask out and set
+      * reserved bits) to get it to work.
+@@ -728,11 +728,11 @@ static inline void
+ setKvmSegmentReg(ThreadContext *tc, struct kvm_segment &kvm_seg,
+                  const int index)
+ {
+-    SegAttr attr(tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(index)));
++    SegAttr attr(tc->readMiscRegNoEffect(misc_reg::segAttr(index)));
+ 
+-    kvm_seg.base = tc->readMiscRegNoEffect(MISCREG_SEG_BASE(index));
+-    kvm_seg.limit = tc->readMiscRegNoEffect(MISCREG_SEG_LIMIT(index));
+-    kvm_seg.selector = tc->readMiscRegNoEffect(MISCREG_SEG_SEL(index));
++    kvm_seg.base = tc->readMiscRegNoEffect(misc_reg::segBase(index));
++    kvm_seg.limit = tc->readMiscRegNoEffect(misc_reg::segLimit(index));
++    kvm_seg.selector = tc->readMiscRegNoEffect(misc_reg::segSel(index));
+     kvm_seg.type = attr.type;
+     kvm_seg.present = attr.present;
+     kvm_seg.dpl = attr.dpl;
+@@ -748,8 +748,8 @@ static inline void
+ setKvmDTableReg(ThreadContext *tc, struct kvm_dtable &kvm_dtable,
+                 const int index)
+ {
+-    kvm_dtable.base = tc->readMiscRegNoEffect(MISCREG_SEG_BASE(index));
+-    kvm_dtable.limit = tc->readMiscRegNoEffect(MISCREG_SEG_LIMIT(index));
++    kvm_dtable.base = tc->readMiscRegNoEffect(misc_reg::segBase(index));
++    kvm_dtable.limit = tc->readMiscRegNoEffect(misc_reg::segLimit(index));
+ }
+ 
+ static void
+@@ -816,14 +816,14 @@ X86KvmCPU::updateKvmStateSRegs()
+ 
+     // Do checks after fixing up the state to avoid getting excessive
+     // amounts of warnings.
+-    RFLAGS rflags_nocc(tc->readMiscReg(MISCREG_RFLAGS));
++    RFLAGS rflags_nocc(tc->readMiscReg(misc_reg::Rflags));
+     if (!rflags_nocc.vm) {
+         // Do segment verification if the CPU isn't entering virtual
+         // 8086 mode.  We currently assume that unrestricted guest
+         // mode is available.
+ 
+ #define APPLY_SEGMENT(kreg, idx) \
+-        checkSeg(# kreg, idx + MISCREG_SEG_SEL_BASE, sregs.kreg, sregs)
++        checkSeg(# kreg, idx + misc_reg::SegSelBase, sregs.kreg, sregs)
+ 
+         FOREACH_SEGMENT();
+ #undef APPLY_SEGMENT
+@@ -836,16 +836,16 @@ template <typename T>
+ static void
+ updateKvmStateFPUCommon(ThreadContext *tc, T &fpu)
+ {
+-    fpu.mxcsr = tc->readMiscRegNoEffect(MISCREG_MXCSR);
+-    fpu.fcw = tc->readMiscRegNoEffect(MISCREG_FCW);
+-    // No need to rebuild from MISCREG_FSW and MISCREG_TOP if we read
++    fpu.mxcsr = tc->readMiscRegNoEffect(misc_reg::Mxcsr);
++    fpu.fcw = tc->readMiscRegNoEffect(misc_reg::Fcw);
++    // No need to rebuild from misc_reg::Fsw and misc_reg::Top if we read
+     // with effects.
+-    fpu.fsw = tc->readMiscReg(MISCREG_FSW);
++    fpu.fsw = tc->readMiscReg(misc_reg::Fsw);
+ 
+-    uint64_t ftw(tc->readMiscRegNoEffect(MISCREG_FTW));
++    uint64_t ftw(tc->readMiscRegNoEffect(misc_reg::Ftw));
+     fpu.ftwx = X86ISA::convX87TagsToXTags(ftw);
+ 
+-    fpu.last_opcode = tc->readMiscRegNoEffect(MISCREG_FOP);
++    fpu.last_opcode = tc->readMiscRegNoEffect(misc_reg::Fop);
+ 
+     const unsigned top((fpu.fsw >> 11) & 0x7);
+     for (int i = 0; i < 8; ++i) {
+@@ -878,15 +878,15 @@ X86KvmCPU::updateKvmStateFPULegacy()
+ 
+     updateKvmStateFPUCommon(tc, fpu);
+ 
+-    if (tc->readMiscRegNoEffect(MISCREG_FISEG))
+-        warn_once("MISCREG_FISEG is non-zero.\n");
++    if (tc->readMiscRegNoEffect(misc_reg::Fiseg))
++        warn_once("misc_reg::Fiseg is non-zero.\n");
+ 
+-    fpu.last_ip = tc->readMiscRegNoEffect(MISCREG_FIOFF);
++    fpu.last_ip = tc->readMiscRegNoEffect(misc_reg::Fioff);
+ 
+-    if (tc->readMiscRegNoEffect(MISCREG_FOSEG))
+-        warn_once("MISCREG_FOSEG is non-zero.\n");
++    if (tc->readMiscRegNoEffect(misc_reg::Foseg))
++        warn_once("misc_reg::Foseg is non-zero.\n");
+ 
+-    fpu.last_dp = tc->readMiscRegNoEffect(MISCREG_FOOFF);
++    fpu.last_dp = tc->readMiscRegNoEffect(misc_reg::Fooff);
+ 
+     setFPUState(fpu);
+ }
+@@ -903,15 +903,15 @@ X86KvmCPU::updateKvmStateFPUXSave()
+ 
+     updateKvmStateFPUCommon(tc, xsave);
+ 
+-    if (tc->readMiscRegNoEffect(MISCREG_FISEG))
+-        warn_once("MISCREG_FISEG is non-zero.\n");
++    if (tc->readMiscRegNoEffect(misc_reg::Fiseg))
++        warn_once("misc_reg::Fiseg is non-zero.\n");
+ 
+-    xsave.ctrl64.fpu_ip = tc->readMiscRegNoEffect(MISCREG_FIOFF);
++    xsave.ctrl64.fpu_ip = tc->readMiscRegNoEffect(misc_reg::Fioff);
+ 
+-    if (tc->readMiscRegNoEffect(MISCREG_FOSEG))
+-        warn_once("MISCREG_FOSEG is non-zero.\n");
++    if (tc->readMiscRegNoEffect(misc_reg::Foseg))
++        warn_once("misc_reg::Foseg is non-zero.\n");
+ 
+-    xsave.ctrl64.fpu_dp = tc->readMiscRegNoEffect(MISCREG_FOOFF);
++    xsave.ctrl64.fpu_dp = tc->readMiscRegNoEffect(misc_reg::Fooff);
+ 
+     setXSave(kxsave);
+ }
+@@ -978,7 +978,7 @@ X86KvmCPU::updateThreadContext()
+     // The M5 misc reg caches some values from other
+     // registers. Writing to it with side effects causes it to be
+     // updated from its source registers.
+-    tc->setMiscReg(MISCREG_M5_REG, 0);
++    tc->setMiscReg(misc_reg::M5Reg, 0);
+ }
+ 
+ void
+@@ -1018,10 +1018,10 @@ setContextSegment(ThreadContext *tc, const struct kvm_segment &kvm_seg,
+     // We need some setMiscReg magic here to keep the effective base
+     // addresses in sync. We need an up-to-date version of EFER, so
+     // make sure this is called after the sregs have been synced.
+-    tc->setMiscReg(MISCREG_SEG_BASE(index), kvm_seg.base);
+-    tc->setMiscReg(MISCREG_SEG_LIMIT(index), kvm_seg.limit);
+-    tc->setMiscReg(MISCREG_SEG_SEL(index), kvm_seg.selector);
+-    tc->setMiscReg(MISCREG_SEG_ATTR(index), attr);
++    tc->setMiscReg(misc_reg::segBase(index), kvm_seg.base);
++    tc->setMiscReg(misc_reg::segLimit(index), kvm_seg.limit);
++    tc->setMiscReg(misc_reg::segSel(index), kvm_seg.selector);
++    tc->setMiscReg(misc_reg::segAttr(index), attr);
+ }
+ 
+ inline void
+@@ -1031,8 +1031,8 @@ setContextSegment(ThreadContext *tc, const struct kvm_dtable &kvm_dtable,
+     // We need some setMiscReg magic here to keep the effective base
+     // addresses in sync. We need an up-to-date version of EFER, so
+     // make sure this is called after the sregs have been synced.
+-    tc->setMiscReg(MISCREG_SEG_BASE(index), kvm_dtable.base);
+-    tc->setMiscReg(MISCREG_SEG_LIMIT(index), kvm_dtable.limit);
++    tc->setMiscReg(misc_reg::segBase(index), kvm_dtable.base);
++    tc->setMiscReg(misc_reg::segLimit(index), kvm_dtable.limit);
+ }
+ 
+ void
+@@ -1068,17 +1068,17 @@ updateThreadContextFPUCommon(ThreadContext *tc, const T &fpu)
+ 
+     // TODO: We should update the MMX state
+ 
+-    tc->setMiscRegNoEffect(MISCREG_X87_TOP, top);
+-    tc->setMiscRegNoEffect(MISCREG_MXCSR, fpu.mxcsr);
+-    tc->setMiscRegNoEffect(MISCREG_FCW, fpu.fcw);
+-    tc->setMiscRegNoEffect(MISCREG_FSW, fpu.fsw);
++    tc->setMiscRegNoEffect(misc_reg::X87Top, top);
++    tc->setMiscRegNoEffect(misc_reg::Mxcsr, fpu.mxcsr);
++    tc->setMiscRegNoEffect(misc_reg::Fcw, fpu.fcw);
++    tc->setMiscRegNoEffect(misc_reg::Fsw, fpu.fsw);
+ 
+     uint64_t ftw(convX87XTagsToTags(fpu.ftwx));
+     // TODO: Are these registers really the same?
+-    tc->setMiscRegNoEffect(MISCREG_FTW, ftw);
+-    tc->setMiscRegNoEffect(MISCREG_FTAG, ftw);
++    tc->setMiscRegNoEffect(misc_reg::Ftw, ftw);
++    tc->setMiscRegNoEffect(misc_reg::Ftag, ftw);
+ 
+-    tc->setMiscRegNoEffect(MISCREG_FOP, fpu.last_opcode);
++    tc->setMiscRegNoEffect(misc_reg::Fop, fpu.last_opcode);
+ 
+     for (int i = 0; i < 16; ++i) {
+         tc->setFloatReg(FLOATREG_XMM_LOW(i), *(uint64_t *)&fpu.xmm[i][0]);
+@@ -1091,10 +1091,10 @@ X86KvmCPU::updateThreadContextFPU(const struct kvm_fpu &fpu)
+ {
+     updateThreadContextFPUCommon(tc, fpu);
+ 
+-    tc->setMiscRegNoEffect(MISCREG_FISEG, 0);
+-    tc->setMiscRegNoEffect(MISCREG_FIOFF, fpu.last_ip);
+-    tc->setMiscRegNoEffect(MISCREG_FOSEG, 0);
+-    tc->setMiscRegNoEffect(MISCREG_FOOFF, fpu.last_dp);
++    tc->setMiscRegNoEffect(misc_reg::Fiseg, 0);
++    tc->setMiscRegNoEffect(misc_reg::Fioff, fpu.last_ip);
++    tc->setMiscRegNoEffect(misc_reg::Foseg, 0);
++    tc->setMiscRegNoEffect(misc_reg::Fooff, fpu.last_dp);
+ }
+ 
+ void
+@@ -1104,10 +1104,10 @@ X86KvmCPU::updateThreadContextXSave(const struct kvm_xsave &kxsave)
+ 
+     updateThreadContextFPUCommon(tc, xsave);
+ 
+-    tc->setMiscRegNoEffect(MISCREG_FISEG, 0);
+-    tc->setMiscRegNoEffect(MISCREG_FIOFF, xsave.ctrl64.fpu_ip);
+-    tc->setMiscRegNoEffect(MISCREG_FOSEG, 0);
+-    tc->setMiscRegNoEffect(MISCREG_FOOFF, xsave.ctrl64.fpu_dp);
++    tc->setMiscRegNoEffect(misc_reg::Fiseg, 0);
++    tc->setMiscRegNoEffect(misc_reg::Fioff, xsave.ctrl64.fpu_ip);
++    tc->setMiscRegNoEffect(misc_reg::Foseg, 0);
++    tc->setMiscRegNoEffect(misc_reg::Fooff, xsave.ctrl64.fpu_dp);
+ }
+ 
+ void
+@@ -1324,11 +1324,11 @@ X86KvmCPU::handleKvmExitIO()
+      * right location in the PCI configuration space.
+      */
+     if (port == IO_PCI_CONF_ADDR) {
+-        handleIOMiscReg32(MISCREG_PCI_CONFIG_ADDRESS);
++        handleIOMiscReg32(misc_reg::PciConfigAddress);
+         return 0;
+     } else if ((port & ~0x3) == IO_PCI_CONF_DATA_BASE) {
+         Addr pciConfigAddr(tc->readMiscRegNoEffect(
+-                    MISCREG_PCI_CONFIG_ADDRESS));
++                    misc_reg::PciConfigAddress));
+         if (pciConfigAddr & 0x80000000) {
+             pAddr = X86ISA::x86PciConfigAddress((pciConfigAddr & 0x7ffffffc) |
+                                                 (port & 0x3));
+@@ -1407,13 +1407,13 @@ X86KvmCPU::ioctlRun()
+     // Synchronize the APIC base and CR8 here since they are present
+     // in the kvm_run struct, which makes the synchronization really
+     // cheap.
+-    kvm_run.apic_base = tc->readMiscReg(MISCREG_APIC_BASE);
+-    kvm_run.cr8 = tc->readMiscReg(MISCREG_CR8);
++    kvm_run.apic_base = tc->readMiscReg(misc_reg::ApicBase);
++    kvm_run.cr8 = tc->readMiscReg(misc_reg::Cr8);
+ 
+     BaseKvmCPU::ioctlRun();
+ 
+-    tc->setMiscReg(MISCREG_APIC_BASE, kvm_run.apic_base);
+-    kvm_run.cr8 = tc->readMiscReg(MISCREG_CR8);
++    tc->setMiscReg(misc_reg::ApicBase, kvm_run.apic_base);
++    kvm_run.cr8 = tc->readMiscReg(misc_reg::Cr8);
+ }
+ 
+ static struct kvm_cpuid_entry2
+diff --git a/src/arch/x86/linux/linux.hh b/src/arch/x86/linux/linux.hh
+index 8d3b3c4..7f71b5f 100644
+--- a/src/arch/x86/linux/linux.hh
++++ b/src/arch/x86/linux/linux.hh
+@@ -66,8 +66,8 @@ class X86Linux : public Linux
+         ctc->getIsaPtr()->copyRegsFrom(ptc);
+ 
+         if (flags & TGT_CLONE_SETTLS) {
+-            ctc->setMiscRegNoEffect(X86ISA::MISCREG_FS_BASE, tls);
+-            ctc->setMiscRegNoEffect(X86ISA::MISCREG_FS_EFF_BASE, tls);
++            ctc->setMiscRegNoEffect(X86ISA::misc_reg::FsBase, tls);
++            ctc->setMiscRegNoEffect(X86ISA::misc_reg::FsEffBase, tls);
+         }
+ 
+         if (stack)
+diff --git a/src/arch/x86/linux/se_workload.cc b/src/arch/x86/linux/se_workload.cc
+index 1486786..329dbbd 100644
+--- a/src/arch/x86/linux/se_workload.cc
++++ b/src/arch/x86/linux/se_workload.cc
+@@ -155,7 +155,7 @@ void
+ EmuLinux::pageFault(ThreadContext *tc)
+ {
+     Process *p = tc->getProcessPtr();
+-    if (!p->fixupFault(tc->readMiscReg(MISCREG_CR2))) {
++    if (!p->fixupFault(tc->readMiscReg(misc_reg::Cr2))) {
+         SETranslatingPortProxy proxy(tc);
+         // at this point we should have 6 values on the interrupt stack
+         int size = 6;
+@@ -170,7 +170,7 @@ EmuLinux::pageFault(ThreadContext *tc)
+                 "\tcs: %#x\n"
+                 "\trip: %#x\n"
+                 "\terr_code: %#x\n",
+-                tc->readMiscReg(MISCREG_CR2),
++                tc->readMiscReg(misc_reg::Cr2),
+                 is[5], is[4], is[3], is[2], is[1], is[0]);
+    }
+ }
+diff --git a/src/arch/x86/linux/syscalls.cc b/src/arch/x86/linux/syscalls.cc
+index 496a137..df80ec1 100644
+--- a/src/arch/x86/linux/syscalls.cc
++++ b/src/arch/x86/linux/syscalls.cc
+@@ -76,19 +76,19 @@ archPrctlFunc(SyscallDesc *desc, ThreadContext *tc, int code, uint64_t addr)
+     {
+       // Each of these valid options should actually check addr.
+       case SetFS:
+-        tc->setMiscRegNoEffect(MISCREG_FS_BASE, addr);
+-        tc->setMiscRegNoEffect(MISCREG_FS_EFF_BASE, addr);
++        tc->setMiscRegNoEffect(misc_reg::FsBase, addr);
++        tc->setMiscRegNoEffect(misc_reg::FsEffBase, addr);
+         return 0;
+       case GetFS:
+-        fsBase = tc->readMiscRegNoEffect(MISCREG_FS_BASE);
++        fsBase = tc->readMiscRegNoEffect(misc_reg::FsBase);
+         p.write(addr, fsBase);
+         return 0;
+       case SetGS:
+-        tc->setMiscRegNoEffect(MISCREG_GS_BASE, addr);
+-        tc->setMiscRegNoEffect(MISCREG_GS_EFF_BASE, addr);
++        tc->setMiscRegNoEffect(misc_reg::GsBase, addr);
++        tc->setMiscRegNoEffect(misc_reg::GsEffBase, addr);
+         return 0;
+       case GetGS:
+-        gsBase = tc->readMiscRegNoEffect(MISCREG_GS_BASE);
++        gsBase = tc->readMiscRegNoEffect(misc_reg::GsBase);
+         p.write(addr, gsBase);
+         return 0;
+       default:
+diff --git a/src/arch/x86/pagetable_walker.cc b/src/arch/x86/pagetable_walker.cc
+index 78d10d0..705a509 100644
+--- a/src/arch/x86/pagetable_walker.cc
++++ b/src/arch/x86/pagetable_walker.cc
+@@ -545,9 +545,9 @@ void
+ Walker::WalkerState::setupWalk(Addr vaddr)
+ {
+     VAddr addr = vaddr;
+-    CR3 cr3 = tc->readMiscRegNoEffect(MISCREG_CR3);
++    CR3 cr3 = tc->readMiscRegNoEffect(misc_reg::Cr3);
+     // Check if we're in long mode or not
+-    Efer efer = tc->readMiscRegNoEffect(MISCREG_EFER);
++    Efer efer = tc->readMiscRegNoEffect(misc_reg::Efer);
+     dataSize = 8;
+     Addr topAddr;
+     if (efer.lma) {
+@@ -557,7 +557,7 @@ Walker::WalkerState::setupWalk(Addr vaddr)
+         enableNX = efer.nxe;
+     } else {
+         // We're in some flavor of legacy mode.
+-        CR4 cr4 = tc->readMiscRegNoEffect(MISCREG_CR4);
++        CR4 cr4 = tc->readMiscRegNoEffect(misc_reg::Cr4);
+         if (cr4.pae) {
+             // Do legacy PAE.
+             state = PAEPDP;
+@@ -725,7 +725,7 @@ Fault
+ Walker::WalkerState::pageFault(bool present)
+ {
+     DPRINTF(PageTableWalker, "Raising page fault.\n");
+-    HandyM5Reg m5reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++    HandyM5Reg m5reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+     if (mode == BaseMMU::Execute && !enableNX)
+         mode = BaseMMU::Read;
+     return std::make_shared<PageFault>(entry.vaddr, present, mode,
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index 8fc9d08..bca74d5 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -312,29 +312,29 @@ X86_64Process::initState()
+         for (int i = 0; i < contextIds.size(); i++) {
+             ThreadContext *tc = system->threads[contextIds[i]];
+ 
+-            tc->setMiscReg(MISCREG_CS, cs);
+-            tc->setMiscReg(MISCREG_DS, ds);
+-            tc->setMiscReg(MISCREG_ES, ds);
+-            tc->setMiscReg(MISCREG_FS, ds);
+-            tc->setMiscReg(MISCREG_GS, ds);
+-            tc->setMiscReg(MISCREG_SS, ds);
++            tc->setMiscReg(misc_reg::Cs, cs);
++            tc->setMiscReg(misc_reg::Ds, ds);
++            tc->setMiscReg(misc_reg::Es, ds);
++            tc->setMiscReg(misc_reg::Fs, ds);
++            tc->setMiscReg(misc_reg::Gs, ds);
++            tc->setMiscReg(misc_reg::Ss, ds);
+ 
+             // LDT
+-            tc->setMiscReg(MISCREG_TSL, 0);
++            tc->setMiscReg(misc_reg::Tsl, 0);
+             SegAttr tslAttr = 0;
+             tslAttr.unusable = 1;
+             tslAttr.present = 0;
+             tslAttr.type = 2;
+-            tc->setMiscReg(MISCREG_TSL_ATTR, tslAttr);
++            tc->setMiscReg(misc_reg::TslAttr, tslAttr);
+ 
+-            tc->setMiscReg(MISCREG_TSG_BASE, GDTVirtAddr);
+-            tc->setMiscReg(MISCREG_TSG_LIMIT, 8 * numGDTEntries - 1);
++            tc->setMiscReg(misc_reg::TsgBase, GDTVirtAddr);
++            tc->setMiscReg(misc_reg::TsgLimit, 8 * numGDTEntries - 1);
+ 
+-            tc->setMiscReg(MISCREG_TR, tssSel);
+-            tc->setMiscReg(MISCREG_TR_BASE, tss_base_addr);
+-            tc->setMiscReg(MISCREG_TR_EFF_BASE, tss_base_addr);
+-            tc->setMiscReg(MISCREG_TR_LIMIT, tss_limit);
+-            tc->setMiscReg(MISCREG_TR_ATTR, tss_attr);
++            tc->setMiscReg(misc_reg::Tr, tssSel);
++            tc->setMiscReg(misc_reg::TrBase, tss_base_addr);
++            tc->setMiscReg(misc_reg::TrEffBase, tss_base_addr);
++            tc->setMiscReg(misc_reg::TrLimit, tss_limit);
++            tc->setMiscReg(misc_reg::TrAttr, tss_attr);
+ 
+             //Start using longmode segments.
+             installSegDesc(tc, segment_idx::Cs, csDesc, true);
+@@ -351,7 +351,7 @@ X86_64Process::initState()
+             efer.nxe = 1; // Enable nx support.
+             efer.svme = 0; // Disable svm support for now.
+             efer.ffxsr = 0; // Disable fast fxsave and fxrstor.
+-            tc->setMiscReg(MISCREG_EFER, efer);
++            tc->setMiscReg(misc_reg::Efer, efer);
+ 
+             //Set up the registers that describe the operating mode.
+             CR0 cr0 = 0;
+@@ -368,13 +368,13 @@ X86_64Process::initState()
+             cr0.mp = 1; // This doesn't really matter, but the manual suggests
+                         // setting it to one.
+             cr0.pe = 1; // We're definitely in protected mode.
+-            tc->setMiscReg(MISCREG_CR0, cr0);
++            tc->setMiscReg(misc_reg::Cr0, cr0);
+ 
+             CR0 cr2 = 0;
+-            tc->setMiscReg(MISCREG_CR2, cr2);
++            tc->setMiscReg(misc_reg::Cr2, cr2);
+ 
+             CR3 cr3 = dynamic_cast<ArchPageTable *>(pTable)->basePtr();
+-            tc->setMiscReg(MISCREG_CR3, cr3);
++            tc->setMiscReg(misc_reg::Cr3, cr3);
+ 
+             CR4 cr4 = 0;
+             //Turn on pae.
+@@ -391,28 +391,28 @@ X86_64Process::initState()
+             cr4.pvi = 0; // Protected-Mode Virtual Interrupts
+             cr4.vme = 0; // Virtual-8086 Mode Extensions
+ 
+-            tc->setMiscReg(MISCREG_CR4, cr4);
++            tc->setMiscReg(misc_reg::Cr4, cr4);
+ 
+             CR8 cr8 = 0;
+-            tc->setMiscReg(MISCREG_CR8, cr8);
++            tc->setMiscReg(misc_reg::Cr8, cr8);
+ 
+-            tc->setMiscReg(MISCREG_MXCSR, 0x1f80);
++            tc->setMiscReg(misc_reg::Mxcsr, 0x1f80);
+ 
+-            tc->setMiscReg(MISCREG_APIC_BASE, 0xfee00900);
++            tc->setMiscReg(misc_reg::ApicBase, 0xfee00900);
+ 
+-            tc->setMiscReg(MISCREG_TSG_BASE, GDTVirtAddr);
+-            tc->setMiscReg(MISCREG_TSG_LIMIT, 0xffff);
++            tc->setMiscReg(misc_reg::TsgBase, GDTVirtAddr);
++            tc->setMiscReg(misc_reg::TsgLimit, 0xffff);
+ 
+-            tc->setMiscReg(MISCREG_IDTR_BASE, IDTVirtAddr);
+-            tc->setMiscReg(MISCREG_IDTR_LIMIT, 0xffff);
++            tc->setMiscReg(misc_reg::IdtrBase, IDTVirtAddr);
++            tc->setMiscReg(misc_reg::IdtrLimit, 0xffff);
+ 
+             /* enabling syscall and sysret */
+             RegVal star = ((RegVal)sret << 48) | ((RegVal)scall << 32);
+-            tc->setMiscReg(MISCREG_STAR, star);
++            tc->setMiscReg(misc_reg::Star, star);
+             RegVal lstar = (RegVal)syscallCodeVirtAddr;
+-            tc->setMiscReg(MISCREG_LSTAR, lstar);
++            tc->setMiscReg(misc_reg::Lstar, lstar);
+             RegVal sfmask = (1 << 8) | (1 << 10); // TF | DF
+-            tc->setMiscReg(MISCREG_SF_MASK, sfmask);
++            tc->setMiscReg(misc_reg::SfMask, sfmask);
+         }
+ 
+         /* Set up the content of the TSS and write it to physical memory. */
+@@ -545,9 +545,9 @@ X86_64Process::initState()
+ 
+             // Initialize the segment registers.
+             for (int seg = 0; seg < segment_idx::NumIdxs; seg++) {
+-                tc->setMiscRegNoEffect(MISCREG_SEG_BASE(seg), 0);
+-                tc->setMiscRegNoEffect(MISCREG_SEG_EFF_BASE(seg), 0);
+-                tc->setMiscRegNoEffect(MISCREG_SEG_ATTR(seg), dataAttr);
++                tc->setMiscRegNoEffect(misc_reg::segBase(seg), 0);
++                tc->setMiscRegNoEffect(misc_reg::segEffBase(seg), 0);
++                tc->setMiscRegNoEffect(misc_reg::segAttr(seg), dataAttr);
+             }
+ 
+             SegAttr csAttr = 0;
+@@ -564,7 +564,7 @@ X86_64Process::initState()
+             csAttr.expandDown = 0;
+             csAttr.system = 1;
+ 
+-            tc->setMiscRegNoEffect(MISCREG_CS_ATTR, csAttr);
++            tc->setMiscRegNoEffect(misc_reg::CsAttr, csAttr);
+ 
+             Efer efer = 0;
+             efer.sce = 1; // Enable system call extensions.
+@@ -573,7 +573,7 @@ X86_64Process::initState()
+             efer.nxe = 1; // Enable nx support.
+             efer.svme = 0; // Disable svm support for now. It isn't implemented.
+             efer.ffxsr = 1; // Turn on fast fxsave and fxrstor.
+-            tc->setMiscReg(MISCREG_EFER, efer);
++            tc->setMiscReg(misc_reg::Efer, efer);
+ 
+             // Set up the registers that describe the operating mode.
+             CR0 cr0 = 0;
+@@ -590,9 +590,9 @@ X86_64Process::initState()
+             cr0.mp = 1; // This doesn't really matter, but the manual suggests
+                         // setting it to one.
+             cr0.pe = 1; // We're definitely in protected mode.
+-            tc->setMiscReg(MISCREG_CR0, cr0);
++            tc->setMiscReg(misc_reg::Cr0, cr0);
+ 
+-            tc->setMiscReg(MISCREG_MXCSR, 0x1f80);
++            tc->setMiscReg(misc_reg::Mxcsr, 0x1f80);
+         }
+     }
+ }
+@@ -656,11 +656,11 @@ I386Process::initState()
+ 
+         // Initialize the segment registers.
+         for (int seg = 0; seg < segment_idx::NumIdxs; seg++) {
+-            tc->setMiscRegNoEffect(MISCREG_SEG_BASE(seg), 0);
+-            tc->setMiscRegNoEffect(MISCREG_SEG_EFF_BASE(seg), 0);
+-            tc->setMiscRegNoEffect(MISCREG_SEG_ATTR(seg), dataAttr);
+-            tc->setMiscRegNoEffect(MISCREG_SEG_SEL(seg), 0xB);
+-            tc->setMiscRegNoEffect(MISCREG_SEG_LIMIT(seg), (uint32_t)(-1));
++            tc->setMiscRegNoEffect(misc_reg::segBase(seg), 0);
++            tc->setMiscRegNoEffect(misc_reg::segEffBase(seg), 0);
++            tc->setMiscRegNoEffect(misc_reg::segAttr(seg), dataAttr);
++            tc->setMiscRegNoEffect(misc_reg::segSel(seg), 0xB);
++            tc->setMiscRegNoEffect(misc_reg::segLimit(seg), (uint32_t)(-1));
+         }
+ 
+         SegAttr csAttr = 0;
+@@ -677,17 +677,17 @@ I386Process::initState()
+         csAttr.expandDown = 0;
+         csAttr.system = 1;
+ 
+-        tc->setMiscRegNoEffect(MISCREG_CS_ATTR, csAttr);
++        tc->setMiscRegNoEffect(misc_reg::CsAttr, csAttr);
+ 
+-        tc->setMiscRegNoEffect(MISCREG_TSG_BASE, _gdtStart);
+-        tc->setMiscRegNoEffect(MISCREG_TSG_EFF_BASE, _gdtStart);
+-        tc->setMiscRegNoEffect(MISCREG_TSG_LIMIT, _gdtStart + _gdtSize - 1);
++        tc->setMiscRegNoEffect(misc_reg::TsgBase, _gdtStart);
++        tc->setMiscRegNoEffect(misc_reg::TsgEffBase, _gdtStart);
++        tc->setMiscRegNoEffect(misc_reg::TsgLimit, _gdtStart + _gdtSize - 1);
+ 
+         // Set the LDT selector to 0 to deactivate it.
+-        tc->setMiscRegNoEffect(MISCREG_TSL, 0);
++        tc->setMiscRegNoEffect(misc_reg::Tsl, 0);
+         SegAttr attr = 0;
+         attr.unusable = 1;
+-        tc->setMiscRegNoEffect(MISCREG_TSL_ATTR, attr);
++        tc->setMiscRegNoEffect(misc_reg::TslAttr, attr);
+ 
+         Efer efer = 0;
+         efer.sce = 1; // Enable system call extensions.
+@@ -696,7 +696,7 @@ I386Process::initState()
+         efer.nxe = 1; // Enable nx support.
+         efer.svme = 0; // Disable svm support for now. It isn't implemented.
+         efer.ffxsr = 1; // Turn on fast fxsave and fxrstor.
+-        tc->setMiscReg(MISCREG_EFER, efer);
++        tc->setMiscReg(misc_reg::Efer, efer);
+ 
+         // Set up the registers that describe the operating mode.
+         CR0 cr0 = 0;
+@@ -713,9 +713,9 @@ I386Process::initState()
+         cr0.mp = 1; // This doesn't really matter, but the manual suggests
+                     // setting it to one.
+         cr0.pe = 1; // We're definitely in protected mode.
+-        tc->setMiscReg(MISCREG_CR0, cr0);
++        tc->setMiscReg(misc_reg::Cr0, cr0);
+ 
+-        tc->setMiscReg(MISCREG_MXCSR, 0x1f80);
++        tc->setMiscReg(misc_reg::Mxcsr, 0x1f80);
+     }
+ }
+ 
+diff --git a/src/arch/x86/regs/misc.hh b/src/arch/x86/regs/misc.hh
+index 33e52fb..f9c526b 100644
+--- a/src/arch/x86/regs/misc.hh
++++ b/src/arch/x86/regs/misc.hh
+@@ -67,8 +67,8 @@ enum CondFlagBit
+     OFBit = 1 << 11
+ };
+ 
+-const uint32_t cfofMask = CFBit | OFBit;
+-const uint32_t ccFlagMask = PFBit | AFBit | ZFBit | SFBit;
++constexpr uint32_t CfofMask = CFBit | OFBit;
++constexpr uint32_t CcFlagMask = PFBit | AFBit | ZFBit | SFBit;
+ 
+ enum RFLAGBit
+ {
+@@ -103,446 +103,439 @@ enum X87StatusBit
+     BusyBit = 1 << 15,
+ };
+ 
+-enum MiscRegIndex
++namespace misc_reg
++{
++
++enum : RegIndex
+ {
+     // Control registers
+-    // Most of these are invalid.  See isValidMiscReg() below.
+-    MISCREG_CR_BASE,
+-    MISCREG_CR0 = MISCREG_CR_BASE,
+-    MISCREG_CR1,
+-    MISCREG_CR2,
+-    MISCREG_CR3,
+-    MISCREG_CR4,
+-    MISCREG_CR5,
+-    MISCREG_CR6,
+-    MISCREG_CR7,
+-    MISCREG_CR8,
+-    MISCREG_CR9,
+-    MISCREG_CR10,
+-    MISCREG_CR11,
+-    MISCREG_CR12,
+-    MISCREG_CR13,
+-    MISCREG_CR14,
+-    MISCREG_CR15,
++    // Most of these are invalid.  See isValid() below.
++    CrBase,
++    Cr0 = CrBase,
++    Cr1,
++    Cr2,
++    Cr3,
++    Cr4,
++    Cr5,
++    Cr6,
++    Cr7,
++    Cr8,
++    Cr9,
++    Cr10,
++    Cr11,
++    Cr12,
++    Cr13,
++    Cr14,
++    Cr15,
+ 
+     // Debug registers
+-    MISCREG_DR_BASE = MISCREG_CR_BASE + NumCRegs,
+-    MISCREG_DR0 = MISCREG_DR_BASE,
+-    MISCREG_DR1,
+-    MISCREG_DR2,
+-    MISCREG_DR3,
+-    MISCREG_DR4,
+-    MISCREG_DR5,
+-    MISCREG_DR6,
+-    MISCREG_DR7,
++    DrBase = CrBase + NumCRegs,
++    Dr0 = DrBase,
++    Dr1,
++    Dr2,
++    Dr3,
++    Dr4,
++    Dr5,
++    Dr6,
++    Dr7,
+ 
+     // Flags register
+-    MISCREG_RFLAGS = MISCREG_DR_BASE + NumDRegs,
++    Rflags = DrBase + NumDRegs,
+ 
+     //Register to keep handy values like the CPU mode in.
+-    MISCREG_M5_REG,
++    M5Reg,
+ 
+     /*
+      * Model Specific Registers
+      */
+     // Time stamp counter
+-    MISCREG_TSC,
+-
+-    MISCREG_MTRRCAP,
+-
+-    MISCREG_SYSENTER_CS,
+-    MISCREG_SYSENTER_ESP,
+-    MISCREG_SYSENTER_EIP,
+-
+-    MISCREG_MCG_CAP,
+-    MISCREG_MCG_STATUS,
+-    MISCREG_MCG_CTL,
+-
+-    MISCREG_DEBUG_CTL_MSR,
+-
+-    MISCREG_LAST_BRANCH_FROM_IP,
+-    MISCREG_LAST_BRANCH_TO_IP,
+-    MISCREG_LAST_EXCEPTION_FROM_IP,
+-    MISCREG_LAST_EXCEPTION_TO_IP,
+-
+-    MISCREG_MTRR_PHYS_BASE_BASE,
+-    MISCREG_MTRR_PHYS_BASE_0 = MISCREG_MTRR_PHYS_BASE_BASE,
+-    MISCREG_MTRR_PHYS_BASE_1,
+-    MISCREG_MTRR_PHYS_BASE_2,
+-    MISCREG_MTRR_PHYS_BASE_3,
+-    MISCREG_MTRR_PHYS_BASE_4,
+-    MISCREG_MTRR_PHYS_BASE_5,
+-    MISCREG_MTRR_PHYS_BASE_6,
+-    MISCREG_MTRR_PHYS_BASE_7,
+-    MISCREG_MTRR_PHYS_BASE_END,
+-
+-    MISCREG_MTRR_PHYS_MASK_BASE = MISCREG_MTRR_PHYS_BASE_END,
+-    MISCREG_MTRR_PHYS_MASK_0 = MISCREG_MTRR_PHYS_MASK_BASE,
+-    MISCREG_MTRR_PHYS_MASK_1,
+-    MISCREG_MTRR_PHYS_MASK_2,
+-    MISCREG_MTRR_PHYS_MASK_3,
+-    MISCREG_MTRR_PHYS_MASK_4,
+-    MISCREG_MTRR_PHYS_MASK_5,
+-    MISCREG_MTRR_PHYS_MASK_6,
+-    MISCREG_MTRR_PHYS_MASK_7,
+-    MISCREG_MTRR_PHYS_MASK_END,
+-
+-    MISCREG_MTRR_FIX_64K_00000 = MISCREG_MTRR_PHYS_MASK_END,
+-    MISCREG_MTRR_FIX_16K_80000,
+-    MISCREG_MTRR_FIX_16K_A0000,
+-    MISCREG_MTRR_FIX_4K_C0000,
+-    MISCREG_MTRR_FIX_4K_C8000,
+-    MISCREG_MTRR_FIX_4K_D0000,
+-    MISCREG_MTRR_FIX_4K_D8000,
+-    MISCREG_MTRR_FIX_4K_E0000,
+-    MISCREG_MTRR_FIX_4K_E8000,
+-    MISCREG_MTRR_FIX_4K_F0000,
+-    MISCREG_MTRR_FIX_4K_F8000,
+-
+-    MISCREG_PAT,
+-
+-    MISCREG_DEF_TYPE,
+-
+-    MISCREG_MC_CTL_BASE,
+-    MISCREG_MC0_CTL = MISCREG_MC_CTL_BASE,
+-    MISCREG_MC1_CTL,
+-    MISCREG_MC2_CTL,
+-    MISCREG_MC3_CTL,
+-    MISCREG_MC4_CTL,
+-    MISCREG_MC5_CTL,
+-    MISCREG_MC6_CTL,
+-    MISCREG_MC7_CTL,
+-    MISCREG_MC_CTL_END,
+-
+-    MISCREG_MC_STATUS_BASE = MISCREG_MC_CTL_END,
+-    MISCREG_MC0_STATUS = MISCREG_MC_STATUS_BASE,
+-    MISCREG_MC1_STATUS,
+-    MISCREG_MC2_STATUS,
+-    MISCREG_MC3_STATUS,
+-    MISCREG_MC4_STATUS,
+-    MISCREG_MC5_STATUS,
+-    MISCREG_MC6_STATUS,
+-    MISCREG_MC7_STATUS,
+-    MISCREG_MC_STATUS_END,
+-
+-    MISCREG_MC_ADDR_BASE = MISCREG_MC_STATUS_END,
+-    MISCREG_MC0_ADDR = MISCREG_MC_ADDR_BASE,
+-    MISCREG_MC1_ADDR,
+-    MISCREG_MC2_ADDR,
+-    MISCREG_MC3_ADDR,
+-    MISCREG_MC4_ADDR,
+-    MISCREG_MC5_ADDR,
+-    MISCREG_MC6_ADDR,
+-    MISCREG_MC7_ADDR,
+-    MISCREG_MC_ADDR_END,
+-
+-    MISCREG_MC_MISC_BASE = MISCREG_MC_ADDR_END,
+-    MISCREG_MC0_MISC = MISCREG_MC_MISC_BASE,
+-    MISCREG_MC1_MISC,
+-    MISCREG_MC2_MISC,
+-    MISCREG_MC3_MISC,
+-    MISCREG_MC4_MISC,
+-    MISCREG_MC5_MISC,
+-    MISCREG_MC6_MISC,
+-    MISCREG_MC7_MISC,
+-    MISCREG_MC_MISC_END,
++    Tsc,
++
++    Mtrrcap,
++
++    SysenterCs,
++    SysenterEsp,
++    SysenterEip,
++
++    McgCap,
++    McgStatus,
++    McgCtl,
++
++    DebugCtlMsr,
++
++    LastBranchFromIp,
++    LastBranchToIp,
++    LastExceptionFromIp,
++    LastExceptionToIp,
++
++    MtrrPhysBaseBase,
++    MtrrPhysBase0 = MtrrPhysBaseBase,
++    MtrrPhysBase1,
++    MtrrPhysBase2,
++    MtrrPhysBase3,
++    MtrrPhysBase4,
++    MtrrPhysBase5,
++    MtrrPhysBase6,
++    MtrrPhysBase7,
++    MtrrPhysBaseEnd,
++
++    MtrrPhysMaskBase = MtrrPhysBaseEnd,
++    MtrrPhysMask0 = MtrrPhysMaskBase,
++    MtrrPhysMask1,
++    MtrrPhysMask2,
++    MtrrPhysMask3,
++    MtrrPhysMask4,
++    MtrrPhysMask5,
++    MtrrPhysMask6,
++    MtrrPhysMask7,
++    MtrrPhysMaskEnd,
++
++    MtrrFix64k00000 = MtrrPhysMaskEnd,
++    MtrrFix16k80000,
++    MtrrFix16kA0000,
++    MtrrFix4kC0000,
++    MtrrFix4kC8000,
++    MtrrFix4kD0000,
++    MtrrFix4kD8000,
++    MtrrFix4kE0000,
++    MtrrFix4kE8000,
++    MtrrFix4kF0000,
++    MtrrFix4kF8000,
++
++    Pat,
++
++    DefType,
++
++    McCtlBase,
++    Mc0Ctl = McCtlBase,
++    Mc1Ctl,
++    Mc2Ctl,
++    Mc3Ctl,
++    Mc4Ctl,
++    Mc5Ctl,
++    Mc6Ctl,
++    Mc7Ctl,
++    McCtlEnd,
++
++    McStatusBase = McCtlEnd,
++    Mc0Status = McStatusBase,
++    Mc1Status,
++    Mc2Status,
++    Mc3Status,
++    Mc4Status,
++    Mc5Status,
++    Mc6Status,
++    Mc7Status,
++    McStatusEnd,
++
++    McAddrBase = McStatusEnd,
++    Mc0Addr = McAddrBase,
++    Mc1Addr,
++    Mc2Addr,
++    Mc3Addr,
++    Mc4Addr,
++    Mc5Addr,
++    Mc6Addr,
++    Mc7Addr,
++    McAddrEnd,
++
++    McMiscBase = McAddrEnd,
++    Mc0Misc = McMiscBase,
++    Mc1Misc,
++    Mc2Misc,
++    Mc3Misc,
++    Mc4Misc,
++    Mc5Misc,
++    Mc6Misc,
++    Mc7Misc,
++    McMiscEnd,
+ 
+     // Extended feature enable register
+-    MISCREG_EFER = MISCREG_MC_MISC_END,
++    Efer = McMiscEnd,
+ 
+-    MISCREG_STAR,
+-    MISCREG_LSTAR,
+-    MISCREG_CSTAR,
++    Star,
++    Lstar,
++    Cstar,
+ 
+-    MISCREG_SF_MASK,
++    SfMask,
+ 
+-    MISCREG_KERNEL_GS_BASE,
++    KernelGsBase,
+ 
+-    MISCREG_TSC_AUX,
++    TscAux,
+ 
+-    MISCREG_PERF_EVT_SEL_BASE,
+-    MISCREG_PERF_EVT_SEL0 = MISCREG_PERF_EVT_SEL_BASE,
+-    MISCREG_PERF_EVT_SEL1,
+-    MISCREG_PERF_EVT_SEL2,
+-    MISCREG_PERF_EVT_SEL3,
+-    MISCREG_PERF_EVT_SEL_END,
++    PerfEvtSelBase,
++    PerfEvtSel0 = PerfEvtSelBase,
++    PerfEvtSel1,
++    PerfEvtSel2,
++    PerfEvtSel3,
++    PerfEvtSelEnd,
+ 
+-    MISCREG_PERF_EVT_CTR_BASE = MISCREG_PERF_EVT_SEL_END,
+-    MISCREG_PERF_EVT_CTR0 = MISCREG_PERF_EVT_CTR_BASE,
+-    MISCREG_PERF_EVT_CTR1,
+-    MISCREG_PERF_EVT_CTR2,
+-    MISCREG_PERF_EVT_CTR3,
+-    MISCREG_PERF_EVT_CTR_END,
++    PerfEvtCtrBase = PerfEvtSelEnd,
++    PerfEvtCtr0 = PerfEvtCtrBase,
++    PerfEvtCtr1,
++    PerfEvtCtr2,
++    PerfEvtCtr3,
++    PerfEvtCtrEnd,
+ 
+-    MISCREG_SYSCFG = MISCREG_PERF_EVT_CTR_END,
++    Syscfg = PerfEvtCtrEnd,
+ 
+-    MISCREG_IORR_BASE_BASE,
+-    MISCREG_IORR_BASE0 = MISCREG_IORR_BASE_BASE,
+-    MISCREG_IORR_BASE1,
+-    MISCREG_IORR_BASE_END,
++    IorrBaseBase,
++    IorrBase0 = IorrBaseBase,
++    IorrBase1,
++    IorrBaseEnd,
+ 
+-    MISCREG_IORR_MASK_BASE = MISCREG_IORR_BASE_END,
+-    MISCREG_IORR_MASK0 = MISCREG_IORR_MASK_BASE,
+-    MISCREG_IORR_MASK1,
+-    MISCREG_IORR_MASK_END,
++    IorrMaskBase = IorrBaseEnd,
++    IorrMask0 = IorrMaskBase,
++    IorrMask1,
++    IorrMaskEnd,
+ 
+-    MISCREG_TOP_MEM = MISCREG_IORR_MASK_END,
+-    MISCREG_TOP_MEM2,
++    TopMem = IorrMaskEnd,
++    TopMem2,
+ 
+-    MISCREG_VM_CR,
+-    MISCREG_IGNNE,
+-    MISCREG_SMM_CTL,
+-    MISCREG_VM_HSAVE_PA,
++    VmCr,
++    Ignne,
++    SmmCtl,
++    VmHsavePa,
+ 
+     /*
+      * Segment registers
+      */
+     // Segment selectors
+-    MISCREG_SEG_SEL_BASE,
+-    MISCREG_ES = MISCREG_SEG_SEL_BASE,
+-    MISCREG_CS,
+-    MISCREG_SS,
+-    MISCREG_DS,
+-    MISCREG_FS,
+-    MISCREG_GS,
+-    MISCREG_HS,
+-    MISCREG_TSL,
+-    MISCREG_TSG,
+-    MISCREG_LS,
+-    MISCREG_MS,
+-    MISCREG_TR,
+-    MISCREG_IDTR,
++    SegSelBase,
++    Es = SegSelBase,
++    Cs,
++    Ss,
++    Ds,
++    Fs,
++    Gs,
++    Hs,
++    Tsl,
++    Tsg,
++    Ls,
++    Ms,
++    Tr,
++    Idtr,
+ 
+     // Hidden segment base field
+-    MISCREG_SEG_BASE_BASE = MISCREG_SEG_SEL_BASE + segment_idx::NumIdxs,
+-    MISCREG_ES_BASE = MISCREG_SEG_BASE_BASE,
+-    MISCREG_CS_BASE,
+-    MISCREG_SS_BASE,
+-    MISCREG_DS_BASE,
+-    MISCREG_FS_BASE,
+-    MISCREG_GS_BASE,
+-    MISCREG_HS_BASE,
+-    MISCREG_TSL_BASE,
+-    MISCREG_TSG_BASE,
+-    MISCREG_LS_BASE,
+-    MISCREG_MS_BASE,
+-    MISCREG_TR_BASE,
+-    MISCREG_IDTR_BASE,
++    SegBaseBase = SegSelBase + segment_idx::NumIdxs,
++    EsBase = SegBaseBase,
++    CsBase,
++    SsBase,
++    DsBase,
++    FsBase,
++    GsBase,
++    HsBase,
++    TslBase,
++    TsgBase,
++    LsBase,
++    MsBase,
++    TrBase,
++    IdtrBase,
+ 
+     // The effective segment base, ie what is actually added to an
+     // address. In 64 bit mode this can be different from the above,
+     // namely 0.
+-    MISCREG_SEG_EFF_BASE_BASE =
+-        MISCREG_SEG_BASE_BASE + segment_idx::NumIdxs,
+-    MISCREG_ES_EFF_BASE = MISCREG_SEG_EFF_BASE_BASE,
+-    MISCREG_CS_EFF_BASE,
+-    MISCREG_SS_EFF_BASE,
+-    MISCREG_DS_EFF_BASE,
+-    MISCREG_FS_EFF_BASE,
+-    MISCREG_GS_EFF_BASE,
+-    MISCREG_HS_EFF_BASE,
+-    MISCREG_TSL_EFF_BASE,
+-    MISCREG_TSG_EFF_BASE,
+-    MISCREG_LS_EFF_BASE,
+-    MISCREG_MS_EFF_BASE,
+-    MISCREG_TR_EFF_BASE,
+-    MISCREG_IDTR_EFF_BASE,
++    SegEffBaseBase = SegBaseBase + segment_idx::NumIdxs,
++    EsEffBase = SegEffBaseBase,
++    CsEffBase,
++    SsEffBase,
++    DsEffBase,
++    FsEffBase,
++    GsEffBase,
++    HsEffBase,
++    TslEffBase,
++    TsgEffBase,
++    LsEffBase,
++    MsEffBase,
++    TrEffBase,
++    IdtrEffBase,
+ 
+     // Hidden segment limit field
+-    MISCREG_SEG_LIMIT_BASE =
+-        MISCREG_SEG_EFF_BASE_BASE + segment_idx::NumIdxs,
+-    MISCREG_ES_LIMIT = MISCREG_SEG_LIMIT_BASE,
+-    MISCREG_CS_LIMIT,
+-    MISCREG_SS_LIMIT,
+-    MISCREG_DS_LIMIT,
+-    MISCREG_FS_LIMIT,
+-    MISCREG_GS_LIMIT,
+-    MISCREG_HS_LIMIT,
+-    MISCREG_TSL_LIMIT,
+-    MISCREG_TSG_LIMIT,
+-    MISCREG_LS_LIMIT,
+-    MISCREG_MS_LIMIT,
+-    MISCREG_TR_LIMIT,
+-    MISCREG_IDTR_LIMIT,
++    SegLimitBase = SegEffBaseBase + segment_idx::NumIdxs,
++    EsLimit = SegLimitBase,
++    CsLimit,
++    SsLimit,
++    DsLimit,
++    FsLimit,
++    GsLimit,
++    HsLimit,
++    TslLimit,
++    TsgLimit,
++    LsLimit,
++    MsLimit,
++    TrLimit,
++    IdtrLimit,
+ 
+     // Hidden segment limit attributes
+-    MISCREG_SEG_ATTR_BASE = MISCREG_SEG_LIMIT_BASE + segment_idx::NumIdxs,
+-    MISCREG_ES_ATTR = MISCREG_SEG_ATTR_BASE,
+-    MISCREG_CS_ATTR,
+-    MISCREG_SS_ATTR,
+-    MISCREG_DS_ATTR,
+-    MISCREG_FS_ATTR,
+-    MISCREG_GS_ATTR,
+-    MISCREG_HS_ATTR,
+-    MISCREG_TSL_ATTR,
+-    MISCREG_TSG_ATTR,
+-    MISCREG_LS_ATTR,
+-    MISCREG_MS_ATTR,
+-    MISCREG_TR_ATTR,
+-    MISCREG_IDTR_ATTR,
++    SegAttrBase = SegLimitBase + segment_idx::NumIdxs,
++    EsAttr = SegAttrBase,
++    CsAttr,
++    SsAttr,
++    DsAttr,
++    FsAttr,
++    GsAttr,
++    HsAttr,
++    TslAttr,
++    TsgAttr,
++    LsAttr,
++    MsAttr,
++    TrAttr,
++    IdtrAttr,
+ 
+     // Floating point control registers
+-    MISCREG_X87_TOP = MISCREG_SEG_ATTR_BASE + segment_idx::NumIdxs,
+-
+-    MISCREG_MXCSR,
+-    MISCREG_FCW,
+-    MISCREG_FSW,
+-    MISCREG_FTW,
+-    MISCREG_FTAG,
+-    MISCREG_FISEG,
+-    MISCREG_FIOFF,
+-    MISCREG_FOSEG,
+-    MISCREG_FOOFF,
+-    MISCREG_FOP,
++    X87Top = SegAttrBase + segment_idx::NumIdxs,
++
++    Mxcsr,
++    Fcw,
++    Fsw,
++    Ftw,
++    Ftag,
++    Fiseg,
++    Fioff,
++    Foseg,
++    Fooff,
++    Fop,
+ 
+     //XXX Add "Model-Specific Registers"
+ 
+-    MISCREG_APIC_BASE,
++    ApicBase,
+ 
+     // "Fake" MSRs for internally implemented devices
+-    MISCREG_PCI_CONFIG_ADDRESS,
++    PciConfigAddress,
+ 
+-    NUM_MISCREGS
++    NumRegs
+ };
+ 
+ static inline bool
+-isValidMiscReg(int index)
++isValid(int index)
+ {
+-    return (index >= MISCREG_CR0 && index < NUM_MISCREGS &&
+-            index != MISCREG_CR1 &&
+-            !(index > MISCREG_CR4 && index < MISCREG_CR8) &&
+-            !(index > MISCREG_CR8 && index <= MISCREG_CR15));
++    return (index >= Cr0 && index < NumRegs &&
++            index != Cr1 &&
++            !(index > Cr4 && index < Cr8) &&
++            !(index > Cr8 && index <= Cr15));
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_CR(int index)
++static inline RegIndex
++cr(int index)
+ {
+     assert(index >= 0 && index < NumCRegs);
+-    return (MiscRegIndex)(MISCREG_CR_BASE + index);
++    return CrBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_DR(int index)
++static inline RegIndex
++dr(int index)
+ {
+     assert(index >= 0 && index < NumDRegs);
+-    return (MiscRegIndex)(MISCREG_DR_BASE + index);
++    return DrBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MTRR_PHYS_BASE(int index)
++static inline RegIndex
++mtrrPhysBase(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MTRR_PHYS_BASE_END -
+-                                  MISCREG_MTRR_PHYS_BASE_BASE));
+-    return (MiscRegIndex)(MISCREG_MTRR_PHYS_BASE_BASE + index);
++    assert(index >= 0 && index < (MtrrPhysBaseEnd - MtrrPhysBaseBase));
++    return MtrrPhysBaseBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MTRR_PHYS_MASK(int index)
++static inline RegIndex
++mtrrPhysMask(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MTRR_PHYS_MASK_END -
+-                                  MISCREG_MTRR_PHYS_MASK_BASE));
+-    return (MiscRegIndex)(MISCREG_MTRR_PHYS_MASK_BASE + index);
++    assert(index >= 0 && index < (MtrrPhysMaskEnd - MtrrPhysMaskBase));
++    return MtrrPhysMaskBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MC_CTL(int index)
++static inline RegIndex
++mcCtl(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MC_CTL_END -
+-                                  MISCREG_MC_CTL_BASE));
+-    return (MiscRegIndex)(MISCREG_MC_CTL_BASE + index);
++    assert(index >= 0 && index < (McCtlEnd - McCtlBase));
++    return McCtlBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MC_STATUS(int index)
++static inline RegIndex
++mcStatus(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MC_STATUS_END -
+-                                  MISCREG_MC_STATUS_BASE));
+-    return (MiscRegIndex)(MISCREG_MC_STATUS_BASE + index);
++    assert(index >= 0 && index < (McStatusEnd - McStatusBase));
++    return McStatusBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MC_ADDR(int index)
++static inline RegIndex
++mcAddr(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MC_ADDR_END -
+-                                  MISCREG_MC_ADDR_BASE));
+-    return (MiscRegIndex)(MISCREG_MC_ADDR_BASE + index);
++    assert(index >= 0 && index < (McAddrEnd - McAddrBase));
++    return McAddrBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_MC_MISC(int index)
++static inline RegIndex
++mcMisc(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_MC_MISC_END -
+-                                  MISCREG_MC_MISC_BASE));
+-    return (MiscRegIndex)(MISCREG_MC_MISC_BASE + index);
++    assert(index >= 0 && index < (McMiscEnd - McMiscBase));
++    return McMiscBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_PERF_EVT_SEL(int index)
++static inline RegIndex
++perfEvtSel(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_PERF_EVT_SEL_END -
+-                                  MISCREG_PERF_EVT_SEL_BASE));
+-    return (MiscRegIndex)(MISCREG_PERF_EVT_SEL_BASE + index);
++    assert(index >= 0 && index < (PerfEvtSelEnd - PerfEvtSelBase));
++    return PerfEvtSelBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_PERF_EVT_CTR(int index)
++static inline RegIndex
++perfEvtCtr(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_PERF_EVT_CTR_END -
+-                                  MISCREG_PERF_EVT_CTR_BASE));
+-    return (MiscRegIndex)(MISCREG_PERF_EVT_CTR_BASE + index);
++    assert(index >= 0 && index < (PerfEvtCtrEnd - PerfEvtCtrBase));
++    return PerfEvtCtrBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_IORR_BASE(int index)
++static inline RegIndex
++iorrBase(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_IORR_BASE_END -
+-                                  MISCREG_IORR_BASE_BASE));
+-    return (MiscRegIndex)(MISCREG_IORR_BASE_BASE + index);
++    assert(index >= 0 && index < (IorrBaseEnd - IorrBaseBase));
++    return IorrBaseBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_IORR_MASK(int index)
++static inline RegIndex
++iorrMask(int index)
+ {
+-    assert(index >= 0 && index < (MISCREG_IORR_MASK_END -
+-                                  MISCREG_IORR_MASK_BASE));
+-    return (MiscRegIndex)(MISCREG_IORR_MASK_BASE + index);
++    assert(index >= 0 && index < (IorrMaskEnd - IorrMaskBase));
++    return IorrMaskBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_SEG_SEL(int index)
++static inline RegIndex
++segSel(int index)
+ {
+     assert(index >= 0 && index < segment_idx::NumIdxs);
+-    return (MiscRegIndex)(MISCREG_SEG_SEL_BASE + index);
++    return SegSelBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_SEG_BASE(int index)
++static inline RegIndex
++segBase(int index)
+ {
+     assert(index >= 0 && index < segment_idx::NumIdxs);
+-    return (MiscRegIndex)(MISCREG_SEG_BASE_BASE + index);
++    return SegBaseBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_SEG_EFF_BASE(int index)
++static inline RegIndex
++segEffBase(int index)
+ {
+     assert(index >= 0 && index < segment_idx::NumIdxs);
+-    return (MiscRegIndex)(MISCREG_SEG_EFF_BASE_BASE + index);
++    return SegEffBaseBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_SEG_LIMIT(int index)
++static inline RegIndex
++segLimit(int index)
+ {
+     assert(index >= 0 && index < segment_idx::NumIdxs);
+-    return (MiscRegIndex)(MISCREG_SEG_LIMIT_BASE + index);
++    return SegLimitBase + index;
+ }
+ 
+-static inline MiscRegIndex
+-MISCREG_SEG_ATTR(int index)
++static inline RegIndex
++segAttr(int index)
+ {
+     assert(index >= 0 && index < segment_idx::NumIdxs);
+-    return (MiscRegIndex)(MISCREG_SEG_ATTR_BASE + index);
++    return SegAttrBase + index;
+ }
+ 
++} // namespace misc_reg
++
+ /**
+  * A type to describe the condition code bits of the RFLAGS register,
+  * plus two flags, EZF and ECF, which are only visible to microcode.
+diff --git a/src/arch/x86/regs/msr.cc b/src/arch/x86/regs/msr.cc
+index 6d9a520..7fdb884 100644
+--- a/src/arch/x86/regs/msr.cc
++++ b/src/arch/x86/regs/msr.cc
+@@ -37,109 +37,109 @@ namespace X86ISA
+ typedef MsrMap::value_type MsrVal;
+ 
+ const MsrMap::value_type msrMapData[] = {
+-    MsrVal(0x10, MISCREG_TSC),
+-    MsrVal(0x1B, MISCREG_APIC_BASE),
+-    MsrVal(0xFE, MISCREG_MTRRCAP),
+-    MsrVal(0x174, MISCREG_SYSENTER_CS),
+-    MsrVal(0x175, MISCREG_SYSENTER_ESP),
+-    MsrVal(0x176, MISCREG_SYSENTER_EIP),
+-    MsrVal(0x179, MISCREG_MCG_CAP),
+-    MsrVal(0x17A, MISCREG_MCG_STATUS),
+-    MsrVal(0x17B, MISCREG_MCG_CTL),
+-    MsrVal(0x1D9, MISCREG_DEBUG_CTL_MSR),
+-    MsrVal(0x1DB, MISCREG_LAST_BRANCH_FROM_IP),
+-    MsrVal(0x1DC, MISCREG_LAST_BRANCH_TO_IP),
+-    MsrVal(0x1DD, MISCREG_LAST_EXCEPTION_FROM_IP),
+-    MsrVal(0x1DE, MISCREG_LAST_EXCEPTION_TO_IP),
+-    MsrVal(0x200, MISCREG_MTRR_PHYS_BASE_0),
+-    MsrVal(0x201, MISCREG_MTRR_PHYS_MASK_0),
+-    MsrVal(0x202, MISCREG_MTRR_PHYS_BASE_1),
+-    MsrVal(0x203, MISCREG_MTRR_PHYS_MASK_1),
+-    MsrVal(0x204, MISCREG_MTRR_PHYS_BASE_2),
+-    MsrVal(0x205, MISCREG_MTRR_PHYS_MASK_2),
+-    MsrVal(0x206, MISCREG_MTRR_PHYS_BASE_3),
+-    MsrVal(0x207, MISCREG_MTRR_PHYS_MASK_3),
+-    MsrVal(0x208, MISCREG_MTRR_PHYS_BASE_4),
+-    MsrVal(0x209, MISCREG_MTRR_PHYS_MASK_4),
+-    MsrVal(0x20A, MISCREG_MTRR_PHYS_BASE_5),
+-    MsrVal(0x20B, MISCREG_MTRR_PHYS_MASK_5),
+-    MsrVal(0x20C, MISCREG_MTRR_PHYS_BASE_6),
+-    MsrVal(0x20D, MISCREG_MTRR_PHYS_MASK_6),
+-    MsrVal(0x20E, MISCREG_MTRR_PHYS_BASE_7),
+-    MsrVal(0x20F, MISCREG_MTRR_PHYS_MASK_7),
+-    MsrVal(0x250, MISCREG_MTRR_FIX_64K_00000),
+-    MsrVal(0x258, MISCREG_MTRR_FIX_16K_80000),
+-    MsrVal(0x259, MISCREG_MTRR_FIX_16K_A0000),
+-    MsrVal(0x268, MISCREG_MTRR_FIX_4K_C0000),
+-    MsrVal(0x269, MISCREG_MTRR_FIX_4K_C8000),
+-    MsrVal(0x26A, MISCREG_MTRR_FIX_4K_D0000),
+-    MsrVal(0x26B, MISCREG_MTRR_FIX_4K_D8000),
+-    MsrVal(0x26C, MISCREG_MTRR_FIX_4K_E0000),
+-    MsrVal(0x26D, MISCREG_MTRR_FIX_4K_E8000),
+-    MsrVal(0x26E, MISCREG_MTRR_FIX_4K_F0000),
+-    MsrVal(0x26F, MISCREG_MTRR_FIX_4K_F8000),
+-    MsrVal(0x277, MISCREG_PAT),
+-    MsrVal(0x2FF, MISCREG_DEF_TYPE),
+-    MsrVal(0x400, MISCREG_MC0_CTL),
+-    MsrVal(0x404, MISCREG_MC1_CTL),
+-    MsrVal(0x408, MISCREG_MC2_CTL),
+-    MsrVal(0x40C, MISCREG_MC3_CTL),
+-    MsrVal(0x410, MISCREG_MC4_CTL),
+-    MsrVal(0x414, MISCREG_MC5_CTL),
+-    MsrVal(0x418, MISCREG_MC6_CTL),
+-    MsrVal(0x41C, MISCREG_MC7_CTL),
+-    MsrVal(0x401, MISCREG_MC0_STATUS),
+-    MsrVal(0x405, MISCREG_MC1_STATUS),
+-    MsrVal(0x409, MISCREG_MC2_STATUS),
+-    MsrVal(0x40D, MISCREG_MC3_STATUS),
+-    MsrVal(0x411, MISCREG_MC4_STATUS),
+-    MsrVal(0x415, MISCREG_MC5_STATUS),
+-    MsrVal(0x419, MISCREG_MC6_STATUS),
+-    MsrVal(0x41D, MISCREG_MC7_STATUS),
+-    MsrVal(0x402, MISCREG_MC0_ADDR),
+-    MsrVal(0x406, MISCREG_MC1_ADDR),
+-    MsrVal(0x40A, MISCREG_MC2_ADDR),
+-    MsrVal(0x40E, MISCREG_MC3_ADDR),
+-    MsrVal(0x412, MISCREG_MC4_ADDR),
+-    MsrVal(0x416, MISCREG_MC5_ADDR),
+-    MsrVal(0x41A, MISCREG_MC6_ADDR),
+-    MsrVal(0x41E, MISCREG_MC7_ADDR),
+-    MsrVal(0x403, MISCREG_MC0_MISC),
+-    MsrVal(0x407, MISCREG_MC1_MISC),
+-    MsrVal(0x40B, MISCREG_MC2_MISC),
+-    MsrVal(0x40F, MISCREG_MC3_MISC),
+-    MsrVal(0x413, MISCREG_MC4_MISC),
+-    MsrVal(0x417, MISCREG_MC5_MISC),
+-    MsrVal(0x41B, MISCREG_MC6_MISC),
+-    MsrVal(0x41F, MISCREG_MC7_MISC),
+-    MsrVal(0xC0000080, MISCREG_EFER),
+-    MsrVal(0xC0000081, MISCREG_STAR),
+-    MsrVal(0xC0000082, MISCREG_LSTAR),
+-    MsrVal(0xC0000083, MISCREG_CSTAR),
+-    MsrVal(0xC0000084, MISCREG_SF_MASK),
+-    MsrVal(0xC0000100, MISCREG_FS_BASE),
+-    MsrVal(0xC0000101, MISCREG_GS_BASE),
+-    MsrVal(0xC0000102, MISCREG_KERNEL_GS_BASE),
+-    MsrVal(0xC0000103, MISCREG_TSC_AUX),
+-    MsrVal(0xC0010000, MISCREG_PERF_EVT_SEL0),
+-    MsrVal(0xC0010001, MISCREG_PERF_EVT_SEL1),
+-    MsrVal(0xC0010002, MISCREG_PERF_EVT_SEL2),
+-    MsrVal(0xC0010003, MISCREG_PERF_EVT_SEL3),
+-    MsrVal(0xC0010004, MISCREG_PERF_EVT_CTR0),
+-    MsrVal(0xC0010005, MISCREG_PERF_EVT_CTR1),
+-    MsrVal(0xC0010006, MISCREG_PERF_EVT_CTR2),
+-    MsrVal(0xC0010007, MISCREG_PERF_EVT_CTR3),
+-    MsrVal(0xC0010010, MISCREG_SYSCFG),
+-    MsrVal(0xC0010016, MISCREG_IORR_BASE0),
+-    MsrVal(0xC0010017, MISCREG_IORR_BASE1),
+-    MsrVal(0xC0010018, MISCREG_IORR_MASK0),
+-    MsrVal(0xC0010019, MISCREG_IORR_MASK1),
+-    MsrVal(0xC001001A, MISCREG_TOP_MEM),
+-    MsrVal(0xC001001D, MISCREG_TOP_MEM2),
+-    MsrVal(0xC0010114, MISCREG_VM_CR),
+-    MsrVal(0xC0010115, MISCREG_IGNNE),
+-    MsrVal(0xC0010116, MISCREG_SMM_CTL),
+-    MsrVal(0xC0010117, MISCREG_VM_HSAVE_PA)
++    MsrVal(0x10, misc_reg::Tsc),
++    MsrVal(0x1B, misc_reg::ApicBase),
++    MsrVal(0xFE, misc_reg::Mtrrcap),
++    MsrVal(0x174, misc_reg::SysenterCs),
++    MsrVal(0x175, misc_reg::SysenterEsp),
++    MsrVal(0x176, misc_reg::SysenterEip),
++    MsrVal(0x179, misc_reg::McgCap),
++    MsrVal(0x17A, misc_reg::McgStatus),
++    MsrVal(0x17B, misc_reg::McgCtl),
++    MsrVal(0x1D9, misc_reg::DebugCtlMsr),
++    MsrVal(0x1DB, misc_reg::LastBranchFromIp),
++    MsrVal(0x1DC, misc_reg::LastBranchToIp),
++    MsrVal(0x1DD, misc_reg::LastExceptionFromIp),
++    MsrVal(0x1DE, misc_reg::LastExceptionToIp),
++    MsrVal(0x200, misc_reg::MtrrPhysBase0),
++    MsrVal(0x201, misc_reg::MtrrPhysMask0),
++    MsrVal(0x202, misc_reg::MtrrPhysBase1),
++    MsrVal(0x203, misc_reg::MtrrPhysMask1),
++    MsrVal(0x204, misc_reg::MtrrPhysBase2),
++    MsrVal(0x205, misc_reg::MtrrPhysMask2),
++    MsrVal(0x206, misc_reg::MtrrPhysBase3),
++    MsrVal(0x207, misc_reg::MtrrPhysMask3),
++    MsrVal(0x208, misc_reg::MtrrPhysBase4),
++    MsrVal(0x209, misc_reg::MtrrPhysMask4),
++    MsrVal(0x20A, misc_reg::MtrrPhysBase5),
++    MsrVal(0x20B, misc_reg::MtrrPhysMask5),
++    MsrVal(0x20C, misc_reg::MtrrPhysBase6),
++    MsrVal(0x20D, misc_reg::MtrrPhysMask6),
++    MsrVal(0x20E, misc_reg::MtrrPhysBase7),
++    MsrVal(0x20F, misc_reg::MtrrPhysMask7),
++    MsrVal(0x250, misc_reg::MtrrFix64k00000),
++    MsrVal(0x258, misc_reg::MtrrFix16k80000),
++    MsrVal(0x259, misc_reg::MtrrFix16kA0000),
++    MsrVal(0x268, misc_reg::MtrrFix4kC0000),
++    MsrVal(0x269, misc_reg::MtrrFix4kC8000),
++    MsrVal(0x26A, misc_reg::MtrrFix4kD0000),
++    MsrVal(0x26B, misc_reg::MtrrFix4kD8000),
++    MsrVal(0x26C, misc_reg::MtrrFix4kE0000),
++    MsrVal(0x26D, misc_reg::MtrrFix4kE8000),
++    MsrVal(0x26E, misc_reg::MtrrFix4kF0000),
++    MsrVal(0x26F, misc_reg::MtrrFix4kF8000),
++    MsrVal(0x277, misc_reg::Pat),
++    MsrVal(0x2FF, misc_reg::DefType),
++    MsrVal(0x400, misc_reg::Mc0Ctl),
++    MsrVal(0x404, misc_reg::Mc1Ctl),
++    MsrVal(0x408, misc_reg::Mc2Ctl),
++    MsrVal(0x40C, misc_reg::Mc3Ctl),
++    MsrVal(0x410, misc_reg::Mc4Ctl),
++    MsrVal(0x414, misc_reg::Mc5Ctl),
++    MsrVal(0x418, misc_reg::Mc6Ctl),
++    MsrVal(0x41C, misc_reg::Mc7Ctl),
++    MsrVal(0x401, misc_reg::Mc0Status),
++    MsrVal(0x405, misc_reg::Mc1Status),
++    MsrVal(0x409, misc_reg::Mc2Status),
++    MsrVal(0x40D, misc_reg::Mc3Status),
++    MsrVal(0x411, misc_reg::Mc4Status),
++    MsrVal(0x415, misc_reg::Mc5Status),
++    MsrVal(0x419, misc_reg::Mc6Status),
++    MsrVal(0x41D, misc_reg::Mc7Status),
++    MsrVal(0x402, misc_reg::Mc0Addr),
++    MsrVal(0x406, misc_reg::Mc1Addr),
++    MsrVal(0x40A, misc_reg::Mc2Addr),
++    MsrVal(0x40E, misc_reg::Mc3Addr),
++    MsrVal(0x412, misc_reg::Mc4Addr),
++    MsrVal(0x416, misc_reg::Mc5Addr),
++    MsrVal(0x41A, misc_reg::Mc6Addr),
++    MsrVal(0x41E, misc_reg::Mc7Addr),
++    MsrVal(0x403, misc_reg::Mc0Misc),
++    MsrVal(0x407, misc_reg::Mc1Misc),
++    MsrVal(0x40B, misc_reg::Mc2Misc),
++    MsrVal(0x40F, misc_reg::Mc3Misc),
++    MsrVal(0x413, misc_reg::Mc4Misc),
++    MsrVal(0x417, misc_reg::Mc5Misc),
++    MsrVal(0x41B, misc_reg::Mc6Misc),
++    MsrVal(0x41F, misc_reg::Mc7Misc),
++    MsrVal(0xC0000080, misc_reg::Efer),
++    MsrVal(0xC0000081, misc_reg::Star),
++    MsrVal(0xC0000082, misc_reg::Lstar),
++    MsrVal(0xC0000083, misc_reg::Cstar),
++    MsrVal(0xC0000084, misc_reg::SfMask),
++    MsrVal(0xC0000100, misc_reg::FsBase),
++    MsrVal(0xC0000101, misc_reg::GsBase),
++    MsrVal(0xC0000102, misc_reg::KernelGsBase),
++    MsrVal(0xC0000103, misc_reg::TscAux),
++    MsrVal(0xC0010000, misc_reg::PerfEvtSel0),
++    MsrVal(0xC0010001, misc_reg::PerfEvtSel1),
++    MsrVal(0xC0010002, misc_reg::PerfEvtSel2),
++    MsrVal(0xC0010003, misc_reg::PerfEvtSel3),
++    MsrVal(0xC0010004, misc_reg::PerfEvtCtr0),
++    MsrVal(0xC0010005, misc_reg::PerfEvtCtr1),
++    MsrVal(0xC0010006, misc_reg::PerfEvtCtr2),
++    MsrVal(0xC0010007, misc_reg::PerfEvtCtr3),
++    MsrVal(0xC0010010, misc_reg::Syscfg),
++    MsrVal(0xC0010016, misc_reg::IorrBase0),
++    MsrVal(0xC0010017, misc_reg::IorrBase1),
++    MsrVal(0xC0010018, misc_reg::IorrMask0),
++    MsrVal(0xC0010019, misc_reg::IorrMask1),
++    MsrVal(0xC001001A, misc_reg::TopMem),
++    MsrVal(0xC001001D, misc_reg::TopMem2),
++    MsrVal(0xC0010114, misc_reg::VmCr),
++    MsrVal(0xC0010115, misc_reg::Ignne),
++    MsrVal(0xC0010116, misc_reg::SmmCtl),
++    MsrVal(0xC0010117, misc_reg::VmHsavePa)
+ };
+ 
+ static const unsigned msrMapSize = sizeof(msrMapData) / sizeof(msrMapData[0]);
+@@ -147,13 +147,13 @@ static const unsigned msrMapSize = sizeof(msrMapData) / sizeof(msrMapData[0]);
+ const MsrMap msrMap(msrMapData, msrMapData + msrMapSize);
+ 
+ bool
+-msrAddrToIndex(MiscRegIndex &regNum, Addr addr)
++msrAddrToIndex(RegIndex &reg_num, Addr addr)
+ {
+-    MsrMap::const_iterator it(msrMap.find(addr));
++    auto it = msrMap.find(addr);
+     if (it == msrMap.end()) {
+         return false;
+     } else {
+-        regNum = it->second;
++        reg_num = it->second;
+         return true;
+     }
+ }
+diff --git a/src/arch/x86/regs/msr.hh b/src/arch/x86/regs/msr.hh
+index b9ce737..922c720 100644
+--- a/src/arch/x86/regs/msr.hh
++++ b/src/arch/x86/regs/msr.hh
+@@ -40,7 +40,7 @@ namespace gem5
+ namespace X86ISA
+ {
+ 
+-typedef std::unordered_map<Addr, MiscRegIndex> MsrMap;
++typedef std::unordered_map<Addr, RegIndex> MsrMap;
+ 
+ /**
+  * Map between MSR addresses and their corresponding misc registers.
+@@ -62,7 +62,7 @@ extern const MsrMap msrMap;
+  * @param addr MSR address
+  * @return True if the MSR was found, false otherwise.
+  */
+-bool msrAddrToIndex(MiscRegIndex &regNum, Addr addr);
++bool msrAddrToIndex(RegIndex &regNum, Addr addr);
+ 
+ } // namespace X86ISA
+ } // namespace gem5
+diff --git a/src/arch/x86/remote_gdb.cc b/src/arch/x86/remote_gdb.cc
+index 55ed32c..244f80d 100644
+--- a/src/arch/x86/remote_gdb.cc
++++ b/src/arch/x86/remote_gdb.cc
+@@ -112,7 +112,7 @@ RemoteGDB::gdbRegs()
+     }
+ 
+     // If that didn't work, decide based on the current mode of the context.
+-    HandyM5Reg m5reg = context()->readMiscRegNoEffect(MISCREG_M5_REG);
++    HandyM5Reg m5reg = context()->readMiscRegNoEffect(misc_reg::M5Reg);
+     if (m5reg.submode == SixtyFourBitMode)
+         return &regCache64;
+     else
+@@ -142,13 +142,13 @@ RemoteGDB::AMD64GdbRegCache::getRegs(ThreadContext *context)
+     r.r14 = context->getReg(int_reg::R14);
+     r.r15 = context->getReg(int_reg::R15);
+     r.rip = context->pcState().instAddr();
+-    r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+-    r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+-    r.ss = context->readMiscRegNoEffect(MISCREG_SS);
+-    r.ds = context->readMiscRegNoEffect(MISCREG_DS);
+-    r.es = context->readMiscRegNoEffect(MISCREG_ES);
+-    r.fs = context->readMiscRegNoEffect(MISCREG_FS);
+-    r.gs = context->readMiscRegNoEffect(MISCREG_GS);
++    r.eflags = context->readMiscRegNoEffect(misc_reg::Rflags);
++    r.cs = context->readMiscRegNoEffect(misc_reg::Cs);
++    r.ss = context->readMiscRegNoEffect(misc_reg::Ss);
++    r.ds = context->readMiscRegNoEffect(misc_reg::Ds);
++    r.es = context->readMiscRegNoEffect(misc_reg::Es);
++    r.fs = context->readMiscRegNoEffect(misc_reg::Fs);
++    r.gs = context->readMiscRegNoEffect(misc_reg::Gs);
+ }
+ 
+ void
+@@ -164,13 +164,13 @@ RemoteGDB::X86GdbRegCache::getRegs(ThreadContext *context)
+     r.esi = context->getReg(int_reg::Rsi);
+     r.edi = context->getReg(int_reg::Rdi);
+     r.eip = context->pcState().instAddr();
+-    r.eflags = context->readMiscRegNoEffect(MISCREG_RFLAGS);
+-    r.cs = context->readMiscRegNoEffect(MISCREG_CS);
+-    r.ss = context->readMiscRegNoEffect(MISCREG_SS);
+-    r.ds = context->readMiscRegNoEffect(MISCREG_DS);
+-    r.es = context->readMiscRegNoEffect(MISCREG_ES);
+-    r.fs = context->readMiscRegNoEffect(MISCREG_FS);
+-    r.gs = context->readMiscRegNoEffect(MISCREG_GS);
++    r.eflags = context->readMiscRegNoEffect(misc_reg::Rflags);
++    r.cs = context->readMiscRegNoEffect(misc_reg::Cs);
++    r.ss = context->readMiscRegNoEffect(misc_reg::Ss);
++    r.ds = context->readMiscRegNoEffect(misc_reg::Ds);
++    r.es = context->readMiscRegNoEffect(misc_reg::Es);
++    r.fs = context->readMiscRegNoEffect(misc_reg::Fs);
++    r.gs = context->readMiscRegNoEffect(misc_reg::Gs);
+ }
+ 
+ void
+@@ -194,18 +194,18 @@ RemoteGDB::AMD64GdbRegCache::setRegs(ThreadContext *context) const
+     context->setReg(int_reg::R14, r.r14);
+     context->setReg(int_reg::R15, r.r15);
+     context->pcState(r.rip);
+-    context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+-    if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
++    context->setMiscReg(misc_reg::Rflags, r.eflags);
++    if (r.cs != context->readMiscRegNoEffect(misc_reg::Cs))
+         warn("Remote gdb: Ignoring update to CS.\n");
+-    if (r.ss != context->readMiscRegNoEffect(MISCREG_SS))
++    if (r.ss != context->readMiscRegNoEffect(misc_reg::Ss))
+         warn("Remote gdb: Ignoring update to SS.\n");
+-    if (r.ds != context->readMiscRegNoEffect(MISCREG_DS))
++    if (r.ds != context->readMiscRegNoEffect(misc_reg::Ds))
+         warn("Remote gdb: Ignoring update to DS.\n");
+-    if (r.es != context->readMiscRegNoEffect(MISCREG_ES))
++    if (r.es != context->readMiscRegNoEffect(misc_reg::Es))
+         warn("Remote gdb: Ignoring update to ES.\n");
+-    if (r.fs != context->readMiscRegNoEffect(MISCREG_FS))
++    if (r.fs != context->readMiscRegNoEffect(misc_reg::Fs))
+         warn("Remote gdb: Ignoring update to FS.\n");
+-    if (r.gs != context->readMiscRegNoEffect(MISCREG_GS))
++    if (r.gs != context->readMiscRegNoEffect(misc_reg::Gs))
+         warn("Remote gdb: Ignoring update to GS.\n");
+ }
+ 
+@@ -222,18 +222,18 @@ RemoteGDB::X86GdbRegCache::setRegs(ThreadContext *context) const
+     context->setReg(int_reg::Rsi, r.esi);
+     context->setReg(int_reg::Rdi, r.edi);
+     context->pcState(r.eip);
+-    context->setMiscReg(MISCREG_RFLAGS, r.eflags);
+-    if (r.cs != context->readMiscRegNoEffect(MISCREG_CS))
++    context->setMiscReg(misc_reg::Rflags, r.eflags);
++    if (r.cs != context->readMiscRegNoEffect(misc_reg::Cs))
+         warn("Remote gdb: Ignoring update to CS.\n");
+-    if (r.ss != context->readMiscRegNoEffect(MISCREG_SS))
++    if (r.ss != context->readMiscRegNoEffect(misc_reg::Ss))
+         warn("Remote gdb: Ignoring update to SS.\n");
+-    if (r.ds != context->readMiscRegNoEffect(MISCREG_DS))
++    if (r.ds != context->readMiscRegNoEffect(misc_reg::Ds))
+         warn("Remote gdb: Ignoring update to DS.\n");
+-    if (r.es != context->readMiscRegNoEffect(MISCREG_ES))
++    if (r.es != context->readMiscRegNoEffect(misc_reg::Es))
+         warn("Remote gdb: Ignoring update to ES.\n");
+-    if (r.fs != context->readMiscRegNoEffect(MISCREG_FS))
++    if (r.fs != context->readMiscRegNoEffect(misc_reg::Fs))
+         warn("Remote gdb: Ignoring update to FS.\n");
+-    if (r.gs != context->readMiscRegNoEffect(MISCREG_GS))
++    if (r.gs != context->readMiscRegNoEffect(misc_reg::Gs))
+         warn("Remote gdb: Ignoring update to GS.\n");
+ }
+ 
+diff --git a/src/arch/x86/tlb.cc b/src/arch/x86/tlb.cc
+index 32d3071..9d26653 100644
+--- a/src/arch/x86/tlb.cc
++++ b/src/arch/x86/tlb.cc
+@@ -176,7 +176,7 @@ namespace
+ {
+ 
+ Cycles
+-localMiscRegAccess(bool read, MiscRegIndex regNum,
++localMiscRegAccess(bool read, RegIndex regNum,
+                    ThreadContext *tc, PacketPtr pkt)
+ {
+     if (read) {
+@@ -205,7 +205,7 @@ TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
+     } else if (prefix == IntAddrPrefixMSR) {
+         vaddr = (vaddr >> 3) & ~IntAddrPrefixMask;
+ 
+-        MiscRegIndex regNum;
++        RegIndex regNum;
+         if (!msrAddrToIndex(regNum, vaddr))
+             return std::make_shared<GeneralProtection>(0);
+ 
+@@ -232,13 +232,13 @@ TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
+                 [read](ThreadContext *tc, PacketPtr pkt)
+                 {
+                     return localMiscRegAccess(
+-                            read, MISCREG_PCI_CONFIG_ADDRESS, tc, pkt);
++                            read, misc_reg::PciConfigAddress, tc, pkt);
+                 }
+             );
+         } else if ((IOPort & ~mask(2)) == 0xCFC) {
+             req->setFlags(Request::UNCACHEABLE | Request::STRICT_ORDER);
+             Addr configAddress =
+-                tc->readMiscRegNoEffect(MISCREG_PCI_CONFIG_ADDRESS);
++                tc->readMiscRegNoEffect(misc_reg::PciConfigAddress);
+             if (bits(configAddress, 31, 31)) {
+                 req->setPaddr(PhysAddrPrefixPciConfig |
+                         mbits(configAddress, 30, 2) |
+@@ -280,7 +280,7 @@ TLB::finalizePhysical(const RequestPtr &req,
+     } else if (FullSystem) {
+         // Check for an access to the local APIC
+         LocalApicBase localApicBase =
+-            tc->readMiscRegNoEffect(MISCREG_APIC_BASE);
++            tc->readMiscRegNoEffect(misc_reg::ApicBase);
+         AddrRange apicRange(localApicBase.base * PageBytes,
+                             (localApicBase.base + 1) * PageBytes);
+ 
+@@ -326,7 +326,7 @@ TLB::translate(const RequestPtr &req,
+     Addr vaddr = req->getVaddr();
+     DPRINTF(TLB, "Translating vaddr %#x.\n", vaddr);
+ 
+-    HandyM5Reg m5Reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
++    HandyM5Reg m5Reg = tc->readMiscRegNoEffect(misc_reg::M5Reg);
+ 
+     const Addr logAddrSize = (flags >> AddrSizeFlagShift) & AddrSizeFlagMask;
+     const int addrSize = 8 << logAddrSize;
+@@ -344,7 +344,7 @@ TLB::translate(const RequestPtr &req,
+             if (mode == BaseMMU::Execute)
+                 seg = segment_idx::Cs;
+ 
+-            SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
++            SegAttr attr = tc->readMiscRegNoEffect(misc_reg::segAttr(seg));
+             // Check for an unusable segment.
+             if (attr.unusable) {
+                 DPRINTF(TLB, "Unusable segment.\n");
+@@ -363,8 +363,8 @@ TLB::translate(const RequestPtr &req,
+                 expandDown = attr.expandDown;
+ 
+             }
+-            Addr base = tc->readMiscRegNoEffect(MISCREG_SEG_BASE(seg));
+-            Addr limit = tc->readMiscRegNoEffect(MISCREG_SEG_LIMIT(seg));
++            Addr base = tc->readMiscRegNoEffect(misc_reg::segBase(seg));
++            Addr limit = tc->readMiscRegNoEffect(misc_reg::segLimit(seg));
+             Addr offset;
+             if (mode == BaseMMU::Execute)
+                 offset = vaddr - base;
+@@ -438,7 +438,7 @@ TLB::translate(const RequestPtr &req,
+                     "doing protection checks.\n", entry->paddr);
+             // Do paging protection checks.
+             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
+-            CR0 cr0 = tc->readMiscRegNoEffect(MISCREG_CR0);
++            CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
+             bool badWrite = (!entry->writable && (inUser || cr0.wp));
+             if ((inUser && !entry->user) ||
+                 (mode == BaseMMU::Write && badWrite)) {
+diff --git a/src/arch/x86/utility.cc b/src/arch/x86/utility.cc
+index 6b31d55..5138223 100644
+--- a/src/arch/x86/utility.cc
++++ b/src/arch/x86/utility.cc
+@@ -57,7 +57,7 @@ namespace X86ISA
+ uint64_t
+ getRFlags(ThreadContext *tc)
+ {
+-    const uint64_t ncc_flags(tc->readMiscRegNoEffect(MISCREG_RFLAGS));
++    const uint64_t ncc_flags(tc->readMiscRegNoEffect(misc_reg::Rflags));
+     const uint64_t cc_flags(tc->readCCReg(X86ISA::CCREG_ZAPS));
+     const uint64_t cfof_bits(tc->readCCReg(X86ISA::CCREG_CFOF));
+     const uint64_t df_bit(tc->readCCReg(X86ISA::CCREG_DF));
+@@ -73,8 +73,8 @@ getRFlags(ThreadContext *tc)
+ void
+ setRFlags(ThreadContext *tc, uint64_t val)
+ {
+-    tc->setCCReg(X86ISA::CCREG_ZAPS, val & ccFlagMask);
+-    tc->setCCReg(X86ISA::CCREG_CFOF, val & cfofMask);
++    tc->setCCReg(X86ISA::CCREG_ZAPS, val & CcFlagMask);
++    tc->setCCReg(X86ISA::CCREG_CFOF, val & CfofMask);
+     tc->setCCReg(X86ISA::CCREG_DF, val & DFBit);
+ 
+     // Internal microcode registers (ECF & EZF)
+@@ -83,7 +83,7 @@ setRFlags(ThreadContext *tc, uint64_t val)
+ 
+     // Update the RFLAGS misc reg with whatever didn't go into the
+     // magic registers.
+-    tc->setMiscReg(MISCREG_RFLAGS, val & ~(ccFlagMask | cfofMask | DFBit));
++    tc->setMiscReg(misc_reg::Rflags, val & ~(CcFlagMask | CfofMask | DFBit));
+ }
+ 
+ uint8_t
+diff --git a/src/arch/x86/utility.hh b/src/arch/x86/utility.hh
+index 94a0a4b..3720b46 100644
+--- a/src/arch/x86/utility.hh
++++ b/src/arch/x86/utility.hh
+@@ -53,9 +53,9 @@ namespace X86ISA
+      *
+      * gem5 stores rflags in several different registers to avoid
+      * pipeline dependencies. In order to get the true rflags value,
+-     * we can't simply read the value of MISCREG_RFLAGS. Instead, we
++     * we can't simply read the value of misc_reg::Rflags. Instead, we
+      * need to read out various state from microcode registers and
+-     * merge that with MISCREG_RFLAGS.
++     * merge that with misc_reg::Rflags.
+      *
+      * @param tc Thread context to read rflags from.
+      * @return rflags as seen by the guest.
+@@ -65,9 +65,9 @@ namespace X86ISA
+     /**
+      * Set update the rflags register and internal gem5 state.
+      *
+-     * @note This function does not update MISCREG_M5_REG. You might
++     * @note This function does not update misc_reg::M5Reg. You might
+      * need to update this register by writing anything to
+-     * MISCREG_M5_REG with side-effects.
++     * misc_reg::M5Reg with side-effects.
+      *
+      * @see X86ISA::getRFlags()
+      *
+-- 
+1.8.3.1
+

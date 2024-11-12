@@ -1,0 +1,102 @@
+From 03176aa0259d3e40a30598a8a75f9f38515ec6af Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 20 Jan 2022 15:58:05 +0000
+Subject: [PATCH 195/757] arch-arm: Define an Affinity type
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I42461de26886b1ba9e4db5b23a9fb970d3a1efd7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55705
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/types.hh   |  9 ++++++++-
+ src/arch/arm/utility.cc | 14 +++++++++-----
+ src/arch/arm/utility.hh |  2 +-
+ 3 files changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/arm/types.hh b/src/arch/arm/types.hh
+index a4d1f33..734fe6f 100644
+--- a/src/arch/arm/types.hh
++++ b/src/arch/arm/types.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010, 2012-2013, 2017-2018 ARM Limited
++ * Copyright (c) 2010, 2012-2013, 2017-2018, 2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -202,6 +202,13 @@ namespace ArmISA
+         Bitfield<11, 8>  ltcoproc;
+     EndBitUnion(ExtMachInst)
+ 
++    BitUnion32(Affinity)
++        Bitfield<31, 24> aff3;
++        Bitfield<23, 16> aff2;
++        Bitfield<15, 8>  aff1;
++        Bitfield<7, 0>   aff0;
++    EndBitUnion(Affinity)
++
+     // Shift types for ARM instructions
+     enum ArmShiftType
+     {
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index f81255d..6852aed 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2009-2014, 2016-2020 ARM Limited
++ * Copyright (c) 2009-2014, 2016-2020, 2022 Arm Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -199,13 +199,13 @@ getMPIDR(ArmSystem *arm_sys, ThreadContext *tc)
+ static RegVal
+ getAff2(ArmSystem *arm_sys, ThreadContext *tc)
+ {
+-    return arm_sys->multiThread ? tc->socketId() << 16 : 0;
++    return arm_sys->multiThread ? tc->socketId() : 0;
+ }
+ 
+ static RegVal
+ getAff1(ArmSystem *arm_sys, ThreadContext *tc)
+ {
+-    return arm_sys->multiThread ? tc->cpuId() << 8 : tc->socketId() << 8;
++    return arm_sys->multiThread ? tc->cpuId() : tc->socketId();
+ }
+ 
+ static RegVal
+@@ -214,10 +214,14 @@ getAff0(ArmSystem *arm_sys, ThreadContext *tc)
+     return arm_sys->multiThread ? tc->threadId() : tc->cpuId();
+ }
+ 
+-RegVal
++Affinity
+ getAffinity(ArmSystem *arm_sys, ThreadContext *tc)
+ {
+-    return getAff2(arm_sys, tc) | getAff1(arm_sys, tc) | getAff0(arm_sys, tc);
++    Affinity aff = 0;
++    aff.aff0 = getAff0(arm_sys, tc);
++    aff.aff1 = getAff1(arm_sys, tc);
++    aff.aff2 = getAff2(arm_sys, tc);
++    return aff;
+ }
+ 
+ bool
+diff --git a/src/arch/arm/utility.hh b/src/arch/arm/utility.hh
+index 0e5f3bb..00b0acf 100644
+--- a/src/arch/arm/utility.hh
++++ b/src/arch/arm/utility.hh
+@@ -223,7 +223,7 @@ RegVal readMPIDR(ArmSystem *arm_sys, ThreadContext *tc);
+ RegVal getMPIDR(ArmSystem *arm_sys, ThreadContext *tc);
+ 
+ /** Retrieves MPIDR_EL1.{Aff2,Aff1,Aff0} affinity numbers */
+-RegVal getAffinity(ArmSystem *arm_sys, ThreadContext *tc);
++Affinity getAffinity(ArmSystem *arm_sys, ThreadContext *tc);
+ 
+ static inline uint32_t
+ mcrMrcIssBuild(bool isRead, uint32_t crm, IntRegIndex rt, uint32_t crn,
+-- 
+1.8.3.1
+

@@ -1,0 +1,46 @@
+From 515c89b8604cfbedfa2b5595bf9940e03229dd78 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 20 Dec 2021 11:45:03 -0800
+Subject: [PATCH 082/757] util-docker: Update how rocBLAS is built in gcn-gpu
+ Dockerfile
+
+rocBLAS builds for all targets by default, but it requires we set the
+HCC_AMDGPU_TARGET env variable to all the targets we want to build for.
+
+This change explicitly sets all the gfx versions we intend to support in
+gem5, and removes the extraneous "-a all" from the install command.
+
+Additionally, doing this allowed for DNNMark to run on gfx902.
+
+Change-Id: Id1a00433beaa23f6935c12073d5bddc38431886b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54623
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/dockerfiles/gcn-gpu/Dockerfile | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/util/dockerfiles/gcn-gpu/Dockerfile b/util/dockerfiles/gcn-gpu/Dockerfile
+index dee02b0..8dd1b1b 100644
+--- a/util/dockerfiles/gcn-gpu/Dockerfile
++++ b/util/dockerfiles/gcn-gpu/Dockerfile
+@@ -105,11 +105,11 @@ RUN apt install rocm-cmake
+ RUN git clone -b rocm-4.0.0 \
+     https://github.com/ROCmSoftwarePlatform/rocBLAS.git && mkdir rocBLAS/build
+ 
+-ENV HCC_AMDGPU_TARGET=gfx801
++ENV HCC_AMDGPU_TARGET=gfx801,gfx803,gfx900,gfx902
+ WORKDIR rocBLAS
+-# rocBLAS needs to be built from source otherwise gfx801 gets an error in HIP
++# rocBLAS needs to be built from source otherwise certain gfx versions get errors in HIP
+ # about there being no GPU binary available
+-RUN ./install.sh -d -a all -i
++RUN ./install.sh -d -i
+ WORKDIR /
+ 
+ # MIOpen dependencies + MIOpen
+-- 
+1.8.3.1
+

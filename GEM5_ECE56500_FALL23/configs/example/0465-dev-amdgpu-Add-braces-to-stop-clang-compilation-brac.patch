@@ -1,0 +1,41 @@
+From ea9b7ef6a20d52d812799c523e6ae4f9622d7072 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 24 Mar 2022 16:03:49 -0700
+Subject: [PATCH 465/757] dev-amdgpu: Add braces to stop clang compilation
+ braces error
+
+Additional braces are needed due to a clang compilation bug that falsely
+throws a "suggest braces around initialization of subject" error. More
+info on this bug is available here:
+https://stackoverflow.com/questions/31555584
+
+Change-Id: Ide5cdd260716ba06f6da4663732e39d18e00af97
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58150
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Matthew Poremba <matthew.poremba@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/pm4_packet_processor.cc | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/dev/amdgpu/pm4_packet_processor.cc b/src/dev/amdgpu/pm4_packet_processor.cc
+index d076944..cfd031b 100644
+--- a/src/dev/amdgpu/pm4_packet_processor.cc
++++ b/src/dev/amdgpu/pm4_packet_processor.cc
+@@ -166,7 +166,12 @@ PM4PacketProcessor::decodeNext(PM4Queue *q)
+             q->id(), q->rptr(), q->wptr());
+ 
+     if (q->rptr() < q->wptr()) {
+-        PM4Header h{0, 0, 0, 0, 0, 0};
++        /* Additional braces here are needed due to a clang compilation bug
++           falsely throwing a "suggest braces around initialization of
++           subject" error. More info on this bug is available here:
++           https://stackoverflow.com/questions/31555584
++         */
++        PM4Header h{{{0, 0, 0, 0, 0, 0}}};
+         auto cb = new DmaVirtCallback<PM4Header>(
+             [ = ] (PM4Header header)
+                 { decodeHeader(q, header); }, h);
+-- 
+1.8.3.1
+

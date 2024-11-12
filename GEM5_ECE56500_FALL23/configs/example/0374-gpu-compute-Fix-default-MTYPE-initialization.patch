@@ -1,0 +1,67 @@
+From 45ad755511f74035375d1d550b1d906b7c0385f8 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 2 Feb 2022 16:52:14 -0600
+Subject: [PATCH 374/757] gpu-compute: Fix default MTYPE initialization
+
+The default MTYPE initialization in the emulated GPU driver is currently
+doing a bitwise AND on an input integer param with other integers
+instead of using a bitmask. Change this to use bitset and test the bit
+positions corresponding to the values in the MTYPE enum that were
+previously being used as an operand for bitwise AND.
+
+This was causing invalid slicc transitions in some benchmarks for
+combinations of request type and mtype that are undefined.
+
+Change-Id: I93fee0eae1fff7141cd14c239c16d1d69925d08d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56367
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/gpu_compute_driver.cc | 10 +++++++---
+ src/gpu-compute/gpu_compute_driver.hh |  3 ++-
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/src/gpu-compute/gpu_compute_driver.cc b/src/gpu-compute/gpu_compute_driver.cc
+index d98f4c6..ca870aa 100644
+--- a/src/gpu-compute/gpu_compute_driver.cc
++++ b/src/gpu-compute/gpu_compute_driver.cc
+@@ -67,14 +67,18 @@ GPUComputeDriver::GPUComputeDriver(const Params &p)
+ 
+     // Convert the 3 bit mtype specified in Shader.py to the proper type
+     // used for requests.
+-    if (MtypeFlags::SHARED & p.m_type)
++    std::bitset<MtypeFlags::NUM_MTYPE_BITS> mtype(p.m_type);
++    if (mtype.test(MtypeFlags::SHARED)) {
+         defaultMtype.set(Request::SHARED);
++    }
+ 
+-    if (MtypeFlags::READ_WRITE & p.m_type)
++    if (mtype.test(MtypeFlags::READ_WRITE)) {
+         defaultMtype.set(Request::READ_WRITE);
++    }
+ 
+-    if (MtypeFlags::CACHED & p.m_type)
++    if (mtype.test(MtypeFlags::CACHED)) {
+         defaultMtype.set(Request::CACHED);
++    }
+ }
+ 
+ const char*
+diff --git a/src/gpu-compute/gpu_compute_driver.hh b/src/gpu-compute/gpu_compute_driver.hh
+index 868ad1c..def40f4 100644
+--- a/src/gpu-compute/gpu_compute_driver.hh
++++ b/src/gpu-compute/gpu_compute_driver.hh
+@@ -168,7 +168,8 @@ class GPUComputeDriver final : public EmulatedDriver
+     {
+         SHARED                  = 0,
+         READ_WRITE              = 1,
+-        CACHED                  = 2
++        CACHED                  = 2,
++        NUM_MTYPE_BITS
+     };
+ 
+     Request::CacheCoherenceFlags defaultMtype;
+-- 
+1.8.3.1
+

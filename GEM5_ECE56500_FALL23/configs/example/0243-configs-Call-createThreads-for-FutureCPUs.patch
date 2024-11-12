@@ -1,0 +1,38 @@
+From c71058cfa5ee14df2ed0e6ebc4346a872ec75eaa Mon Sep 17 00:00:00 2001
+From: Zhengrong Wang <seanyukigeek@gmail.com>
+Date: Mon, 14 Feb 2022 22:27:09 +0000
+Subject: [PATCH 243/757] configs: Call createThreads() for FutureCPUs.
+
+When using fast forwarding, createThreads() is not
+called upon FutureCPUs. This causes segment fault
+as the decoder is initialized in createThreads() and
+needed when instantiating CPUs.
+
+This commit basically fixes this by invoking
+createThreads() on FutureCPUs after they are created.
+
+Change-Id: I812d18f06878f9fc3fa2183a2c8a64d316413398
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56812
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Luming Wang <wlm199558@126.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/Simulation.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configs/common/Simulation.py b/configs/common/Simulation.py
+index 3b9efc0..2416773 100644
+--- a/configs/common/Simulation.py
++++ b/configs/common/Simulation.py
+@@ -488,6 +488,7 @@ def run(options, root, testsys, cpu_class):
+                     options.indirect_bp_type)
+                 switch_cpus[i].branchPred.indirectBranchPred = \
+                     IndirectBPClass()
++            switch_cpus[i].createThreads()
+ 
+         # If elastic tracing is enabled attach the elastic trace probe
+         # to the switch CPUs
+-- 
+1.8.3.1
+

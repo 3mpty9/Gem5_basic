@@ -1,0 +1,338 @@
+From 0865772b28f5aa1aa887c9edea2a18f92fb393e7 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 20 Jan 2022 09:40:25 +0000
+Subject: [PATCH 192/757] arch-arm, dev-arm: Remove generic BaseGicRegisters
+ interface
+
+The GICv3 register interface is different from the GICv2 one: from
+the presence of redistributor registers up to the system register
+implementation of the cpu-interface
+
+We therefore make the current BaseGicRegisters interface GICv2 specific.
+We will define a different Gic3Registers interface for GICv3 state
+transfer
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I42f15f48cab6e26aaf519e13c2ce70f661801117
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55703
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc |  6 +++--
+ src/arch/arm/kvm/gic.hh |  8 +++----
+ src/dev/arm/base_gic.cc | 55 ---------------------------------------------
+ src/dev/arm/base_gic.hh | 29 ------------------------
+ src/dev/arm/gic_v2.cc   | 59 +++++++++++++++++++++++++++++++++++++++++++++++--
+ src/dev/arm/gic_v2.hh   | 35 ++++++++++++++++++++++++++---
+ 6 files changed, 97 insertions(+), 95 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index f6a57da..100f256 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -292,13 +292,15 @@ MuxingKvmGic::blockIntUpdate() const
+ void
+ MuxingKvmGic::fromGicToKvm()
+ {
+-    copyGicState(static_cast<GicV2*>(this), kernelGic);
++    copyGicState(static_cast<GicV2*>(this),
++                 static_cast<KvmKernelGicV2*>(kernelGic));
+ }
+ 
+ void
+ MuxingKvmGic::fromKvmToGic()
+ {
+-    copyGicState(kernelGic, static_cast<GicV2*>(this));
++    copyGicState(static_cast<KvmKernelGicV2*>(kernelGic),
++                 static_cast<GicV2*>(this));
+ 
+     // the values read for the Interrupt Priority Mask Register (PMR)
+     // have been shifted by three bits due to its having been emulated by
+diff --git a/src/arch/arm/kvm/gic.hh b/src/arch/arm/kvm/gic.hh
+index 5201f58..af52079 100644
+--- a/src/arch/arm/kvm/gic.hh
++++ b/src/arch/arm/kvm/gic.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2015-2017, 2021 Arm Limited
++ * Copyright (c) 2015-2017, 2021-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -54,7 +54,7 @@ namespace gem5
+  * model. It exposes an API that is similar to that of
+  * software-emulated GIC models in gem5.
+  */
+-class KvmKernelGic : public BaseGicRegisters
++class KvmKernelGic
+ {
+   public:
+     /**
+@@ -131,7 +131,7 @@ class KvmKernelGic : public BaseGicRegisters
+     KvmDevice kdev;
+ };
+ 
+-class KvmKernelGicV2 : public KvmKernelGic
++class KvmKernelGicV2 : public KvmKernelGic, public GicV2Registers
+ {
+   public:
+     /**
+@@ -148,7 +148,7 @@ class KvmKernelGicV2 : public KvmKernelGic
+     KvmKernelGicV2(KvmVM &vm, Addr cpu_addr, Addr dist_addr,
+                    unsigned it_lines);
+ 
+-  public: // BaseGicRegisters
++  public: // GicV2Registers
+     uint32_t readDistributor(ContextID ctx, Addr daddr) override;
+     uint32_t readCpu(ContextID ctx, Addr daddr) override;
+ 
+diff --git a/src/dev/arm/base_gic.cc b/src/dev/arm/base_gic.cc
+index c738c71..5694c37 100644
+--- a/src/dev/arm/base_gic.cc
++++ b/src/dev/arm/base_gic.cc
+@@ -80,61 +80,6 @@ BaseGic::params() const
+     return dynamic_cast<const Params &>(_params);
+ }
+ 
+-void
+-BaseGicRegisters::copyDistRegister(BaseGicRegisters* from,
+-                                   BaseGicRegisters* to,
+-                                   ContextID ctx, Addr daddr)
+-{
+-    auto val = from->readDistributor(ctx, daddr);
+-    DPRINTF(GIC, "copy dist 0x%x 0x%08x\n", daddr, val);
+-    to->writeDistributor(ctx, daddr, val);
+-}
+-
+-void
+-BaseGicRegisters::copyCpuRegister(BaseGicRegisters* from,
+-                                  BaseGicRegisters* to,
+-                                  ContextID ctx, Addr daddr)
+-{
+-    auto val = from->readCpu(ctx, daddr);
+-    DPRINTF(GIC, "copy cpu  0x%x 0x%08x\n", daddr, val);
+-    to->writeCpu(ctx, daddr, val);
+-}
+-
+-void
+-BaseGicRegisters::copyBankedDistRange(System *sys, BaseGicRegisters* from,
+-                                      BaseGicRegisters* to,
+-                                      Addr daddr, size_t size)
+-{
+-    for (int ctx = 0; ctx < sys->threads.size(); ++ctx)
+-        for (auto a = daddr; a < daddr + size; a += 4)
+-            copyDistRegister(from, to, ctx, a);
+-}
+-
+-void
+-BaseGicRegisters::clearBankedDistRange(System *sys, BaseGicRegisters* to,
+-                                       Addr daddr, size_t size)
+-{
+-    for (int ctx = 0; ctx < sys->threads.size(); ++ctx)
+-        for (auto a = daddr; a < daddr + size; a += 4)
+-            to->writeDistributor(ctx, a, 0xFFFFFFFF);
+-}
+-
+-void
+-BaseGicRegisters::copyDistRange(BaseGicRegisters* from,
+-                                BaseGicRegisters* to,
+-                                Addr daddr, size_t size)
+-{
+-    for (auto a = daddr; a < daddr + size; a += 4)
+-        copyDistRegister(from, to, 0, a);
+-}
+-
+-void
+-BaseGicRegisters::clearDistRange(BaseGicRegisters* to, Addr daddr, size_t size)
+-{
+-    for (auto a = daddr; a < daddr + size; a += 4)
+-        to->writeDistributor(0, a, 0xFFFFFFFF);
+-}
+-
+ ArmInterruptPinGen::ArmInterruptPinGen(const ArmInterruptPinParams &p)
+   : SimObject(p)
+ {
+diff --git a/src/dev/arm/base_gic.hh b/src/dev/arm/base_gic.hh
+index 7dcb95b..1ab8c2a 100644
+--- a/src/dev/arm/base_gic.hh
++++ b/src/dev/arm/base_gic.hh
+@@ -134,35 +134,6 @@ class BaseGic :  public PioDevice
+     Platform *platform;
+ };
+ 
+-class BaseGicRegisters
+-{
+-  public:
+-    virtual uint32_t readDistributor(ContextID ctx, Addr daddr) = 0;
+-    virtual uint32_t readCpu(ContextID ctx, Addr daddr) = 0;
+-
+-    virtual void writeDistributor(ContextID ctx, Addr daddr,
+-                                  uint32_t data) = 0;
+-    virtual void writeCpu(ContextID ctx, Addr daddr, uint32_t data) = 0;
+-
+-  protected:
+-    static void copyDistRegister(BaseGicRegisters* from,
+-                                 BaseGicRegisters* to,
+-                                 ContextID ctx, Addr daddr);
+-    static void copyCpuRegister(BaseGicRegisters* from,
+-                                BaseGicRegisters* to,
+-                                ContextID ctx, Addr daddr);
+-    static void copyBankedDistRange(System *sys,
+-                                    BaseGicRegisters* from,
+-                                    BaseGicRegisters* to,
+-                                    Addr daddr, size_t size);
+-    static void clearBankedDistRange(System *sys, BaseGicRegisters* to,
+-                                     Addr daddr, size_t size);
+-    static void copyDistRange(BaseGicRegisters* from,
+-                              BaseGicRegisters* to,
+-                              Addr daddr, size_t size);
+-    static void clearDistRange(BaseGicRegisters* to, Addr daddr, size_t size);
+-};
+-
+ /**
+  * This SimObject is instantiated in the python world and
+  * serves as an ArmInterruptPin generator. In this way it
+diff --git a/src/dev/arm/gic_v2.cc b/src/dev/arm/gic_v2.cc
+index 0a87275..7dc001e 100644
+--- a/src/dev/arm/gic_v2.cc
++++ b/src/dev/arm/gic_v2.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010, 2013, 2015-2018, 2020-2021 Arm Limited
++ * Copyright (c) 2010, 2013, 2015-2018, 2020-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -64,6 +64,61 @@ const AddrRange GicV2::GICD_IPRIORITYR(0x400, 0x800);
+ const AddrRange GicV2::GICD_ITARGETSR (0x800, 0xc00);
+ const AddrRange GicV2::GICD_ICFGR     (0xc00, 0xd00);
+ 
++void
++GicV2Registers::copyDistRegister(GicV2Registers* from,
++                                 GicV2Registers* to,
++                                 ContextID ctx, Addr daddr)
++{
++    auto val = from->readDistributor(ctx, daddr);
++    DPRINTF(GIC, "copy dist 0x%x 0x%08x\n", daddr, val);
++    to->writeDistributor(ctx, daddr, val);
++}
++
++void
++GicV2Registers::copyCpuRegister(GicV2Registers* from,
++                                GicV2Registers* to,
++                                ContextID ctx, Addr daddr)
++{
++    auto val = from->readCpu(ctx, daddr);
++    DPRINTF(GIC, "copy cpu  0x%x 0x%08x\n", daddr, val);
++    to->writeCpu(ctx, daddr, val);
++}
++
++void
++GicV2Registers::copyBankedDistRange(System *sys, GicV2Registers* from,
++                                    GicV2Registers* to,
++                                    Addr daddr, size_t size)
++{
++    for (int ctx = 0; ctx < sys->threads.size(); ++ctx)
++        for (auto a = daddr; a < daddr + size; a += 4)
++            copyDistRegister(from, to, ctx, a);
++}
++
++void
++GicV2Registers::clearBankedDistRange(System *sys, GicV2Registers* to,
++                                     Addr daddr, size_t size)
++{
++    for (int ctx = 0; ctx < sys->threads.size(); ++ctx)
++        for (auto a = daddr; a < daddr + size; a += 4)
++            to->writeDistributor(ctx, a, 0xFFFFFFFF);
++}
++
++void
++GicV2Registers::copyDistRange(GicV2Registers* from,
++                              GicV2Registers* to,
++                              Addr daddr, size_t size)
++{
++    for (auto a = daddr; a < daddr + size; a += 4)
++        copyDistRegister(from, to, 0, a);
++}
++
++void
++GicV2Registers::clearDistRange(GicV2Registers* to, Addr daddr, size_t size)
++{
++    for (auto a = daddr; a < daddr + size; a += 4)
++        to->writeDistributor(0, a, 0xFFFFFFFF);
++}
++
+ GicV2::GicV2(const Params &p)
+     : BaseGic(p),
+       gicdPIDR(p.gicd_pidr),
+@@ -998,7 +1053,7 @@ GicV2::drainResume()
+ }
+ 
+ void
+-GicV2::copyGicState(BaseGicRegisters* from, BaseGicRegisters* to)
++GicV2::copyGicState(GicV2Registers* from, GicV2Registers* to)
+ {
+     Addr set, clear;
+     size_t size;
+diff --git a/src/dev/arm/gic_v2.hh b/src/dev/arm/gic_v2.hh
+index 5562419..a0eec93 100644
+--- a/src/dev/arm/gic_v2.hh
++++ b/src/dev/arm/gic_v2.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2010, 2013, 2015-2021 Arm Limited
++ * Copyright (c) 2010, 2013, 2015-2022 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -59,7 +59,36 @@
+ namespace gem5
+ {
+ 
+-class GicV2 : public BaseGic, public BaseGicRegisters
++class GicV2Registers
++{
++  public:
++    virtual uint32_t readDistributor(ContextID ctx, Addr daddr) = 0;
++    virtual uint32_t readCpu(ContextID ctx, Addr daddr) = 0;
++
++    virtual void writeDistributor(ContextID ctx, Addr daddr,
++                                  uint32_t data) = 0;
++    virtual void writeCpu(ContextID ctx, Addr daddr, uint32_t data) = 0;
++
++  protected:
++    static void copyDistRegister(GicV2Registers* from,
++                                 GicV2Registers* to,
++                                 ContextID ctx, Addr daddr);
++    static void copyCpuRegister(GicV2Registers* from,
++                                GicV2Registers* to,
++                                ContextID ctx, Addr daddr);
++    static void copyBankedDistRange(System *sys,
++                                    GicV2Registers* from,
++                                    GicV2Registers* to,
++                                    Addr daddr, size_t size);
++    static void clearBankedDistRange(System *sys, GicV2Registers* to,
++                                     Addr daddr, size_t size);
++    static void copyDistRange(GicV2Registers* from,
++                              GicV2Registers* to,
++                              Addr daddr, size_t size);
++    static void clearDistRange(GicV2Registers* to, Addr daddr, size_t size);
++};
++
++class GicV2 : public BaseGic, public GicV2Registers
+ {
+   protected:
+     // distributor memory addresses
+@@ -513,7 +542,7 @@ class GicV2 : public BaseGic, public BaseGicRegisters
+     bool supportsVersion(GicVersion version) override;
+ 
+   protected: /** GIC state transfer */
+-    void copyGicState(BaseGicRegisters* from, BaseGicRegisters* to);
++    void copyGicState(GicV2Registers* from, GicV2Registers* to);
+ 
+     /** Handle a read to the distributor portion of the GIC
+      * @param pkt packet to respond to
+-- 
+1.8.3.1
+

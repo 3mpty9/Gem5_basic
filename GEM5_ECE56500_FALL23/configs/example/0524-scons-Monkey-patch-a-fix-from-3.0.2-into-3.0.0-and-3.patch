@@ -1,0 +1,41 @@
+From c2c9ddaf74c1cec3737aea93c4a05dd13434ecfe Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 5 Apr 2022 18:53:02 -0700
+Subject: [PATCH 524/757] scons: Monkey patch a fix from 3.0.2 into 3.0.0 and
+ 3.0.1.
+
+Ensure that SCons.Subst.Literal can be hashed.
+
+https: //pairlist2.pair.net/pipermail/scons-dev/2018-October/004766.html
+Change-Id: I5221b63a5fd63189eb690c77e780805dc6d68125
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58633
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/SConstruct b/SConstruct
+index b170cf4..cf130c1 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -94,6 +94,14 @@ import SCons.Node
+ import SCons.Node.FS
+ import SCons.Tool
+ 
++if getattr(SCons, '__version__', None) in ('3.0.0', '3.0.1'):
++    # Monkey patch a fix which appears in version 3.0.2, since we only
++    # require version 3.0.0
++    def __hash__(self):
++        return hash(self.lstr)
++    import SCons.Subst
++    SCons.Subst.Literal.__hash__ = __hash__
++
+ 
+ ########################################################################
+ #
+-- 
+1.8.3.1
+

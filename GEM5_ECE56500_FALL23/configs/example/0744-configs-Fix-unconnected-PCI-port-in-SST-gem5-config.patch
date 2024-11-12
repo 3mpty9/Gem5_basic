@@ -1,0 +1,40 @@
+From 12d60fbcd7a09a1364a350211296f98386e9bf13 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Mon, 4 Jul 2022 18:01:28 -0700
+Subject: [PATCH 744/757] configs: Fix unconnected PCI port in SST gem5 config
+
+PCI Host was added to the HiFive platform here,
+https://gem5-review.googlesource.com/c/public/gem5/+/59969
+
+This change connects the PCI host to the membus. However,
+it will not be added to the device tree.
+
+Change-Id: I2c1b1049597e5bfd0be467ef2a514d70bc2dd83e
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60989
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61734
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ configs/example/sst/riscv_fs.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/configs/example/sst/riscv_fs.py b/configs/example/sst/riscv_fs.py
+index bdbd061..b5a6cc6 100644
+--- a/configs/example/sst/riscv_fs.py
++++ b/configs/example/sst/riscv_fs.py
+@@ -93,6 +93,8 @@ def createHiFivePlatform(system):
+ 
+     system.platform = HiFive()
+ 
++    system.platform.pci_host.pio = system.membus.mem_side_ports
++
+     system.platform.rtc = RiscvRTC(frequency=Frequency("100MHz"))
+     system.platform.clint.int_pin = system.platform.rtc.int_pin
+ 
+-- 
+1.8.3.1
+

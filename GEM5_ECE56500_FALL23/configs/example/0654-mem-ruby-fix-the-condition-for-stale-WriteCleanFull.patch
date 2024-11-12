@@ -1,0 +1,36 @@
+From 073dc853f4da03efb42c9462fcb93ab6d378a7a0 Mon Sep 17 00:00:00 2001
+From: Daecheol You <daecheol.you@samsung.com>
+Date: Fri, 11 Mar 2022 12:55:34 +0900
+Subject: [PATCH 654/757] mem-ruby: fix the condition for stale WriteCleanFull
+
+WriteCleanFull can be requested for the cache line in SD state (e.g.
+Local eviction of a cache line in SD_RSC state). In this case, the
+requestor is the owner of the cache line,
+but it doesn't have it with exclusive right.
+Thus, 'ownerIsExcl == false' should be removed from the stale condition.
+
+Change-Id: I4d34021ac31b2e8600c24689a03a3b8fa18aa1f7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58412
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-ports.sm | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+index ecb4e61..8bb76fd 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+@@ -334,7 +334,7 @@ in_port(reqRdyPort, CHIRequestMsg, reqRdy, rank=3,
+           }
+         } else if (in_msg.type == CHIRequestType:WriteCleanFull) {
+           if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
+-              (dir_entry.ownerIsExcl == false) || (dir_entry.owner != in_msg.requestor)) {
++              (dir_entry.owner != in_msg.requestor)) {
+             trigger(Event:WriteCleanFull_Stale, in_msg.addr, cache_entry, tbe);
+           }
+         } else if (in_msg.type == CHIRequestType:Evict) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,51 @@
+From 7a9e99400f39a9924bf7c91f110dd8b1bf864a89 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 29 Apr 2022 16:25:08 +0100
+Subject: [PATCH 608/757] dev-arm: Gicv3.gicv4 parameter set to False by
+ default
+
+GICv4 features are not currently implemented so it is more natural
+to set it to false by default
+
+VExpress_GEM5_V2 platform assumes a GICv4 memory map therefore
+sets it to True
+
+Change-Id: Ib4bd17acd56cd029aacf5578ab0259a6ea1bb30c
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59390
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ src/dev/arm/Gic.py      | 2 +-
+ src/dev/arm/RealView.py | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/dev/arm/Gic.py b/src/dev/arm/Gic.py
+index 953ccb4..ffbdbac 100644
+--- a/src/dev/arm/Gic.py
++++ b/src/dev/arm/Gic.py
+@@ -283,7 +283,7 @@ class Gicv3(BaseGic):
+         "Maximum number of PE. This is affecting the maximum number of "
+         "redistributors")
+ 
+-    gicv4 = Param.Bool(True, "GICv4 extension available")
++    gicv4 = Param.Bool(False, "GIC is GICv4 compatible")
+ 
+     def interruptCells(self, int_type, int_num, int_trigger, partition=None):
+         """
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 7f5132a..2c76bbf 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -1378,6 +1378,7 @@ class VExpress_GEM5_V1_HDLcd(VExpress_GEM5_V1_Base):
+ class VExpress_GEM5_V2_Base(VExpress_GEM5_Base):
+     gic = Gicv3(dist_addr=0x2c000000, redist_addr=0x2c010000,
+                 maint_int=ArmPPI(num=25),
++                gicv4=True,
+                 its=Gicv3Its(pio_addr=0x2e010000))
+ 
+     # Limiting to 128 since it will otherwise overlap with PCI space
+-- 
+1.8.3.1
+

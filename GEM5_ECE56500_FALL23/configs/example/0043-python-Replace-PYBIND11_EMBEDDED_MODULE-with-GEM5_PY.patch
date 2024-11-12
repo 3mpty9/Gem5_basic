@@ -1,0 +1,82 @@
+From ebbfe1d2812486d743f1cc5a4b8d823d63f7a9b2 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 11 Dec 2021 05:51:11 -0800
+Subject: [PATCH 043/757] python: Replace PYBIND11_EMBEDDED_MODULE with
+ GEM5_PYBIND_MODULE_INIT.
+
+That will make it possible for gem5's static intializers to run even if
+the python interpreter has started.
+
+Change-Id: Ic3574c32244e5ac475222f6d305ddc70dd6298d6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54004
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54264
+---
+ src/python/importer.cc | 15 ++++++++++++---
+ src/sim/init.cc        |  6 ++----
+ 2 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/src/python/importer.cc b/src/python/importer.cc
+index 2d10e96..dde86a8 100644
+--- a/src/python/importer.cc
++++ b/src/python/importer.cc
+@@ -25,15 +25,20 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
+-#include "pybind11/embed.h"
++#include "pybind11/eval.h"
+ #include "pybind11/pybind11.h"
+-#include "python/m5ImporterCode.hh"
+ 
+ #include "python/embedded.hh"
++#include "python/m5ImporterCode.hh"
++#include "python/pybind_init.hh"
+ 
+ namespace py = pybind11;
+ 
+-PYBIND11_EMBEDDED_MODULE(importer, m)
++namespace
++{
++
++void
++importerInit(py::module_ &m)
+ {
+     m.def("_init_all_embedded", gem5::EmbeddedPython::initAll);
+     py::str importer_code(
+@@ -41,3 +46,7 @@ PYBIND11_EMBEDDED_MODULE(importer, m)
+             gem5::Blobs::m5ImporterCode_len);
+     py::exec(std::move(importer_code), m.attr("__dict__"));
+ }
++
++GEM5_PYBIND_MODULE_INIT(importer, importerInit)
++
++} // anonymous namespace
+diff --git a/src/sim/init.cc b/src/sim/init.cc
+index 8c0d1aa..d594b08 100644
+--- a/src/sim/init.cc
++++ b/src/sim/init.cc
+@@ -48,6 +48,7 @@
+ 
+ #include "base/cprintf.hh"
+ #include "python/pybind11/pybind.hh"
++#include "python/pybind_init.hh"
+ 
+ namespace py = pybind11;
+ 
+@@ -126,9 +127,6 @@ EmbeddedPyBind::initAll(py::module_ &_m5)
+     }
+ }
+ 
+-PYBIND11_EMBEDDED_MODULE(_m5, _m5)
+-{
+-    EmbeddedPyBind::initAll(_m5);
+-}
++GEM5_PYBIND_MODULE_INIT(_m5, EmbeddedPyBind::initAll)
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

@@ -1,0 +1,210 @@
+From 72255064d691bcdad953b3cc9eee1e3f8c5946db Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 8 Apr 2022 18:26:48 +0800
+Subject: [PATCH 558/757] fastmodel: Export more CortexR52 reset pin
+
+Change-Id: I20f34ae2061e886b35fe9439dbb8e25ce3571e4f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58811
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py |  2 ++
+ src/arch/arm/fastmodel/CortexR52/cortex_r52.cc         |  3 ++-
+ src/arch/arm/fastmodel/CortexR52/evs.cc                |  8 ++++++--
+ src/arch/arm/fastmodel/CortexR52/evs.hh                | 10 ++++++----
+ src/arch/arm/fastmodel/CortexR52/x1/x1.lisa            |  4 ++++
+ src/arch/arm/fastmodel/CortexR52/x2/x2.lisa            |  4 ++++
+ src/arch/arm/fastmodel/CortexR52/x3/x3.lisa            |  4 ++++
+ src/arch/arm/fastmodel/CortexR52/x4/x4.lisa            |  4 ++++
+ 8 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py b/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
+index 710584d..615935e 100644
+--- a/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
++++ b/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
+@@ -114,6 +114,8 @@ class FastModelCortexR52Cluster(SimObject):
+ 
+     ext_slave = AmbaTargetSocket(64, 'AMBA target socket')
+     top_reset = IntSinkPin('This signal resets timer and interrupt controller.')
++    dbg_reset = IntSinkPin('Initialize the shared debug APB, Cross Trigger ' \
++            'Interface (CTI), and Cross Trigger Matrix (CTM) logic.')
+ 
+     CLUSTER_ID = Param.UInt16(0, "CLUSTER_ID[15:8] equivalent to " \
+             "CFGMPIDRAFF2, CLUSTER_ID[7:0] equivalent to CFGMPIDRAFF1")
+diff --git a/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc b/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
+index 85a4c2a..2b92b2a 100644
+--- a/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
++++ b/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
+@@ -158,7 +158,8 @@ CortexR52Cluster::getPort(const std::string &if_name, PortID idx)
+ {
+     if (if_name == "spi") {
+         return evs->gem5_getPort(if_name, idx);
+-    } else if (if_name == "ext_slave" || if_name == "top_reset") {
++    } else if (if_name == "ext_slave" || if_name == "top_reset" ||
++               if_name == "dbg_reset") {
+         assert(idx == InvalidPortID);
+         return evs->gem5_getPort(if_name, idx);
+     } else {
+diff --git a/src/arch/arm/fastmodel/CortexR52/evs.cc b/src/arch/arm/fastmodel/CortexR52/evs.cc
+index 720f1cc..f9f1583 100644
+--- a/src/arch/arm/fastmodel/CortexR52/evs.cc
++++ b/src/arch/arm/fastmodel/CortexR52/evs.cc
+@@ -96,9 +96,10 @@ template <class Types>
+ ScxEvsCortexR52<Types>::ScxEvsCortexR52(
+         const sc_core::sc_module_name &mod_name, const Params &p) :
+     Base(mod_name),
+-    params(p),
+     ext_slave(Base::ext_slave, p.name + ".ext_slave", -1),
+-    top_reset(p.name + ".top_reset", 0)
++    top_reset(p.name + ".top_reset", 0),
++    dbg_reset(p.name + ".dbg_reset", 0),
++    params(p)
+ {
+     for (int i = 0; i < CoreCount; i++)
+         corePins.emplace_back(new CorePins(this, i));
+@@ -109,6 +110,7 @@ ScxEvsCortexR52<Types>::ScxEvsCortexR52(
+     }
+ 
+     top_reset.signal_out.bind(Base::top_reset);
++    dbg_reset.signal_out.bind(Base::dbg_reset);
+ 
+     clockRateControl.bind(this->clock_rate_s);
+     signalInterrupt.bind(this->signal_interrupt);
+@@ -144,6 +146,8 @@ ScxEvsCortexR52<Types>::gem5_getPort(const std::string &if_name, int idx)
+         return this->ext_slave;
+     } else if (if_name == "top_reset") {
+         return this->top_reset;
++    } else if (if_name == "dbg_reset") {
++        return this->dbg_reset;
+     } else if (if_name == "spi") {
+         return *this->spis.at(idx);
+     } else if (if_name.substr(0, 3) == "ppi") {
+diff --git a/src/arch/arm/fastmodel/CortexR52/evs.hh b/src/arch/arm/fastmodel/CortexR52/evs.hh
+index fa9d7fe..eee44c7 100644
+--- a/src/arch/arm/fastmodel/CortexR52/evs.hh
++++ b/src/arch/arm/fastmodel/CortexR52/evs.hh
+@@ -119,14 +119,16 @@ class ScxEvsCortexR52 : public Types::Base, public Iris::BaseCpuEvs
+ 
+     std::vector<std::unique_ptr<ClstrInt>> spis;
+ 
+-    CortexR52Cluster *gem5CpuCluster;
+-
+-    const Params &params;
+-
+     AmbaTarget ext_slave;
+ 
+     SignalSender top_reset;
+ 
++    SignalSender dbg_reset;
++
++    CortexR52Cluster *gem5CpuCluster;
++
++    const Params &params;
++
+   public:
+     ScxEvsCortexR52(const Params &p) : ScxEvsCortexR52(p.name.c_str(), p) {}
+     ScxEvsCortexR52(const sc_core::sc_module_name &mod_name, const Params &p);
+diff --git a/src/arch/arm/fastmodel/CortexR52/x1/x1.lisa b/src/arch/arm/fastmodel/CortexR52/x1/x1.lisa
+index 36f3279..2a7299d 100644
+--- a/src/arch/arm/fastmodel/CortexR52/x1/x1.lisa
++++ b/src/arch/arm/fastmodel/CortexR52/x1/x1.lisa
+@@ -45,9 +45,12 @@ component CortexR52x1
+         core.flash_m => self.flash;
+         core.pvbus_core_m => self.amba;
+         self.ext_slave => core.ext_slave_s;
++
++        // Reset signals.
+         self.core_reset => core.reset;
+         self.poweron_reset => core.cpuporeset;
+         self.top_reset => core.topreset;
++        self.dbg_reset => core.presetdbg;
+         self.halt => core.cpuhalt;
+ 
+         // Clocks.
+@@ -77,6 +80,7 @@ component CortexR52x1
+     slave port<Signal> poweron_reset[1];
+     slave port<Signal> halt[1];
+     slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+     slave port<Value_64> cfgvectable[1];
+ 
+     slave port<ExportedClockRateControl> clock_rate_s
+diff --git a/src/arch/arm/fastmodel/CortexR52/x2/x2.lisa b/src/arch/arm/fastmodel/CortexR52/x2/x2.lisa
+index 492d289..9100a5b 100644
+--- a/src/arch/arm/fastmodel/CortexR52/x2/x2.lisa
++++ b/src/arch/arm/fastmodel/CortexR52/x2/x2.lisa
+@@ -45,9 +45,12 @@ component CortexR52x2
+         core.flash_m => self.flash;
+         core.pvbus_core_m => self.amba;
+         self.ext_slave => core.ext_slave_s;
++
++        // Reset signals.
+         self.core_reset => core.reset;
+         self.poweron_reset => core.cpuporeset;
+         self.top_reset => core.topreset;
++        self.dbg_reset => core.presetdbg;
+         self.halt => core.cpuhalt;
+ 
+         // Clocks.
+@@ -78,6 +81,7 @@ component CortexR52x2
+     slave port<Signal> poweron_reset[2];
+     slave port<Signal> halt[2];
+     slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+     slave port<Value_64> cfgvectable[2];
+ 
+     slave port<ExportedClockRateControl> clock_rate_s
+diff --git a/src/arch/arm/fastmodel/CortexR52/x3/x3.lisa b/src/arch/arm/fastmodel/CortexR52/x3/x3.lisa
+index ed4837c..bb8d153 100644
+--- a/src/arch/arm/fastmodel/CortexR52/x3/x3.lisa
++++ b/src/arch/arm/fastmodel/CortexR52/x3/x3.lisa
+@@ -45,9 +45,12 @@ component CortexR52x3
+         core.flash_m => self.flash;
+         core.pvbus_core_m => self.amba;
+         self.ext_slave => core.ext_slave_s;
++
++        // Reset signals.
+         self.core_reset => core.reset;
+         self.poweron_reset => core.cpuporeset;
+         self.top_reset => core.topreset;
++        self.dbg_reset => core.presetdbg;
+         self.halt => core.cpuhalt;
+ 
+         // Clocks.
+@@ -79,6 +82,7 @@ component CortexR52x3
+     slave port<Signal> poweron_reset[3];
+     slave port<Signal> halt[3];
+     slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+     slave port<Value_64> cfgvectable[3];
+ 
+     slave port<ExportedClockRateControl> clock_rate_s
+diff --git a/src/arch/arm/fastmodel/CortexR52/x4/x4.lisa b/src/arch/arm/fastmodel/CortexR52/x4/x4.lisa
+index 73680b1..5b278dd 100644
+--- a/src/arch/arm/fastmodel/CortexR52/x4/x4.lisa
++++ b/src/arch/arm/fastmodel/CortexR52/x4/x4.lisa
+@@ -45,9 +45,12 @@ component CortexR52x4
+         core.flash_m => self.flash;
+         core.pvbus_core_m => self.amba;
+         self.ext_slave => core.ext_slave_s;
++
++        // Reset signals.
+         self.core_reset => core.reset;
+         self.poweron_reset => core.cpuporeset;
+         self.top_reset => core.topreset;
++        self.dbg_reset => core.presetdbg;
+         self.halt => core.cpuhalt;
+ 
+         // Clocks.
+@@ -80,6 +83,7 @@ component CortexR52x4
+     slave port<Signal> poweron_reset[4];
+     slave port<Signal> halt[4];
+     slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+     slave port<Value_64> cfgvectable[4];
+ 
+     slave port<ExportedClockRateControl> clock_rate_s
+-- 
+1.8.3.1
+

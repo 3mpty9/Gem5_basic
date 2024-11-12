@@ -1,0 +1,153 @@
+From 3fba052f3f7a2e45e52ddd361b1d0de5fd9057e3 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 15 Dec 2021 08:51:53 +0000
+Subject: [PATCH 047/757] configs: Remove unused WalkCache models
+
+Change-Id: Iebda966e72b484ee15cbc7cd62256a950b2a90f1
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54244
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/cores/arm/HPI.py        | 12 +-----------
+ configs/common/cores/arm/O3_ARM_v7a.py | 15 ---------------
+ configs/common/cores/arm/ex5_LITTLE.py | 15 ---------------
+ configs/common/cores/arm/ex5_big.py    | 15 ---------------
+ configs/example/arm/devices.py         | 11 -----------
+ 5 files changed, 1 insertion(+), 67 deletions(-)
+
+diff --git a/configs/common/cores/arm/HPI.py b/configs/common/cores/arm/HPI.py
+index 624c40c..620c01e 100644
+--- a/configs/common/cores/arm/HPI.py
++++ b/configs/common/cores/arm/HPI.py
+@@ -1332,16 +1332,6 @@ class HPI_MMU(ArmMMU):
+     itb = ArmTLB(entry_type="instruction", size=256)
+     dtb = ArmTLB(entry_type="data", size=256)
+ 
+-class HPI_WalkCache(Cache):
+-    data_latency = 4
+-    tag_latency = 4
+-    response_latency = 4
+-    mshrs = 6
+-    tgts_per_mshr = 8
+-    size = '1kB'
+-    assoc = 8
+-    write_buffers = 16
+-
+ class HPI_BP(TournamentBP):
+     localPredictorSize = 64
+     localCtrBits = 2
+@@ -1442,7 +1432,7 @@ class HPI(MinorCPU):
+ 
+ __all__ = [
+     "HPI_BP",
+-    "HPI_ITB", "HPI_DTB", "HPI_WalkCache",
++    "HPI_ITB", "HPI_DTB",
+     "HPI_ICache", "HPI_DCache", "HPI_L2",
+     "HPI",
+ ]
+diff --git a/configs/common/cores/arm/O3_ARM_v7a.py b/configs/common/cores/arm/O3_ARM_v7a.py
+index a402e5f..8cacc65 100644
+--- a/configs/common/cores/arm/O3_ARM_v7a.py
++++ b/configs/common/cores/arm/O3_ARM_v7a.py
+@@ -169,21 +169,6 @@ class O3_ARM_v7a_DCache(Cache):
+     # Consider the L2 a victim cache also for clean lines
+     writeback_clean = True
+ 
+-# TLB Cache
+-# Use a cache as a L2 TLB
+-class O3_ARM_v7aWalkCache(Cache):
+-    tag_latency = 4
+-    data_latency = 4
+-    response_latency = 4
+-    mshrs = 6
+-    tgts_per_mshr = 8
+-    size = '1kB'
+-    assoc = 8
+-    write_buffers = 16
+-    is_read_only = True
+-    # Writeback clean lines as well
+-    writeback_clean = True
+-
+ # L2 Cache
+ class O3_ARM_v7aL2(Cache):
+     tag_latency = 12
+diff --git a/configs/common/cores/arm/ex5_LITTLE.py b/configs/common/cores/arm/ex5_LITTLE.py
+index b3f1ad5..bcbaa92 100644
+--- a/configs/common/cores/arm/ex5_LITTLE.py
++++ b/configs/common/cores/arm/ex5_LITTLE.py
+@@ -112,21 +112,6 @@ class L1D(L1Cache):
+     assoc = 4
+     write_buffers = 4
+ 
+-# TLB Cache
+-# Use a cache as a L2 TLB
+-class WalkCache(Cache):
+-    tag_latency = 2
+-    data_latency = 2
+-    response_latency = 2
+-    mshrs = 6
+-    tgts_per_mshr = 8
+-    size = '1kB'
+-    assoc = 2
+-    write_buffers = 16
+-    is_read_only = True
+-    # Writeback clean lines as well
+-    writeback_clean = True
+-
+ # L2 Cache
+ class L2(Cache):
+     tag_latency = 9
+diff --git a/configs/common/cores/arm/ex5_big.py b/configs/common/cores/arm/ex5_big.py
+index c734c62..eb5f53f 100644
+--- a/configs/common/cores/arm/ex5_big.py
++++ b/configs/common/cores/arm/ex5_big.py
+@@ -164,21 +164,6 @@ class L1D(L1Cache):
+     assoc = 2
+     write_buffers = 16
+ 
+-# TLB Cache
+-# Use a cache as a L2 TLB
+-class WalkCache(Cache):
+-    tag_latency = 4
+-    data_latency = 4
+-    response_latency = 4
+-    mshrs = 6
+-    tgts_per_mshr = 8
+-    size = '1kB'
+-    assoc = 8
+-    write_buffers = 16
+-    is_read_only = True
+-    # Writeback clean lines as well
+-    writeback_clean = True
+-
+ # L2 Cache
+ class L2(Cache):
+     tag_latency = 15
+diff --git a/configs/example/arm/devices.py b/configs/example/arm/devices.py
+index 5217b08..9122e7c 100644
+--- a/configs/example/arm/devices.py
++++ b/configs/example/arm/devices.py
+@@ -65,17 +65,6 @@ class L1D(L1_DCache):
+     write_buffers = 16
+ 
+ 
+-class WalkCache(PageTableWalkerCache):
+-    tag_latency = 4
+-    data_latency = 4
+-    response_latency = 4
+-    mshrs = 6
+-    tgts_per_mshr = 8
+-    size = '1kB'
+-    assoc = 8
+-    write_buffers = 16
+-
+-
+ class L2(L2Cache):
+     tag_latency = 12
+     data_latency = 12
+-- 
+1.8.3.1
+

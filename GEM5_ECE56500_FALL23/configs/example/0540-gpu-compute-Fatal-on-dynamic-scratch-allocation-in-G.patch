@@ -1,0 +1,46 @@
+From 8fe975e57ea68450d273c3ec34a98e8f6b7e8fc0 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 31 Mar 2022 11:07:54 -0700
+Subject: [PATCH 540/757] gpu-compute: Fatal on dynamic scratch allocation in
+ GPUFS
+
+This is known not working in GPUFS. As a result, the simulation will
+never end. Rather than simulate forever, add a fatal for now to exit
+simulation until support for this functionality is added.
+
+Change-Id: I8e45996a7eb781575e8643baea05daf87bc5f1c3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58472
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/gpu_command_processor.hh | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/gpu-compute/gpu_command_processor.hh b/src/gpu-compute/gpu_command_processor.hh
+index ec163ed..ba8b007 100644
+--- a/src/gpu-compute/gpu_command_processor.hh
++++ b/src/gpu-compute/gpu_command_processor.hh
+@@ -57,6 +57,7 @@
+ #include "gpu-compute/gpu_compute_driver.hh"
+ #include "gpu-compute/hsa_queue_entry.hh"
+ #include "params/GPUCommandProcessor.hh"
++#include "sim/full_system.hh"
+ 
+ namespace gem5
+ {
+@@ -219,6 +220,10 @@ class GPUCommandProcessor : public DmaVirtDevice
+                     task->amdQueue.compute_tmpring_size_wavesize * 1024,
+                     task->privMemPerItem());
+ 
++            // Currently this is not supported in GPU full system
++            fatal_if(FullSystem,
++                     "Runtime dynamic scratch allocation not supported");
++
+             updateHsaSignal(task->amdQueue.queue_inactive_signal.handle, 1,
+                             [ = ] (const uint64_t &dma_buffer)
+                                 { WaitScratchDmaEvent(task, dma_buffer); });
+-- 
+1.8.3.1
+

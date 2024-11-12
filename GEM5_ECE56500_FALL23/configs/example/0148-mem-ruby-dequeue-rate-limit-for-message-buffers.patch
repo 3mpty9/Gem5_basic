@@ -1,0 +1,124 @@
+From 87cdf354be43df39b8f5c4039b1169a6efcf1583 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 22 Jul 2020 19:20:08 -0500
+Subject: [PATCH 148/757] mem-ruby: dequeue rate limit for message buffers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The 'max_dequeue_rate' parameter limits the rate at which messages can
+be dequeued in a single cycle. When set, 'isReady' returns false if
+after max_dequeue_rate is reached.
+
+This can be used to fine tune the performance of cache controllers.
+
+For the record, other ways of achieving a similar effect could be:
+1) Modifying the SLICC compiler to limit message consumption in the
+   generated wakeup() function
+2) Set the buffer size to max_dequeue_rate. This can potentially cut the
+   the expected throughput in half. For instance if a producer can
+   enqueue every cycle, and a consumer can dequeue every cycle, a
+   message can only be actually enqueued every two (assuming
+   buffer_size=1) since the buffer entries available after dequeue
+   are only visible in the next cycle (even if the consumer executes
+   before the producer).
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I3a446c7276b80a0e3f409b4fbab0ab65ff5c1f81
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41862
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/network/MessageBuffer.cc | 20 ++++++++++++++++----
+ src/mem/ruby/network/MessageBuffer.hh |  8 ++++++++
+ src/mem/ruby/network/MessageBuffer.py |  5 ++++-
+ 3 files changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/ruby/network/MessageBuffer.cc b/src/mem/ruby/network/MessageBuffer.cc
+index 5c0e116..85cc00c 100644
+--- a/src/mem/ruby/network/MessageBuffer.cc
++++ b/src/mem/ruby/network/MessageBuffer.cc
+@@ -58,8 +58,9 @@ namespace ruby
+ using stl_helpers::operator<<;
+ 
+ MessageBuffer::MessageBuffer(const Params &p)
+-    : SimObject(p), m_stall_map_size(0),
+-    m_max_size(p.buffer_size), m_time_last_time_size_checked(0),
++    : SimObject(p), m_stall_map_size(0), m_max_size(p.buffer_size),
++    m_max_dequeue_rate(p.max_dequeue_rate), m_dequeues_this_cy(0),
++    m_time_last_time_size_checked(0),
+     m_time_last_time_enqueue(0), m_time_last_time_pop(0),
+     m_last_arrival_time(0), m_strict_fifo(p.ordered),
+     m_randomization(p.randomization),
+@@ -312,7 +313,9 @@ MessageBuffer::dequeue(Tick current_time, bool decrement_messages)
+         m_size_at_cycle_start = m_prio_heap.size();
+         m_stalled_at_cycle_start = m_stall_map_size;
+         m_time_last_time_pop = current_time;
++        m_dequeues_this_cy = 0;
+     }
++    ++m_dequeues_this_cy;
+ 
+     pop_heap(m_prio_heap.begin(), m_prio_heap.end(), std::greater<MsgPtr>());
+     m_prio_heap.pop_back();
+@@ -507,8 +510,17 @@ MessageBuffer::print(std::ostream& out) const
+ bool
+ MessageBuffer::isReady(Tick current_time) const
+ {
+-    return ((m_prio_heap.size() > 0) &&
+-        (m_prio_heap.front()->getLastEnqueueTime() <= current_time));
++    assert(m_time_last_time_pop <= current_time);
++    bool can_dequeue = (m_max_dequeue_rate == 0) ||
++                       (m_time_last_time_pop < current_time) ||
++                       (m_dequeues_this_cy < m_max_dequeue_rate);
++    bool is_ready = (m_prio_heap.size() > 0) &&
++                   (m_prio_heap.front()->getLastEnqueueTime() <= current_time);
++    if (!can_dequeue && is_ready) {
++        // Make sure the Consumer executes next cycle to dequeue the ready msg
++        m_consumer->scheduleEvent(Cycles(1));
++    }
++    return can_dequeue && is_ready;
+ }
+ 
+ uint32_t
+diff --git a/src/mem/ruby/network/MessageBuffer.hh b/src/mem/ruby/network/MessageBuffer.hh
+index 7a48a1d..fb0ef43 100644
+--- a/src/mem/ruby/network/MessageBuffer.hh
++++ b/src/mem/ruby/network/MessageBuffer.hh
+@@ -240,6 +240,14 @@ class MessageBuffer : public SimObject
+      */
+     const unsigned int m_max_size;
+ 
++    /**
++     * When != 0, isReady returns false once m_max_dequeue_rate
++     * messages have been dequeued in the same cycle.
++     */
++    const unsigned int m_max_dequeue_rate;
++
++    unsigned int m_dequeues_this_cy;
++
+     Tick m_time_last_time_size_checked;
+     unsigned int m_size_last_time_size_checked;
+ 
+diff --git a/src/mem/ruby/network/MessageBuffer.py b/src/mem/ruby/network/MessageBuffer.py
+index b30726e..80dc872 100644
+--- a/src/mem/ruby/network/MessageBuffer.py
++++ b/src/mem/ruby/network/MessageBuffer.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2020 ARM Limited
++# Copyright (c) 2020-2021 ARM Limited
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -67,3 +67,6 @@ class MessageBuffer(SimObject):
+     master = DeprecatedParam(out_port, '`master` is now called `out_port`')
+     in_port = ResponsePort("Response port from MessageBuffer sender")
+     slave = DeprecatedParam(in_port, '`slave` is now called `in_port`')
++    max_dequeue_rate = Param.Unsigned(0, "Maximum number of messages that can \
++                                          be dequeued per cycle \
++                                    (0 allows dequeueing all ready messages)")
+-- 
+1.8.3.1
+

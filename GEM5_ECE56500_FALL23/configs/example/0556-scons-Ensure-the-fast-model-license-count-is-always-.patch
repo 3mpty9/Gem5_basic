@@ -1,0 +1,47 @@
+From 7392cd470ec695d3b0c32259fa3d8410c2b6a4b8 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Fri, 1 Apr 2022 13:33:20 -0700
+Subject: [PATCH 556/757] scons: Ensure the fast model license count is always
+ at least 1.
+
+Even though the default value for the license count is 1, it seems that
+if fast model is disabled, kconfig will set it to 0. When creating a
+cycle using itertools over a list with zero elements, it will raise a
+StopIteration.
+
+Even though we don't actually try to build any fast model components
+in that case, we do still set them up with a license slot. If the
+cycle iterator is essentially broken, that will prevent that from
+working and break the build.
+
+This change forces the license count to be at least 1, even if fast
+model is disabled and the license count may be set to 0 in the config.
+
+Change-Id: Ia8df256a8f292deb6fb6fa3c5f9a7d58c2b7f782
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58490
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index 23ddb84..b8ee987 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -268,7 +268,10 @@ class ProjectFileParser(Grammar):
+         t[0] = t[1]
+ 
+ 
+-license_count = int(env['CONF']['ARMLMD_LICENSE_COUNT'])
++# If fast model is disabled, ARMLMD_LICENSE_COUNT will be 0 which will break
++# the cycle() iterator below. The fast model components won't be built, but
++# they still need to be set up successfully with valid license slots.
++license_count = max(int(env['CONF']['ARMLMD_LICENSE_COUNT']), 1)
+ arm_licenses = list((Value(object()) for i in range(license_count)))
+ license_cycle = cycle(arm_licenses)
+ 
+-- 
+1.8.3.1
+

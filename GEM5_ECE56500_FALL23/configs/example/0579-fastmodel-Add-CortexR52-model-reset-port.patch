@@ -1,0 +1,121 @@
+From 9e4c5537a43d521066a8645957eec3f362e6ae4a Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 8 Apr 2022 18:27:11 +0800
+Subject: [PATCH 579/757] fastmodel: Add CortexR52 model reset port
+
+The model reset is an aggregated logic to reset the whole model. The
+port helps us to simulate the reboot process.
+
+Change-Id: I15101bfe11dee40b63cc29c2befb610beb3d32aa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58813
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../arm/fastmodel/CortexR52/FastModelCortexR52.py     |  2 ++
+ src/arch/arm/fastmodel/CortexR52/cortex_r52.cc        |  2 +-
+ src/arch/arm/fastmodel/CortexR52/evs.cc               |  3 +++
+ src/arch/arm/fastmodel/CortexR52/evs.hh               | 19 +++++++++++++++++++
+ 4 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py b/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
+index 615935e..c9e21e6 100644
+--- a/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
++++ b/src/arch/arm/fastmodel/CortexR52/FastModelCortexR52.py
+@@ -30,6 +30,7 @@ from m5.SimObject import SimObject
+ from m5.objects.ArmInterrupts import ArmInterrupts
+ from m5.objects.ArmISA import ArmISA
+ from m5.objects.FastModel import AmbaInitiatorSocket, AmbaTargetSocket
++from m5.objects.ResetPort import ResetResponsePort
+ from m5.objects.IntPin import IntSinkPin, VectorIntSinkPin
+ from m5.objects.Iris import IrisBaseCPU
+ from m5.objects.SystemC import SystemC_ScModule
+@@ -116,6 +117,7 @@ class FastModelCortexR52Cluster(SimObject):
+     top_reset = IntSinkPin('This signal resets timer and interrupt controller.')
+     dbg_reset = IntSinkPin('Initialize the shared debug APB, Cross Trigger ' \
+             'Interface (CTI), and Cross Trigger Matrix (CTM) logic.')
++    model_reset = ResetResponsePort('A reset port to reset the whole cluster.')
+ 
+     CLUSTER_ID = Param.UInt16(0, "CLUSTER_ID[15:8] equivalent to " \
+             "CFGMPIDRAFF2, CLUSTER_ID[7:0] equivalent to CFGMPIDRAFF1")
+diff --git a/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc b/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
+index 2b92b2a..be83082 100644
+--- a/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
++++ b/src/arch/arm/fastmodel/CortexR52/cortex_r52.cc
+@@ -159,7 +159,7 @@ CortexR52Cluster::getPort(const std::string &if_name, PortID idx)
+     if (if_name == "spi") {
+         return evs->gem5_getPort(if_name, idx);
+     } else if (if_name == "ext_slave" || if_name == "top_reset" ||
+-               if_name == "dbg_reset") {
++               if_name == "dbg_reset" || if_name == "model_reset") {
+         assert(idx == InvalidPortID);
+         return evs->gem5_getPort(if_name, idx);
+     } else {
+diff --git a/src/arch/arm/fastmodel/CortexR52/evs.cc b/src/arch/arm/fastmodel/CortexR52/evs.cc
+index f9f1583..6887c6c 100644
+--- a/src/arch/arm/fastmodel/CortexR52/evs.cc
++++ b/src/arch/arm/fastmodel/CortexR52/evs.cc
+@@ -99,6 +99,7 @@ ScxEvsCortexR52<Types>::ScxEvsCortexR52(
+     ext_slave(Base::ext_slave, p.name + ".ext_slave", -1),
+     top_reset(p.name + ".top_reset", 0),
+     dbg_reset(p.name + ".dbg_reset", 0),
++    model_reset(p.name + ".model_reset", -1, this),
+     params(p)
+ {
+     for (int i = 0; i < CoreCount; i++)
+@@ -148,6 +149,8 @@ ScxEvsCortexR52<Types>::gem5_getPort(const std::string &if_name, int idx)
+         return this->top_reset;
+     } else if (if_name == "dbg_reset") {
+         return this->dbg_reset;
++    } else if (if_name == "model_reset") {
++        return this->model_reset;
+     } else if (if_name == "spi") {
+         return *this->spis.at(idx);
+     } else if (if_name.substr(0, 3) == "ppi") {
+diff --git a/src/arch/arm/fastmodel/CortexR52/evs.hh b/src/arch/arm/fastmodel/CortexR52/evs.hh
+index eee44c7..535d678 100644
+--- a/src/arch/arm/fastmodel/CortexR52/evs.hh
++++ b/src/arch/arm/fastmodel/CortexR52/evs.hh
+@@ -37,6 +37,7 @@
+ #include "arch/arm/fastmodel/protocol/exported_clock_rate_control.hh"
+ #include "arch/arm/fastmodel/protocol/signal_interrupt.hh"
+ #include "dev/intpin.hh"
++#include "dev/reset_port.hh"
+ #include "mem/port_proxy.hh"
+ #include "params/FastModelScxEvsCortexR52x1.hh"
+ #include "params/FastModelScxEvsCortexR52x2.hh"
+@@ -125,6 +126,8 @@ class ScxEvsCortexR52 : public Types::Base, public Iris::BaseCpuEvs
+ 
+     SignalSender dbg_reset;
+ 
++    ResetResponsePort<ScxEvsCortexR52> model_reset;
++
+     CortexR52Cluster *gem5CpuCluster;
+ 
+     const Params &params;
+@@ -145,6 +148,22 @@ class ScxEvsCortexR52 : public Types::Base, public Iris::BaseCpuEvs
+         this->signalInterrupt->spi(num, false);
+     }
+ 
++    void
++    requestReset()
++    {
++        // Reset all cores.
++        for (auto &core_pin : corePins) {
++            core_pin->poweron_reset.signal_out.set_state(0, true);
++            core_pin->poweron_reset.signal_out.set_state(0, false);
++        }
++        // Reset L2 system.
++        this->top_reset.signal_out.set_state(0, true);
++        this->top_reset.signal_out.set_state(0, false);
++        // Reset debug APB.
++        this->dbg_reset.signal_out.set_state(0, true);
++        this->dbg_reset.signal_out.set_state(0, false);
++    }
++
+     Port &gem5_getPort(const std::string &if_name, int idx) override;
+ 
+     void
+-- 
+1.8.3.1
+

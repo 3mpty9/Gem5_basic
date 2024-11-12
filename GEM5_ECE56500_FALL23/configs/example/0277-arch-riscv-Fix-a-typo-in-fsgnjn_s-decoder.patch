@@ -1,0 +1,55 @@
+From 0eff31e5647f4dfbed0add3b97d005ad5b77e462 Mon Sep 17 00:00:00 2001
+From: ksco <numbksco@gmail.com>
+Date: Wed, 23 Feb 2022 21:49:12 +0800
+Subject: [PATCH 277/757] arch-riscv: Fix a typo in fsgnjn_s decoder
+
+Negating the register value before unboxing to float32 will
+generally result in a canonical 32-bit NaN (without the sign
+bit set) so the result was incorrect in many cases.
+
+Change-Id: I0c1bb3aadfca135ab0cc5ba1b58fc83d71fd300c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57069
+Reviewed-by: Alex Richardson <alexrichardson@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Luming Wang <wlm199558@126.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa/decoder.isa | 17 ++++++++++-------
+ 1 file changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index e512e08..c109d96 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -1025,17 +1025,20 @@ decode QUADRANT default Unknown::unknown() {
+                 }}, FloatDivOp);
+                 0x10: decode ROUND_MODE {
+                     0x0: fsgnj_s({{
+-                        Fd_bits = boxF32(insertBits(unboxF32(Fs2_bits), 30, 0,
+-                                                    unboxF32(Fs1_bits)));
++                        auto sign = bits(unboxF32(Fs2_bits), 31);
++                        Fd_bits = boxF32(insertBits(unboxF32(Fs1_bits), 31,
++                                                    sign));
+                         }}, FloatMiscOp);
+                     0x1: fsgnjn_s({{
+-                        Fd_bits = boxF32(insertBits(unboxF32(~Fs2_bits), 30, 0,
+-                                                    unboxF32(Fs1_bits)));
++                        auto sign = ~bits(unboxF32(Fs2_bits), 31);
++                        Fd_bits = boxF32(insertBits(unboxF32(Fs1_bits), 31,
++                                                    sign));
+                         }}, FloatMiscOp);
+                     0x2: fsgnjx_s({{
+-                        Fd_bits = boxF32(insertBits(
+-                                    unboxF32(Fs1_bits) ^ unboxF32(Fs2_bits),
+-                                    30, 0, unboxF32(Fs1_bits)));
++                        auto sign = bits(
++                            unboxF32(Fs1_bits) ^ unboxF32(Fs2_bits), 31);
++                        Fd_bits = boxF32(insertBits(unboxF32(Fs1_bits), 31,
++                                                    sign));
+                         }}, FloatMiscOp);
+                 }
+                 0x11: decode ROUND_MODE {
+-- 
+1.8.3.1
+

@@ -1,0 +1,250 @@
+From 1b0852ed30e39da69e8196434a08d46664adf4d7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 21 Mar 2021 22:12:11 -0700
+Subject: [PATCH 138/757] arch-x86: Bare metal workload.
+
+Change-Id: I9ff6f5a9970cc7af2ba639be18f1881748074777
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/45045
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/SConscript             |  3 +-
+ src/arch/x86/X86FsWorkload.py       |  7 +++-
+ src/arch/x86/bare_metal/SConscript  | 31 ++++++++++++++++
+ src/arch/x86/bare_metal/workload.cc | 71 +++++++++++++++++++++++++++++++++++
+ src/arch/x86/bare_metal/workload.hh | 74 +++++++++++++++++++++++++++++++++++++
+ 5 files changed, 184 insertions(+), 2 deletions(-)
+ create mode 100644 src/arch/x86/bare_metal/SConscript
+ create mode 100644 src/arch/x86/bare_metal/workload.cc
+ create mode 100644 src/arch/x86/bare_metal/workload.hh
+
+diff --git a/src/arch/x86/SConscript b/src/arch/x86/SConscript
+index ad3d698..8c957dd 100644
+--- a/src/arch/x86/SConscript
++++ b/src/arch/x86/SConscript
+@@ -62,7 +62,8 @@ Source('types.cc', tags='x86 isa')
+ Source('utility.cc', tags='x86 isa')
+ 
+ SimObject('X86SeWorkload.py', sim_objects=['X86EmuLinux'], tags='x86 isa')
+-SimObject('X86FsWorkload.py', sim_objects=['X86FsWorkload', 'X86FsLinux'],
++SimObject('X86FsWorkload.py',
++    sim_objects=['X86BareMetalWorkload', 'X86FsWorkload', 'X86FsLinux'],
+     tags='x86 isa')
+ SimObject('X86Decoder.py', sim_objects=['X86Decoder'], tags='x86 isa')
+ SimObject('X86ISA.py', sim_objects=['X86ISA'], tags='x86 isa')
+diff --git a/src/arch/x86/X86FsWorkload.py b/src/arch/x86/X86FsWorkload.py
+index a049203..52dbadf 100644
+--- a/src/arch/x86/X86FsWorkload.py
++++ b/src/arch/x86/X86FsWorkload.py
+@@ -39,7 +39,12 @@ from m5.objects.E820 import X86E820Table, X86E820Entry
+ from m5.objects.SMBios import X86SMBiosSMBiosTable
+ from m5.objects.IntelMP import X86IntelMPFloatingPointer, X86IntelMPConfigTable
+ from m5.objects.ACPI import X86ACPIRSDP
+-from m5.objects.Workload import KernelWorkload
++from m5.objects.Workload import KernelWorkload, Workload
++
++class X86BareMetalWorkload(Workload):
++    type = 'X86BareMetalWorkload'
++    cxx_header = 'arch/x86/bare_metal/workload.hh'
++    cxx_class = 'gem5::X86ISA::BareMetalWorkload'
+ 
+ class X86FsWorkload(KernelWorkload):
+     type = 'X86FsWorkload'
+diff --git a/src/arch/x86/bare_metal/SConscript b/src/arch/x86/bare_metal/SConscript
+new file mode 100644
+index 0000000..04e8feb
+--- /dev/null
++++ b/src/arch/x86/bare_metal/SConscript
+@@ -0,0 +1,31 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++Import('*')
++
++if env['TARGET_ISA'] != 'x86':
++    Return()
++
++Source('workload.cc')
+diff --git a/src/arch/x86/bare_metal/workload.cc b/src/arch/x86/bare_metal/workload.cc
+new file mode 100644
+index 0000000..068c7e8
+--- /dev/null
++++ b/src/arch/x86/bare_metal/workload.cc
+@@ -0,0 +1,71 @@
++/*
++ * Copyright 2022 Google Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "arch/x86/bare_metal/workload.hh"
++
++#include "arch/x86/faults.hh"
++#include "arch/x86/pcstate.hh"
++#include "cpu/thread_context.hh"
++#include "params/X86BareMetalWorkload.hh"
++#include "sim/system.hh"
++
++namespace gem5
++{
++
++namespace X86ISA
++{
++
++BareMetalWorkload::BareMetalWorkload(const Params &p) : Workload(p)
++{}
++
++void
++BareMetalWorkload::initState()
++{
++    Workload::initState();
++
++    for (auto *tc: system->threads) {
++        X86ISA::InitInterrupt(0).invoke(tc);
++
++        if (tc->contextId() == 0) {
++            PCState pc = tc->pcState().as<PCState>();
++            // Don't start in the microcode ROM which would halt this CPU.
++            pc.upc(0);
++            pc.nupc(1);
++            tc->pcState(pc);
++            tc->activate();
++        } else {
++            // This is an application processor (AP). It should be initialized
++            // to look like only the BIOS POST has run on it and put then put
++            // it into a halted state.
++            tc->suspend();
++        }
++    }
++}
++
++} // namespace X86ISA
++
++} // namespace gem5
+diff --git a/src/arch/x86/bare_metal/workload.hh b/src/arch/x86/bare_metal/workload.hh
+new file mode 100644
+index 0000000..5e4838e
+--- /dev/null
++++ b/src/arch/x86/bare_metal/workload.hh
+@@ -0,0 +1,74 @@
++/*
++ * Copyright 2022 Google Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __ARCH_X86_BARE_METAL_WORKLOAD_HH__
++#define __ARCH_X86_BARE_METAL_WORKLOAD_HH__
++
++#include "base/loader/object_file.hh"
++#include "base/loader/symtab.hh"
++#include "base/types.hh"
++#include "cpu/thread_context.hh"
++#include "params/X86BareMetalWorkload.hh"
++#include "sim/workload.hh"
++
++namespace gem5
++{
++
++namespace X86ISA
++{
++
++class BareMetalWorkload : public Workload
++{
++  public:
++    using Params = X86BareMetalWorkloadParams;
++    BareMetalWorkload(const Params &p);
++
++  public:
++    void initState() override;
++
++    Addr getEntry() const override { return 0; }
++    ByteOrder byteOrder() const override { return ByteOrder::little; }
++    loader::Arch getArch() const override { return loader::UnknownArch; }
++    const loader::SymbolTable &
++    symtab(ThreadContext *tc) override
++    {
++        static loader::SymbolTable sym_tab;
++        return sym_tab;
++    }
++
++    bool
++    insertSymbol(const loader::Symbol &symbol) override
++    {
++        return false;
++    }
++};
++
++} // namespace X86ISA
++
++} // namespace gem5
++
++#endif // __ARCH_X86_BARE_METAL_WORKLOAD_HH__
+-- 
+1.8.3.1
+

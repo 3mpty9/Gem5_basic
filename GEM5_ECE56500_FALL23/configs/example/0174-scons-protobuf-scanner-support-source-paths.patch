@@ -1,0 +1,62 @@
+From 0ba36d8a2ea2f25d7c6f14286d824fe9c85f3a3d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Adri=C3=A1n=20Herrera=20Arcila?= <adrian.herrera@arm.com>
+Date: Thu, 20 Jan 2022 15:07:00 +0000
+Subject: [PATCH 174/757] scons: protobuf scanner, support source paths
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before this patch, the protobuf scanner would detect implicit
+dependencies only if the import statement used a path relative to the
+build directory. A path with a different format would result in a build
+failure.
+
+This is inconvenient because it impedes .proto files within a source
+directory to import each other relative to that source.
+
+Moreover, this is critical for EXTRAS directories with .proto files,
+because the paths are forced to include the EXTRAS directory itself.
+
+After this patch, the protobuf scanner uses the Classic scanner from
+SCons to also detect implicit dependencies in the source path of the
+importing .proto file. Regex management is also delegated to the Classic
+scanner.
+
+Change-Id: I1ad466813ef44947f3da07371805cb6376e392f0
+Signed-off-by: Adrián Herrera Arcila <adrian.herrera@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55903
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/SConscript | 14 +++++---------
+ 1 file changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index 61585ec..e5b032c 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -229,15 +229,11 @@ class SimObject(PySource):
+ # no whitespace at the end before or after the ;, and is all on one line. This
+ # should still cover most cases, and a completely accurate scanner would be
+ # MUCH more complex.
+-protoc_import_re = re.compile(r'^import\s+\"(.*\.proto)\"\;$', re.M)
+-
+-def protoc_scanner(node, env, path):
+-    deps = []
+-    for imp in protoc_import_re.findall(node.get_text_contents()):
+-        deps.append(Dir(env['BUILDDIR']).File(imp))
+-    return deps
+-
+-env.Append(SCANNERS=Scanner(function=protoc_scanner, skeys=['.proto']))
++protoc_scanner = SCons.Scanner.Classic(name='ProtobufScanner',
++                                       suffixes=['.proto'],
++                                       path_variable='BUILDDIR',
++                                       regex=r'^import\s+\"(.*\.proto)\"\;$')
++env.Append(SCANNERS=protoc_scanner)
+ 
+ def protoc_emitter(target, source, env):
+     root, ext = os.path.splitext(source[0].get_abspath())
+-- 
+1.8.3.1
+

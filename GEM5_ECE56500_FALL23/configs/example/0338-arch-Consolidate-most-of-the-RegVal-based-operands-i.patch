@@ -1,0 +1,245 @@
+From 38e06033fad769067dd9f0cee2b5426943564cde Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 02:45:47 -0700
+Subject: [PATCH 338/757] arch: Consolidate most of the RegVal based operands
+ into a base class.
+
+All the RegVal based operands except MiscRegs are consolidated, and
+those classes are almost all consolidated, except for the RegClassType
+they use.
+
+Change-Id: I8494c7066e9d19411fd97d7cc5ac2078f799c2ac
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49723
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 177 ++++++++---------------------------
+ 1 file changed, 40 insertions(+), 137 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index cdca6a6..13f7108 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -172,96 +172,67 @@ class RegOperand(Operand):
+ 
+         return c_src + c_dest
+ 
+-class IntRegOperand(RegOperand):
+-    reg_class = 'IntRegClass'
+-
++class RegValOperand(RegOperand):
+     def makeRead(self, predRead):
+-        if (self.ctype == 'float' or self.ctype == 'double'):
+-            error('Attempt to read integer register as FP')
+         if self.read_code != None:
+             return self.buildReadCode(predRead, 'getRegOperand')
+ 
+-        int_reg_val = ''
+         if predRead:
+-            int_reg_val = 'xc->getRegOperand(this, _sourceIndex++)'
+-            if self.hasReadPred():
+-                int_reg_val = '(%s) ? %s : 0' % \
+-                              (self.read_predicate, int_reg_val)
++            rindex = '_sourceIndex++'
+         else:
+-            int_reg_val = 'xc->getRegOperand(this, %d)' % self.src_reg_idx
++            rindex = str(self.src_reg_idx)
++        reg_val = f'xc->getRegOperand(this, {rindex})'
+ 
+-        return '%s = %s;\n' % (self.base_name, int_reg_val)
++        if self.ctype == 'float':
++            reg_val = f'bitsToFloat32({reg_val})'
++        elif self.ctype == 'double':
++            reg_val = f'bitsToFloat64({reg_val})'
++
++        if predRead and self.hasReadPred():
++            reg_val = f'({self.read_predicate}) ? {reg_val} : 0'
++
++        return f'{self.base_name} = {reg_val};\n'
+ 
+     def makeWrite(self, predWrite):
+-        if (self.ctype == 'float' or self.ctype == 'double'):
+-            error('Attempt to write integer register as FP')
+         if self.write_code != None:
+             return self.buildWriteCode(predWrite, 'setRegOperand')
+ 
+-        if predWrite:
+-            wp = 'true'
+-            if self.hasWritePred():
+-                wp = self.write_predicate
+-
+-            wcond = 'if (%s)' % (wp)
+-            windex = '_destIndex++'
+-        else:
+-            wcond = ''
+-            windex = '%d' % self.dest_reg_idx
+-
+-        wb = '''
+-        %s
+-        {
+-            %s final_val = %s;
+-            xc->setRegOperand(this, %s, final_val);\n
+-            if (traceData) { traceData->setData(final_val); }
+-        }''' % (wcond, self.ctype, self.base_name, windex)
+-
+-        return wb
+-
+-class FloatRegOperand(RegOperand):
+-    reg_class = 'FloatRegClass'
++        reg_val = self.base_name
+ 
+-    def makeRead(self, predRead):
+-        if self.read_code != None:
+-            return self.buildReadCode(predRead, 'getRegOperand')
+-
+-        if predRead:
+-            rindex = '_sourceIndex++'
+-        else:
+-            rindex = '%d' % self.src_reg_idx
+-
+-        code = 'xc->getRegOperand(this, %s)' % rindex
+         if self.ctype == 'float':
+-            code = 'bitsToFloat32(%s)' % code
++            reg_val = f'floatToBits32({reg_val})'
+         elif self.ctype == 'double':
+-            code = 'bitsToFloat64(%s)' % code
+-        return '%s = %s;\n' % (self.base_name, code)
+-
+-    def makeWrite(self, predWrite):
+-        if self.write_code != None:
+-            return self.buildWriteCode(predWrite, 'setRegOperand')
++            reg_val = f'floatToBits64({reg_val})'
+ 
+         if predWrite:
+-            wp = '_destIndex++'
++            wcond = ''
++            if self.hasWritePred():
++                wcond = f'if ({self.write_predicate})'
++            windex = '_destIndex++'
+         else:
+-            wp = '%d' % self.dest_reg_idx
++            wcond = ''
++            windex = str(self.dest_reg_idx)
++
++        return f'''
++        {wcond}
++        {{
++            RegVal final_val = {reg_val};
++            xc->setRegOperand(this, {windex}, final_val);
++            if (traceData)
++                traceData->setData(final_val);
++        }}'''
++
++class IntRegOperand(RegValOperand):
++    reg_class = 'IntRegClass'
+ 
+-        val = 'final_val'
+-        if self.ctype == 'float':
+-            val = 'floatToBits32(%s)' % val
+-        elif self.ctype == 'double':
+-            val = 'floatToBits64(%s)' % val
++class FloatRegOperand(RegValOperand):
++    reg_class = 'FloatRegClass'
+ 
+-        wp = 'xc->setRegOperand(this, %s, %s);' % (wp, val)
++class CCRegOperand(RegValOperand):
++    reg_class = 'CCRegClass'
+ 
+-        wb = '''
+-        {
+-            %s final_val = %s;
+-            %s\n
+-            if (traceData) { traceData->setData(final_val); }
+-        }''' % (self.ctype, self.base_name, wp)
+-        return wb
++class VecElemOperand(RegValOperand):
++    reg_class = 'VecElemClass'
+ 
+ class VecRegOperand(RegOperand):
+     reg_class = 'VecRegClass'
+@@ -391,27 +362,6 @@ class VecRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class VecElemOperand(RegOperand):
+-    reg_class = 'VecElemClass'
+-
+-    def makeRead(self, predRead):
+-        c_read = f'xc->getRegOperand(this, {self.src_reg_idx})'
+-
+-        if self.ctype == 'float':
+-            c_read = f'bitsToFloat32({c_read})'
+-        elif self.ctype == 'double':
+-            c_read = f'bitsToFloat64({c_read})'
+-
+-        return f'{self.base_name} = {c_read};\n'
+-
+-    def makeWrite(self, predWrite):
+-        val = self.base_name
+-        if self.ctype == 'float':
+-            val = f'floatToBits32({val})'
+-        elif self.ctype == 'double':
+-            val = f'floatToBits64({val})'
+-        return f'\n\txc->setRegOperand(this, {self.dest_reg_idx}, {val});'
+-
+ class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+ 
+@@ -473,53 +423,6 @@ class VecPredRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class CCRegOperand(RegOperand):
+-    reg_class = 'CCRegClass'
+-
+-    def makeRead(self, predRead):
+-        if (self.ctype == 'float' or self.ctype == 'double'):
+-            error('Attempt to read condition-code register as FP')
+-        if self.read_code != None:
+-            return self.buildReadCode(predRead, 'getRegOperand')
+-
+-        int_reg_val = ''
+-        if predRead:
+-            int_reg_val = 'xc->getRegOperand(this, _sourceIndex++)'
+-            if self.hasReadPred():
+-                int_reg_val = '(%s) ? %s : 0' % \
+-                              (self.read_predicate, int_reg_val)
+-        else:
+-            int_reg_val = 'xc->getRegOperand(this, %d)' % self.src_reg_idx
+-
+-        return '%s = %s;\n' % (self.base_name, int_reg_val)
+-
+-    def makeWrite(self, predWrite):
+-        if (self.ctype == 'float' or self.ctype == 'double'):
+-            error('Attempt to write condition-code register as FP')
+-        if self.write_code != None:
+-            return self.buildWriteCode(predWrite, 'setRegOperand')
+-
+-        if predWrite:
+-            wp = 'true'
+-            if self.hasWritePred():
+-                wp = self.write_predicate
+-
+-            wcond = 'if (%s)' % (wp)
+-            windex = '_destIndex++'
+-        else:
+-            wcond = ''
+-            windex = '%d' % self.dest_reg_idx
+-
+-        wb = '''
+-        %s
+-        {
+-            %s final_val = %s;
+-            xc->setRegOperand(this, %s, final_val);\n
+-            if (traceData) { traceData->setData(final_val); }
+-        }''' % (wcond, self.ctype, self.base_name, windex)
+-
+-        return wb
+-
+ class ControlRegOperand(Operand):
+     reg_class = 'MiscRegClass'
+ 
+-- 
+1.8.3.1
+

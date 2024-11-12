@@ -1,0 +1,36 @@
+From 90bb4cbebb46b603af016b3e263220e7dc638e88 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 9 May 2022 10:38:03 -0700
+Subject: [PATCH 624/757] tests: Fix docker '--memory' flag in GPU test
+
+A missing space was resulting in an error:
+
+```
+invalid argument "18ghacc-test-weekly" for "-m, --memory" flag: invalid size: '18ghacc-test-weekly'
+```
+
+Change-Id: I63cd3f1cf877442b1b5fffc0a09024ca6ae94436
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59489
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ tests/weekly.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/weekly.sh b/tests/weekly.sh
+index ed28f76..b88e3ed 100755
+--- a/tests/weekly.sh
++++ b/tests/weekly.sh
+@@ -222,7 +222,7 @@ docker run --rm -v ${PWD}:${PWD} -w \
+ # Like LULESH, HACC is heavily used in the HPC community and is used to stress
+ # the GPU memory system
+ docker run --rm -v ${gem5_root}:${gem5_root} -w ${gem5_root} -u $UID:$GID \
+-       --memory="${docker_mem_limit}"hacc-test-weekly \
++       --memory="${docker_mem_limit}" hacc-test-weekly \
+        ${gem5_root}/build/${gpu_isa}/gem5.opt \
+        ${gem5_root}/configs/example/apu_se.py -n3 --reg-alloc-policy=dynamic \
+        --benchmark-root=${gem5_root}/gem5-resources/src/gpu/halo-finder/src/hip \
+-- 
+1.8.3.1
+

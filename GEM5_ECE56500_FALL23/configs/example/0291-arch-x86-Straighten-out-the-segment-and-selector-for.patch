@@ -1,0 +1,42 @@
+From 7468d4169c68e7a76487b8bc22b95bd35801443f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 11:23:31 -0800
+Subject: [PATCH 291/757] arch-x86: Straighten out the segment and selector for
+ real far jumps.
+
+These had been partially transposed in the microcode for this
+instruction.
+
+Change-Id: Ida31e74d5096c6b8cf77dc49b9a0f480c1358009
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55591
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+index b289f18..c747c96 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/jump.py
+@@ -153,12 +153,12 @@ def macroop JMP_FAR_REAL_M
+     lea t1, seg, sib, disp, dataSize=asz
+     ld t2, seg, [1, t0, t1], dsz
+     ld t1, seg, [1, t0, t1]
+-    zexti t3, t1, 15, dataSize=8
++    zexti t3, t2, 15, dataSize=8
+     slli t3, t3, 4, dataSize=8
+-    wrsel cs, t1, dataSize=2
++    wrsel cs, t2, dataSize=2
+     wrbase cs, t3, dataSize=8
+-    # Put t2 first so it isn't sign extended.
+-    wrip t2, t0
++    # Put t1 first so it isn't sign extended.
++    wrip t1, t0
+ };
+ 
+ def macroop JMP_FAR_REAL_P
+-- 
+1.8.3.1
+

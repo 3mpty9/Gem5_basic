@@ -1,0 +1,400 @@
+From e8e0a2ed063ff0a5f068b6130b5e06d24909e9ff Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Wed, 11 May 2022 11:24:39 -0700
+Subject: [PATCH 638/757] util,systemc: Update systemc connection
+
+Change-Id: I5b5c7de9e734dd8a58160193d68c9a13d649b739
+Issue-On: https://gem5.atlassian.net/browse/GEM5-1218
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59589
+Reviewed-by: Matthias Jung <jungma@eit.uni-kl.de>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ util/dockerfiles/docker-compose.yaml               |  5 ++
+ util/dockerfiles/systemc-2.3.3/Dockerfile          | 53 ++++++++++++++++++++++
+ util/systemc/gem5_within_systemc/Makefile          | 10 ++--
+ util/systemc/gem5_within_systemc/README            |  4 +-
+ util/systemc/gem5_within_systemc/main.cc           | 12 ++---
+ .../systemc/gem5_within_systemc/sc_gem5_control.cc | 12 ++---
+ util/systemc/gem5_within_systemc/sc_logger.cc      |  2 +-
+ util/systemc/gem5_within_systemc/sc_module.cc      | 53 ++++++++++++----------
+ 8 files changed, 104 insertions(+), 47 deletions(-)
+ create mode 100644 util/dockerfiles/systemc-2.3.3/Dockerfile
+
+diff --git a/util/dockerfiles/docker-compose.yaml b/util/dockerfiles/docker-compose.yaml
+index 2db46e1..5a16717 100644
+--- a/util/dockerfiles/docker-compose.yaml
++++ b/util/dockerfiles/docker-compose.yaml
+@@ -16,6 +16,11 @@ services:
+             context: sst-11.1.0
+             dockerfile: Dockerfile
+         image: gcr.io/gem5-test/sst-env
++    systemc:
++        build:
++            context: systemc-2.3.3
++            dockerfile: Dockerfile
++        image: gcr.io/gem5-test/systemc-env
+     ubuntu-18.04_all-dependencies:
+         build:
+             context: ubuntu-18.04_all-dependencies
+diff --git a/util/dockerfiles/systemc-2.3.3/Dockerfile b/util/dockerfiles/systemc-2.3.3/Dockerfile
+new file mode 100644
+index 0000000..0653a86
+--- /dev/null
++++ b/util/dockerfiles/systemc-2.3.3/Dockerfile
+@@ -0,0 +1,53 @@
++# Copyright (c) 2021 The Regents of the University of California
++# All Rights Reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++FROM ubuntu:20.04
++
++ENV DEBIAN_FRONTEND=noninteractive
++RUN apt -y update && apt -y upgrade && \
++    apt -y install build-essential git m4 scons zlib1g zlib1g-dev \
++    libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
++    python3-dev python-is-python3 doxygen libboost-all-dev \
++    libhdf5-serial-dev python3-pydot libpng-dev libelf-dev pkg-config pip \
++    python3-venv wget
++
++RUN mkdir /systemc
++WORKDIR /systemc
++RUN wget https://www.accellera.org/images/downloads/standards/systemc/systemc-2.3.3.tar.gz; \
++    tar xf systemc-2.3.3.tar.gz
++
++WORKDIR /systemc/systemc-2.3.3
++RUN mkdir objdir
++WORKDIR objdir
++ENV CXX="g++"
++ENV CXXFLAGS="-std=c++17"
++
++RUN ../configure --prefix=/opt/systemc
++RUN make -j8 && make install
++RUN make clean
++
++WORKDIR /
++RUN rm -rf /systemc/systemc-2.3.3/objdir
+diff --git a/util/systemc/gem5_within_systemc/Makefile b/util/systemc/gem5_within_systemc/Makefile
+index 8c103c6..cc6a389 100644
+--- a/util/systemc/gem5_within_systemc/Makefile
++++ b/util/systemc/gem5_within_systemc/Makefile
+@@ -36,14 +36,14 @@
+ ARCH = ARM
+ VARIANT = opt
+ 
+-SYSTEMC_INC = ./systemc/include
+-SYSTEMC_LIB = ./systemc/lib-linux64
++SYSTEMC_INC = /opt/systemc/include
++SYSTEMC_LIB = /opt/systemc/lib-linux64
+ 
+ CXXFLAGS = -I../../../build/$(ARCH) -L../../../build/$(ARCH)
+ CXXFLAGS += -I$(SYSTEMC_INC) -L$(SYSTEMC_LIB)
+-CXXFLAGS += -std=c++0x
+-CXXFLAGS += -g
+-LIBS = -lgem5_$(VARIANT) -lsystemc
++CXXFLAGS += -std=c++17
++CXXFLAGS += -g -DTRACING_ON
++LIBS = -lgem5_$(VARIANT) -lsystemc -lpng
+ 
+ ALL = gem5.$(VARIANT).sc
+ 
+diff --git a/util/systemc/gem5_within_systemc/README b/util/systemc/gem5_within_systemc/README
+index 6bfb055..b50ed71 100644
+--- a/util/systemc/gem5_within_systemc/README
++++ b/util/systemc/gem5_within_systemc/README
+@@ -32,12 +32,12 @@ normal gem5 (cxx-config not needed, Python needed):
+ 
+ > cd ../../..
+ > scons build/ARM/gem5.opt
+-> scons --with-cxx-config --without-python USE_SYSTEMC=0 \
++> scons --with-cxx-config --without-python --without-tcmalloc USE_SYSTEMC=0 \
+ >       build/ARM/libgem5_opt.so
+ > cd util/systemc
+ 
+ Note: For MAC / OSX this command should be used:
+-> scons --with-cxx-config --without-python USE_SYSTEMC=0 \
++> scons --with-cxx-config --without-python --without-tcmalloc USE_SYSTEMC=0 \
+ >       build/ARM/libgem5_opt.dylib
+ 
+ Set a proper LD_LIBRARY_PATH e.g. for bash:
+diff --git a/util/systemc/gem5_within_systemc/main.cc b/util/systemc/gem5_within_systemc/main.cc
+index e9e2dd5..c7f9dd6 100644
+--- a/util/systemc/gem5_within_systemc/main.cc
++++ b/util/systemc/gem5_within_systemc/main.cc
+@@ -64,8 +64,8 @@
+ #include "sc_module.hh"
+ #include "sim/cxx_config_ini.hh"
+ #include "sim/cxx_manager.hh"
++#include "sim/globals.hh"
+ #include "sim/init_signals.hh"
+-#include "sim/serialize.hh"
+ #include "sim/simulate.hh"
+ #include "sim/stat_control.hh"
+ #include "sim/system.hh"
+@@ -156,8 +156,6 @@ SimControl::SimControl(sc_core::sc_module_name name,
+     if (argc == 1)
+         usage(prog_name);
+ 
+-    cxxConfigInit();
+-
+     /* Pass DPRINTF messages to SystemC */
+     Trace::setDebugLogger(&logger);
+ 
+@@ -296,8 +294,9 @@ void SimControl::run()
+         if (checkpoint_restore) {
+             std::cerr << "Restoring checkpoint\n";
+ 
+-            CheckpointIn *checkpoint = new CheckpointIn(checkpoint_dir,
+-                config_manager->getSimObjectResolver());
++            SimObject::setSimObjectResolver(
++                &config_manager->getSimObjectResolver());
++            CheckpointIn *checkpoint = new CheckpointIn(checkpoint_dir);
+ 
+             /* Catch SystemC up with gem5 after checkpoint restore.
+              *  Note that gem5 leading SystemC is always a violation of the
+@@ -305,7 +304,6 @@ void SimControl::run()
+              *  catchup */
+ 
+             DrainManager::instance().preCheckpointRestore();
+-            Serializable::unserializeGlobals(*checkpoint);
+ 
+             Tick systemc_time = sc_core::sc_time_stamp().value();
+             if (curTick() > systemc_time) {
+@@ -353,7 +351,7 @@ void SimControl::run()
+         /* FIXME, this should really be serialising just for
+          *  config_manager rather than using serializeAll's ugly
+          *  SimObject static object list */
+-        Serializable::serializeAll(checkpoint_dir);
++        SimObject::serializeAll(checkpoint_dir);
+ 
+         std::cerr << "Completed checkpoint\n";
+ 
+diff --git a/util/systemc/gem5_within_systemc/sc_gem5_control.cc b/util/systemc/gem5_within_systemc/sc_gem5_control.cc
+index 18aec6a..568c0eb 100644
+--- a/util/systemc/gem5_within_systemc/sc_gem5_control.cc
++++ b/util/systemc/gem5_within_systemc/sc_gem5_control.cc
+@@ -214,8 +214,6 @@ Gem5TopLevelModule::Gem5TopLevelModule(sc_core::sc_module_name name,
+ {
+     SC_THREAD(run);
+ 
+-    gem5::cxxConfigInit();
+-
+     /* Pass DPRINTF messages to SystemC */
+     gem5::Trace::setDebugLogger(&logger);
+ 
+@@ -237,12 +235,12 @@ Gem5TopLevelModule::Gem5TopLevelModule(sc_core::sc_module_name name,
+ 
+     /* Enable stats */
+     gem5::statistics::initSimStats();
+-    gem5::statistics::registerHandlers(gem5::CxxConfig::statsReset,
+-        gem5::CxxConfig::statsDump);
++    gem5::statistics::registerHandlers(CxxConfig::statsReset,
++        CxxConfig::statsDump);
+ 
+     gem5::Trace::enable();
+ 
+-    config_file = new CxxIniFile();
++    config_file = new gem5::CxxIniFile();
+ 
+     if (!config_file->load(config_filename)) {
+         fatal("Gem5TopLevelModule: Can't open config file: %s",
+@@ -251,7 +249,7 @@ Gem5TopLevelModule::Gem5TopLevelModule(sc_core::sc_module_name name,
+ 
+     root_manager = new gem5::CxxConfigManager(*config_file);
+ 
+-    gem5::CxxConfig::statsEnable();
++    CxxConfig::statsEnable();
+ 
+     /* Make the root object */
+     try {
+@@ -285,7 +283,7 @@ Gem5TopLevelModule::run()
+     std::cerr << "Exit at tick " << gem5::curTick()
+         << ", cause: " << exit_event->getCause() << '\n';
+ 
+-    getEventQueue(0)->dump();
++    gem5::getEventQueue(0)->dump();
+ }
+ 
+ void
+diff --git a/util/systemc/gem5_within_systemc/sc_logger.cc b/util/systemc/gem5_within_systemc/sc_logger.cc
+index e184b16..c833cc5 100644
+--- a/util/systemc/gem5_within_systemc/sc_logger.cc
++++ b/util/systemc/gem5_within_systemc/sc_logger.cc
+@@ -77,7 +77,7 @@ class CuttingStreambuf : public std::streambuf
+ 
+ void CuttingStreambuf::outputLine()
+ {
+-    logger->logMessage((Tick)-1, "gem5", "", line.str());
++    logger->logMessage((gem5::Tick)-1, "gem5", "", line.str());
+     line.clear();
+     line.str("");
+ }
+diff --git a/util/systemc/gem5_within_systemc/sc_module.cc b/util/systemc/gem5_within_systemc/sc_module.cc
+index ae27b51..9d70952 100644
+--- a/util/systemc/gem5_within_systemc/sc_module.cc
++++ b/util/systemc/gem5_within_systemc/sc_module.cc
+@@ -63,6 +63,7 @@
+ #include "sim/core.hh"
+ #include "sim/cur_tick.hh"
+ #include "sim/eventq.hh"
++#include "sim/sim_events.hh"
+ #include "sim/sim_exit.hh"
+ #include "sim/stat_control.hh"
+ 
+@@ -101,19 +102,19 @@ Module::SCEventQueue::wakeup(gem5::Tick when)
+ void
+ Module::setupEventQueues(Module &module)
+ {
+-    fatal_if(mainEventQueue.size() != 0,
++    fatal_if(gem5::mainEventQueue.size() != 0,
+         "Gem5SystemC::Module::setupEventQueues must be called"
+         " before any gem5 event queues are set up");
+ 
+     gem5::numMainEventQueues = 1;
+     gem5::mainEventQueue.push_back(new SCEventQueue("events", module));
+-    gem5::curEventQueue(getEventQueue(0));
++    gem5::curEventQueue(gem5::getEventQueue(0));
+ }
+ 
+ void
+ Module::catchup()
+ {
+-    gem5::EventQueue *eventq = getEventQueue(0);
++    gem5::EventQueue *eventq = gem5::getEventQueue(0);
+     gem5::Tick systemc_time = sc_core::sc_time_stamp().value();
+     gem5::Tick gem5_time = gem5::curTick();
+ 
+@@ -144,7 +145,7 @@ Module::serviceAsyncEvent()
+     gem5::EventQueue *eventq = gem5::getEventQueue(0);
+     std::lock_guard<gem5::EventQueue> lock(*eventq);
+ 
+-    assert(async_event);
++    assert(gem5::async_event);
+ 
+     /* Catch up gem5 time with SystemC time so that any event here won't
+      * be in the past relative to the current time */
+@@ -153,36 +154,37 @@ Module::serviceAsyncEvent()
+     /* Move time on to match SystemC */
+     catchup();
+ 
+-    async_event = false;
+-    if (async_statdump || async_statreset) {
+-        statistics::schedStatEvent(async_statdump, async_statreset);
+-        async_statdump = false;
+-        async_statreset = false;
++    gem5::async_event = false;
++    if (gem5::async_statdump || gem5::async_statreset) {
++        gem5::statistics::schedStatEvent(gem5::async_statdump,
++                                         gem5::async_statreset);
++        gem5::async_statdump = false;
++        gem5::async_statreset = false;
+     }
+ 
+-    if (async_exit) {
+-        async_exit = false;
++    if (gem5::async_exit) {
++        gem5::async_exit = false;
+         gem5::exitSimLoop("user interrupt received");
+     }
+ 
+-    if (async_io) {
+-        async_io = false;
+-        pollQueue.service();
++    if (gem5::async_io) {
++        gem5::async_io = false;
++        gem5::pollQueue.service();
+     }
+ 
+-    if (async_exception)
++    if (gem5::async_exception)
+         fatal("received async_exception, shouldn't be possible");
+ }
+ 
+ void
+ Module::serviceExternalEvent()
+ {
+-    gem5::EventQueue *eventq = getEventQueue(0);
++    gem5::EventQueue *eventq = gem5::getEventQueue(0);
+ 
+-    if (!in_simulate && !async_event)
++    if (!in_simulate && !gem5::async_event)
+         warn("Gem5SystemC external event received while not in simulate");
+ 
+-    if (async_event)
++    if (gem5::async_event)
+         serviceAsyncEvent();
+ 
+     if (in_simulate && !eventq->empty())
+@@ -192,12 +194,12 @@ Module::serviceExternalEvent()
+ void
+ Module::eventLoop()
+ {
+-    gem5::EventQueue *eventq = getEventQueue(0);
++    gem5::EventQueue *eventq = gem5::getEventQueue(0);
+ 
+     fatal_if(!in_simulate, "Gem5SystemC event loop entered while"
+         " outside Gem5SystemC::Module::simulate");
+ 
+-    if (async_event)
++    if (gem5::async_event)
+         serviceAsyncEvent();
+ 
+     while (!eventq->empty()) {
+@@ -248,8 +250,8 @@ Module::eventLoop()
+     fatal("Ran out of events without seeing exit event");
+ }
+ 
+-GlobalSimLoopExitEvent *
+-Module::simulate(Tick num_cycles)
++gem5::GlobalSimLoopExitEvent *
++Module::simulate(gem5::Tick num_cycles)
+ {
+     inform("Entering event queue @ %d.  Starting simulation...",
+         gem5::curTick());
+@@ -259,8 +261,9 @@ Module::simulate(Tick num_cycles)
+     else /* counter would roll over or be set to MaxTick anyhow */
+         num_cycles = gem5::MaxTick;
+ 
+-    gem5::GlobalEvent *limit_event = new GlobalSimLoopExitEvent(num_cycles,
+-        "simulate() limit reached", 0, 0);
++    gem5::GlobalEvent *limit_event =
++        new gem5::GlobalSimLoopExitEvent(num_cycles,
++            "simulate() limit reached", 0, 0);
+ 
+     exitEvent = NULL;
+ 
+@@ -286,7 +289,7 @@ Module::simulate(Tick num_cycles)
+     assert(global_event != NULL);
+ 
+     gem5::GlobalSimLoopExitEvent *global_exit_event =
+-        dynamic_cast<GlobalSimLoopExitEvent *>(global_event);
++        dynamic_cast<gem5::GlobalSimLoopExitEvent *>(global_event);
+     assert(global_exit_event != NULL);
+ 
+     if (global_exit_event != limit_event) {
+-- 
+1.8.3.1
+

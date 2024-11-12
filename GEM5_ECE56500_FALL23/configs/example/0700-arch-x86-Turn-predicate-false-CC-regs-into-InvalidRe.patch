@@ -1,0 +1,71 @@
+From 7216ff214f431f4ddf07cefeea577c6f5b7aaf52 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 15:23:31 -0700
+Subject: [PATCH 700/757] arch-x86: Turn predicate-false CC regs into
+ InvalidRegClass.
+
+This makes the (somewhat faulty) predicated register mechanism
+unnecessary.
+
+Change-Id: Id053760defd6ac9aaec95c165df5403e7fcb354f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49748
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/operands.isa | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index 2e4ebda..518d79d 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -91,6 +91,18 @@ let {{
+         def __init__(self, idx, id):
+             super().__init__('uqw', idx, None, id)
+ 
++    class CCRegPred(CCRegOp):
++        @overrideInOperand
++        def srcRegId(self):
++            return f'({self.readPredicate}) ? {self.regId()} : RegId()'
++        @overrideInOperand
++        def destRegId(self):
++            return f'({self.writePredicate}) ? {self.regId()} : RegId()'
++        def __init__(self, idx, id, *, read_predicate, write_predicate):
++            super().__init__('uqw', idx, None, id)
++            self.attrs['readPredicate'] = read_predicate
++            self.attrs['writePredicate'] = write_predicate
++
+     class ControlReg(ControlRegOp):
+         def __init__(self, idx, id, ctype='uqw'):
+             super().__init__(ctype, idx,
+@@ -184,21 +196,21 @@ def operands {{
+         # would be retained, the write predicate checks if any of the bits
+         # are being written.
+ 
+-        'PredccFlagBits': CCRegOp('uqw', 'X86ISA::CCREG_ZAPS', sort_pri=60,
++        'PredccFlagBits': CCRegPred('X86ISA::CCREG_ZAPS', 60,
+                 read_predicate='(ext & X86ISA::ccFlagMask) != '
+                 'X86ISA::ccFlagMask && (ext & X86ISA::ccFlagMask) != 0',
+                 write_predicate='(ext & X86ISA::ccFlagMask) != 0'),
+-        'PredcfofBits':  CCRegOp('uqw', 'X86ISA::CCREG_CFOF', sort_pri=61,
++        'PredcfofBits':  CCRegPred('X86ISA::CCREG_CFOF', 61,
+                 read_predicate='(ext & X86ISA::cfofMask) '
+                 '!= X86ISA::cfofMask && (ext & X86ISA::cfofMask) != 0',
+                 write_predicate='(ext & X86ISA::cfofMask) != 0'),
+-        'PreddfBit':     CCRegOp('uqw', 'X86ISA::CCREG_DF', sort_pri=62,
++        'PreddfBit':     CCRegPred('X86ISA::CCREG_DF', 62,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::DFBit) != 0'),
+-        'PredecfBit':    CCRegOp('uqw', 'X86ISA::CCREG_ECF', sort_pri=63,
++        'PredecfBit':    CCRegPred('X86ISA::CCREG_ECF', 63,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::ECFBit) != 0'),
+-        'PredezfBit':    CCRegOp('uqw', 'X86ISA::CCREG_EZF', sort_pri=64,
++        'PredezfBit':    CCRegPred('X86ISA::CCREG_EZF', 64,
+                 read_predicate='false',
+                 write_predicate='(ext & X86ISA::EZFBit) != 0'),
+ 
+-- 
+1.8.3.1
+

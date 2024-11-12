@@ -1,0 +1,100 @@
+From 6412be29f48b0e3dc2d60d03ed6ac45962904b1f Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 5 May 2022 15:26:52 +0100
+Subject: [PATCH 621/757] arch-arm: Check implemented features through the
+ release object
+
+This is faster than going through the ISA and reading the corresponding
+ID register value
+
+Change-Id: Iec247167f3b99dcabf2908fceb0c2365c37ba017
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59470
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ src/arch/arm/faults.cc  |  4 ++--
+ src/arch/arm/mmu.cc     |  5 +++--
+ src/arch/arm/utility.cc | 17 ++++++++---------
+ 3 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/src/arch/arm/faults.cc b/src/arch/arm/faults.cc
+index 4ab45d4..e85a90b 100644
+--- a/src/arch/arm/faults.cc
++++ b/src/arch/arm/faults.cc
+@@ -453,8 +453,8 @@ ArmFault::update(ThreadContext *tc)
+         toEL = fromEL;
+ 
+     // Check for Set Priviledge Access Never, if PAN is supported
+-    AA64MMFR1 mmfr1 = tc->readMiscReg(MISCREG_ID_AA64MMFR1_EL1);
+-    if (mmfr1.pan) {
++    if (auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++        isa->getRelease()->has(ArmExtension::FEAT_PAN)) {
+         if (toEL == EL1) {
+             const SCTLR sctlr = tc->readMiscReg(MISCREG_SCTLR_EL1);
+             span = !sctlr.span;
+diff --git a/src/arch/arm/mmu.cc b/src/arch/arm/mmu.cc
+index 0dde0d1..8d07273 100644
+--- a/src/arch/arm/mmu.cc
++++ b/src/arch/arm/mmu.cc
+@@ -774,8 +774,9 @@ MMU::checkPAN(ThreadContext *tc, uint8_t ap, const RequestPtr &req, Mode mode,
+     // gem5)
+     // 4) Instructions to be treated as unprivileged, unless
+     // HCR_EL2.{E2H, TGE} == {1, 0}
+-    const AA64MMFR1 mmfr1 = tc->readMiscReg(MISCREG_ID_AA64MMFR1_EL1);
+-    if (mmfr1.pan && state.cpsr.pan && (ap & 0x1) &&
++    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++    const bool has_pan = isa->getRelease()->has(ArmExtension::FEAT_PAN);
++    if (has_pan && state.cpsr.pan && (ap & 0x1) &&
+         mode != BaseMMU::Execute) {
+ 
+         if (req->isCacheMaintenance() &&
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index db5f1de..0335a89 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -227,23 +227,22 @@ getAffinity(ArmSystem *arm_sys, ThreadContext *tc)
+ bool
+ HavePACExt(ThreadContext *tc)
+ {
+-    AA64ISAR1 id_aa64isar1 = tc->readMiscReg(MISCREG_ID_AA64ISAR1_EL1);
+-    return id_aa64isar1.api | id_aa64isar1.apa |
+-        id_aa64isar1.gpi | id_aa64isar1.gpa;
++    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++    return isa->getRelease()->has(ArmExtension::FEAT_PAuth);
+ }
+ 
+ bool
+ HaveVirtHostExt(ThreadContext *tc)
+ {
+-    AA64MMFR1 id_aa64mmfr1 = tc->readMiscReg(MISCREG_ID_AA64MMFR1_EL1);
+-    return id_aa64mmfr1.vh;
++    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++    return isa->getRelease()->has(ArmExtension::FEAT_VHE);
+ }
+ 
+ bool
+ HaveLVA(ThreadContext *tc)
+ {
+-    const AA64MMFR2 mm_fr2 = tc->readMiscReg(MISCREG_ID_AA64MMFR2_EL1);
+-    return (bool)mm_fr2.varange;
++    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++    return isa->getRelease()->has(ArmExtension::FEAT_LVA);
+ }
+ 
+ ExceptionLevel
+@@ -263,8 +262,8 @@ s1TranslationRegime(ThreadContext* tc, ExceptionLevel el)
+ bool
+ HaveSecureEL2Ext(ThreadContext *tc)
+ {
+-    AA64PFR0 id_aa64pfr0 = tc->readMiscReg(MISCREG_ID_AA64PFR0_EL1);
+-    return id_aa64pfr0.sel2;
++    auto *isa = static_cast<ArmISA::ISA *>(tc->getIsaPtr());
++    return isa->getRelease()->has(ArmExtension::FEAT_SEL2);
+ }
+ 
+ bool
+-- 
+1.8.3.1
+

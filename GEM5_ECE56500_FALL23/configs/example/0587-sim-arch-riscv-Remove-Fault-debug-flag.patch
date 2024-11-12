@@ -1,0 +1,79 @@
+From f8589a4719b6f506e40badd32afc5cc5046183a1 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 26 Apr 2022 16:11:48 +0100
+Subject: [PATCH 587/757] sim, arch-riscv: Remove Fault debug flag
+
+There is already a Faults debug flag used by Arm and X86 so
+having both Fault and Faults is highly confusing
+
+Change-Id: Id5c17f19b51c6257dfc470d07ba050a9de7a9db3
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59152
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/riscv/faults.cc | 4 ++--
+ src/sim/SConscript       | 1 -
+ src/sim/faults.cc        | 4 ++--
+ 3 files changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/riscv/faults.cc b/src/arch/riscv/faults.cc
+index eea42fe..e609222 100644
+--- a/src/arch/riscv/faults.cc
++++ b/src/arch/riscv/faults.cc
+@@ -37,7 +37,7 @@
+ #include "arch/riscv/utility.hh"
+ #include "cpu/base.hh"
+ #include "cpu/thread_context.hh"
+-#include "debug/Fault.hh"
++#include "debug/Faults.hh"
+ #include "sim/debug.hh"
+ #include "sim/full_system.hh"
+ #include "sim/workload.hh"
+@@ -59,7 +59,7 @@ RiscvFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ {
+     auto pc_state = tc->pcState().as<PCState>();
+ 
+-    DPRINTFS(Fault, tc->getCpuPtr(), "Fault (%s) at PC: %s\n",
++    DPRINTFS(Faults, tc->getCpuPtr(), "Fault (%s) at PC: %s\n",
+              name(), pc_state);
+ 
+     if (FullSystem) {
+diff --git a/src/sim/SConscript b/src/sim/SConscript
+index cfeca46..969a3e4 100644
+--- a/src/sim/SConscript
++++ b/src/sim/SConscript
+@@ -122,7 +122,6 @@ DebugFlag('Config')
+ DebugFlag('CxxConfig')
+ DebugFlag('Drain')
+ DebugFlag('Event')
+-DebugFlag('Fault')
+ DebugFlag('Flow')
+ DebugFlag('IPI')
+ DebugFlag('IPR')
+diff --git a/src/sim/faults.cc b/src/sim/faults.cc
+index 115c0ed..c0a7d76 100644
+--- a/src/sim/faults.cc
++++ b/src/sim/faults.cc
+@@ -46,7 +46,7 @@
+ #include "base/logging.hh"
+ #include "cpu/base.hh"
+ #include "cpu/thread_context.hh"
+-#include "debug/Fault.hh"
++#include "debug/Faults.hh"
+ #include "mem/page_table.hh"
+ #include "sim/full_system.hh"
+ #include "sim/process.hh"
+@@ -59,7 +59,7 @@ FaultBase::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ {
+     panic_if(!FullSystem, "fault (%s) detected @ PC %s",
+              name(), tc->pcState());
+-    DPRINTF(Fault, "Fault %s at PC: %s\n", name(), tc->pcState());
++    DPRINTF(Faults, "Fault %s at PC: %s\n", name(), tc->pcState());
+ }
+ 
+ void
+-- 
+1.8.3.1
+

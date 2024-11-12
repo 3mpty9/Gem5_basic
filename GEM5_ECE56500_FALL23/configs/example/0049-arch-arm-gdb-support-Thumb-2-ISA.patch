@@ -1,0 +1,64 @@
+From 110e22439faf1e1a6a39c01787d2d280768fb024 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Tue, 14 Dec 2021 11:18:54 +0800
+Subject: [PATCH 049/757] arch-arm: gdb support Thumb-2 ISA
+
+From the document*1, we should allow 2,3,4 in kind check function for
+supporting all kinds of ARM breakpoint.
+
+1. https://sourceware.org/gdb/current/onlinedocs/gdb/ARM-Breakpoint-Kinds.html
+
+Change-Id: I82bcb88cfe6e80e7f17cd6bb68a26a45ace7b174
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54124
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/remote_gdb.cc | 24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/remote_gdb.cc b/src/arch/arm/remote_gdb.cc
+index 215c532..6e8923e 100644
+--- a/src/arch/arm/remote_gdb.cc
++++ b/src/arch/arm/remote_gdb.cc
+@@ -168,6 +168,20 @@ namespace gem5
+ 
+ using namespace ArmISA;
+ 
++namespace
++{
++
++// https://sourceware.org/gdb/current/onlinedocs/gdb/ARM-Breakpoint-Kinds.html
++enum class ArmBpKind
++{
++    THUMB = 2,
++    THUMB_2 = 3,
++    ARM = 4,
++};
++
++} // namespace
++
++
+ static bool
+ tryTranslate(ThreadContext *tc, Addr addr)
+ {
+@@ -364,8 +378,14 @@ RemoteGDB::gdbRegs()
+ bool
+ RemoteGDB::checkBpKind(size_t kind)
+ {
+-    // 2 for Thumb ISA, 4 for ARM ISA.
+-    return kind == 2 || kind == 4;
++    switch (ArmBpKind(kind)) {
++      case ArmBpKind::THUMB:
++      case ArmBpKind::THUMB_2:
++      case ArmBpKind::ARM:
++        return true;
++      default:
++        return false;
++    }
+ }
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

@@ -1,0 +1,43 @@
+From f6b1f3f85053f19340c6601b52599daabf9b8554 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 11 Apr 2022 10:05:18 -0700
+Subject: [PATCH 550/757] tests: Disable failing 8-core Boot Tests for
+ Timing/Atomic
+
+As noted here: https://gem5.atlassian.net/browse/GEM5-1217, the Atomic
+and Timing Core systems are not working with 8 cores when run with a
+classic or MI_example cache heirarchy. Until the root cause of this
+issue can be determined. These tests are being disabled.
+
+Change-Id: Ia19579029bd20c57cca8d225068d17c4b29f1773
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58770
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/x86-boot-tests/test_linux_boot.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/gem5/x86-boot-tests/test_linux_boot.py b/tests/gem5/x86-boot-tests/test_linux_boot.py
+index ee9c257..7e3ad4e 100644
+--- a/tests/gem5/x86-boot-tests/test_linux_boot.py
++++ b/tests/gem5/x86-boot-tests/test_linux_boot.py
+@@ -238,13 +238,13 @@ run_map = {
+             1: True,
+             2: True,
+             4: False,  # We already run this in the long (Nightly) tests.
+-            8: True,
++            8: False,  # Jira: https://gem5.atlassian.net/browse/GEM5-1217
+         },
+         "timing": {
+             1: True,
+             2: True,
+             4: True,
+-            8: True,
++            8: False,  # Jira: https://gem5.atlassian.net/browse/GEM5-1217
+         },
+         "o3": {
+             1: False,  # Timeout
+-- 
+1.8.3.1
+

@@ -1,0 +1,78 @@
+From cb7799648b7f3344e05bb171d3e8fa9948e141b0 Mon Sep 17 00:00:00 2001
+From: Alistair Delva <adelva@google.com>
+Date: Tue, 14 Dec 2021 10:22:06 -0800
+Subject: [PATCH 094/757] arch-arm: Add support for initrd/initramfs
+
+Add initrd_filename and initrd_addr parameters to specify that an
+initrd/initramfs should be loaded into memory from a file, just like the
+DTB blob. The user must specify the initrd file, and they can specify
+the initrd load address as well. However, in practice, it's expected
+that the dev/machine backend will derive the initrd load address from
+the dtb load address, which is how a bootloader would typically do it.
+
+Change-Id: I6378927c2984b7ccdd1471486dd7803500ef5883
+Signed-off-by: Alistair Delva <adelva@google.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54184
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/ArmFsWorkload.py     |  3 +++
+ src/arch/arm/linux/fs_workload.cc | 19 +++++++++++++++++--
+ 2 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/ArmFsWorkload.py b/src/arch/arm/ArmFsWorkload.py
+index 974600b..43bbd16 100644
+--- a/src/arch/arm/ArmFsWorkload.py
++++ b/src/arch/arm/ArmFsWorkload.py
+@@ -58,6 +58,9 @@ class ArmFsWorkload(KernelWorkload):
+     dtb_filename = Param.String("",
+         "File that contains the Device Tree Blob. Don't use DTB if empty.")
+     dtb_addr = Param.Addr(0, "DTB or ATAGS address")
++    initrd_filename = Param.String("",
++        "File that contains the initial ramdisk. Don't use initrd if empty.")
++    initrd_addr = Param.Addr(0, "initrd/initramfs address")
+     cpu_release_addr = Param.Addr(0, "cpu-release-addr property")
+ 
+     machine_type = Param.ArmMachineType('DTOnly',
+diff --git a/src/arch/arm/linux/fs_workload.cc b/src/arch/arm/linux/fs_workload.cc
+index d512067..e724eb1 100644
+--- a/src/arch/arm/linux/fs_workload.cc
++++ b/src/arch/arm/linux/fs_workload.cc
+@@ -91,6 +91,21 @@ FsLinux::initState()
+     bool dtb_file_specified = params().dtb_filename != "";
+ 
+     if (kernel_has_fdt_support && dtb_file_specified) {
++        bool initrd_file_specified = params().initrd_filename != "";
++        size_t initrd_len = 0;
++
++        if (initrd_file_specified) {
++            inform("Loading initrd file: %s at address %#x\n",
++                    params().initrd_filename, params().initrd_addr);
++
++            loader::ImageFileDataPtr initrd_file_data(
++                new loader::ImageFileData(params().initrd_filename));
++            system->physProxy.writeBlob(params().initrd_addr,
++                                        initrd_file_data->data(),
++                                        initrd_file_data->len());
++            initrd_len = initrd_file_data->len();
++        }
++
+         // Kernel supports flattened device tree and dtb file specified.
+         // Using Device Tree Blob to describe system configuration.
+         inform("Loading DTB file: %s at address %#x\n", params().dtb_filename,
+@@ -98,8 +113,8 @@ FsLinux::initState()
+ 
+         auto *dtb_file = new loader::DtbFile(params().dtb_filename);
+ 
+-        if (!dtb_file->addBootCmdLine(
+-                    commandLine.c_str(), commandLine.size())) {
++        if (!dtb_file->addBootData(commandLine.c_str(), commandLine.size(),
++                                   params().initrd_addr, initrd_len)) {
+             warn("couldn't append bootargs to DTB file: %s\n",
+                  params().dtb_filename);
+         }
+-- 
+1.8.3.1
+

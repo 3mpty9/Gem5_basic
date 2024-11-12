@@ -1,0 +1,534 @@
+From 288e5c47fa3c2e53564c2f6b4342a466c0e7751c Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Sat, 4 Dec 2021 04:02:00 -0800
+Subject: [PATCH 348/757] mem: Create a SysBridge object to bridge between
+ Systems interconnect.
+
+It's possible to bridge together the memory interconnect of two
+systems, either as parallel peers, or one nested inside the other. Each
+System will have its own set of RequestorIDs, and using an ID from one
+System inside the other can lead to a number of different problems.
+
+This change adds a new SimObject called SysBridge which connects two
+Systems interconnect together. The object allocates a requestor ID in
+each system, and for all PacketPtrs passing through it, the requestor
+ID from the target system is installed in the associated Request. On
+the way back, either inline or in a split, delayed response, the
+original RequestorID is restored by reinstalling the original Request
+object.
+
+Change-Id: I237c668962a04ef6dfc872df16762a884c05ede9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54743
+Reviewed-by: Jesse Pai <jessepai@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/SConscript    |   3 +
+ src/mem/SysBridge.py  |  42 ++++++
+ src/mem/sys_bridge.cc |  63 +++++++++
+ src/mem/sys_bridge.hh | 353 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 461 insertions(+)
+ create mode 100644 src/mem/SysBridge.py
+ create mode 100644 src/mem/sys_bridge.cc
+ create mode 100644 src/mem/sys_bridge.hh
+
+diff --git a/src/mem/SConscript b/src/mem/SConscript
+index 2fe6c8c..7790e1d 100644
+--- a/src/mem/SConscript
++++ b/src/mem/SConscript
+@@ -46,6 +46,8 @@ Source('comm_monitor.cc')
+ SimObject('AbstractMemory.py', sim_objects=['AbstractMemory'])
+ SimObject('AddrMapper.py', sim_objects=['AddrMapper', 'RangeAddrMapper'])
+ SimObject('Bridge.py', sim_objects=['Bridge'])
++SimObject('SysBridge.py', sim_objects=['SysBridge'])
++DebugFlag('SysBridge')
+ SimObject('MemCtrl.py', sim_objects=['MemCtrl'], enums=['MemSched'])
+ SimObject('MemInterface.py', sim_objects=['MemInterface'], enums=['AddrMap'])
+ SimObject('DRAMInterface.py', sim_objects=['DRAMInterface'],
+@@ -81,6 +83,7 @@ Source('physical.cc')
+ Source('simple_mem.cc')
+ Source('snoop_filter.cc')
+ Source('stack_dist_calc.cc')
++Source('sys_bridge.cc')
+ Source('token_port.cc')
+ Source('tport.cc')
+ Source('xbar.cc')
+diff --git a/src/mem/SysBridge.py b/src/mem/SysBridge.py
+new file mode 100644
+index 0000000..2c42b75
+--- /dev/null
++++ b/src/mem/SysBridge.py
+@@ -0,0 +1,42 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.SimObject import SimObject
++
++class SysBridge(SimObject):
++    '''Use this bridge to connect the memory systems belonging to two different
++       Systems SimObjects. See the header file for more information.'''
++    type = 'SysBridge'
++    cxx_header = "mem/sys_bridge.hh"
++    cxx_class = 'gem5::SysBridge'
++
++    source = Param.System("Source System")
++    target = Param.System("Target System")
++
++    target_port = RequestPort(
++            "A port which sends requests to a target system.")
++    source_port = ResponsePort(
++            "A port which sends responses to a source system")
+diff --git a/src/mem/sys_bridge.cc b/src/mem/sys_bridge.cc
+new file mode 100644
+index 0000000..3037a1d
+--- /dev/null
++++ b/src/mem/sys_bridge.cc
+@@ -0,0 +1,63 @@
++/*
++ * Copyright 2021 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "mem/sys_bridge.hh"
++
++#include "sim/system.hh"
++
++namespace gem5
++{
++
++SysBridge::PacketData
++SysBridge::BridgingPort::replaceReqID(PacketPtr pkt)
++{
++    RequestPtr old_req = pkt->req;
++    RequestPtr new_req = std::make_shared<Request>(
++            old_req->getPaddr(), old_req->getSize(), old_req->getFlags(), id);
++    pkt->req = new_req;
++    return {old_req};
++}
++
++SysBridge::SysBridge(const SysBridgeParams &p) : SimObject(p),
++    sourcePort(p.name + ".source_port", this, &targetPort,
++            p.target->getRequestorId(this)),
++    targetPort(p.name + ".target_port", this, &sourcePort,
++            p.source->getRequestorId(this))
++{}
++
++Port &
++SysBridge::getPort(const std::string &if_name, PortID idx)
++{
++    if (if_name == "source_port")
++        return sourcePort;
++    else if (if_name == "target_port")
++        return targetPort;
++    else
++        return SimObject::getPort(if_name, idx);
++}
++
++} // namespace gem5
+diff --git a/src/mem/sys_bridge.hh b/src/mem/sys_bridge.hh
+new file mode 100644
+index 0000000..8fa3131
+--- /dev/null
++++ b/src/mem/sys_bridge.hh
+@@ -0,0 +1,353 @@
++/*
++ * Copyright 2021 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_SYS_BRIDGE_HH__
++#define __MEM_SYS_BRIDGE_HH__
++
++#include "base/trace.hh"
++#include "base/types.hh"
++#include "debug/SysBridge.hh"
++#include "mem/port.hh"
++#include "params/SysBridge.hh"
++#include "sim/sim_object.hh"
++
++namespace gem5
++{
++
++/**
++ * Each System object in gem5 is responsible for a set of RequestorIDs which
++ * identify different sources for memory requests within that System. Each
++ * object within the memory system is responsible for requesting an ID if it
++ * needs one, and then using that ID in the requests it sends out.
++ *
++ * When a simulation has multiple System objects within it, components
++ * registered with different Systems may be able to interact through the memory
++ * system. If an object uses a RequestorID it got from its parent System, and
++ * that ends up being handled by an object which is using a different parent,
++ * the target object may misinterpret or misattribute that ID, or if the number
++ * of IDs in the two systems are different, it might even index an array based
++ * on the requestor out of bounds.
++ *
++ * This SysBridge object helps handle that situation by translating requests
++ * going across it in either direction, upstream or downstream, so that they
++ * always have a RequestorID which is valid in the current System. They
++ * register themselves as a Requestor in each System, and use that ID in the
++ * foreign System, restoring the original ID as the request makes its way back
++ * to its source.
++ *
++ * Example:
++ * # One System with a CPU in it.
++ * sys1 = System(...)
++ * sys1.cpu = CPU(...)
++ *
++ * # One System with memory in it.
++ * sys2 = System(...)
++ * sys2.memory = Memory(...)
++ *
++ * # A SysBridge for crossing from sys1 to sys2.
++ * sys2.sys_bridge = SysBridge(
++ *         source=sys1,
++ *         target=sys2,
++ *         target_port=sys2.memory.port,
++ *         source_port=sys1.cpu.port)
++ */
++
++class SysBridge : public SimObject
++{
++  private:
++    class SysBridgeTargetPort;
++    class SysBridgeSourcePort;
++
++    // A structure for whatever we need to keep when bridging a packet.
++    struct PacketData
++    {
++        RequestPtr req;
++    };
++
++    class SysBridgeSenderState : public Packet::SenderState
++    {
++      private:
++        PacketData pData;
++
++      public:
++        SysBridgeSenderState(const PacketData &data) : pData(data) {}
++
++        const PacketData &data() const { return pData; }
++    };
++
++    class BridgingPort
++    {
++      protected:
++        RequestorID id;
++
++        // Replace the requestor ID in pkt, and return any scratch data we'll
++        // need going back the other way.
++        PacketData replaceReqID(PacketPtr pkt);
++        // Restore pkt to use its original requestor ID.
++        static void
++        restoreReqID(PacketPtr pkt, const PacketData &data)
++        {
++            pkt->req = data.req;
++        }
++
++        static void
++        restoreReqID(PacketPtr pkt, const PacketData &data, PacketData &backup)
++        {
++            backup.req = pkt->req;
++            restoreReqID(pkt, data);
++        }
++
++        BridgingPort(RequestorID _id) : id(_id) {}
++    };
++
++    class SysBridgeTargetPort : public RequestPort, public BridgingPort
++    {
++      private:
++        SysBridgeSourcePort *sourcePort;
++
++      public:
++        SysBridgeTargetPort(const std::string &_name, SimObject *owner,
++                SysBridgeSourcePort *source_port, RequestorID _id) :
++            RequestPort(_name, owner), BridgingPort(_id),
++            sourcePort(source_port)
++        {
++            DPRINTF(SysBridge, "Target side requestor ID = %s.\n", _id);
++        }
++
++      private:
++        void
++        recvRangeChange() override
++        {
++            sourcePort->sendRangeChange();
++        }
++
++        Tick
++        recvAtomicSnoop(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvAtomicSnoop incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "recvAtomicSnoop outgoing ID %d.\n",
++                    pkt->requestorId());
++            Tick tick = sourcePort->sendAtomicSnoop(pkt);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "recvAtomicSnoop restored ID %d.\n",
++                    pkt->requestorId());
++            return tick;
++        }
++
++        bool
++        recvTimingResp(PacketPtr pkt) override
++        {
++            auto *state = dynamic_cast<SysBridgeSenderState *>(
++                    pkt->popSenderState());
++            PacketData backup;
++            DPRINTF(SysBridge, "recvTimingResp incoming ID %d.\n",
++                    pkt->requestorId());
++            restoreReqID(pkt, state->data(), backup);
++            DPRINTF(SysBridge, "recvTimingResp restored ID %d.\n",
++                    pkt->requestorId());
++            if (!sourcePort->sendTimingResp(pkt)) {
++                restoreReqID(pkt, backup);
++                DPRINTF(SysBridge, "recvTimingResp un-restored ID %d.\n",
++                        pkt->requestorId());
++                pkt->pushSenderState(state);
++                return false;
++            } else {
++                delete state;
++                return true;
++            }
++        }
++
++        void
++        recvTimingSnoopReq(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvTimingSnoopReq incoming ID %d.\n",
++                    pkt->requestorId());
++            auto *state = new SysBridgeSenderState(replaceReqID(pkt));
++            pkt->pushSenderState(state);
++            DPRINTF(SysBridge, "recvTimingSnoopReq outgoing ID %d.\n",
++                    pkt->requestorId());
++            sourcePort->sendTimingSnoopReq(pkt);
++        }
++
++        void recvReqRetry() override { sourcePort->sendRetryReq(); }
++        void
++        recvRetrySnoopResp() override
++        {
++            sourcePort->sendRetrySnoopResp();
++        }
++
++        void
++        recvFunctionalSnoop(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvFunctionalSnoop incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "recvFunctionalSnoop outgoing ID %d.\n",
++                    pkt->requestorId());
++            sourcePort->sendFunctionalSnoop(pkt);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "recvFunctionalSnoop restored ID %d.\n",
++                    pkt->requestorId());
++        }
++    };
++
++    class SysBridgeSourcePort : public ResponsePort, public BridgingPort
++    {
++      private:
++        SysBridgeTargetPort *targetPort;
++
++      public:
++        SysBridgeSourcePort(const std::string &_name, SimObject *owner,
++                SysBridgeTargetPort *target_port, RequestorID _id) :
++            ResponsePort(_name, owner), BridgingPort(_id),
++            targetPort(target_port)
++        {
++            DPRINTF(SysBridge, "Source side requestor ID = %s.\n", _id);
++        }
++
++      private:
++        bool
++        recvTimingReq(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvTimingReq incoming ID %d.\n",
++                    pkt->requestorId());
++            auto *state = new SysBridgeSenderState(replaceReqID(pkt));
++            pkt->pushSenderState(state);
++            DPRINTF(SysBridge, "recvTimingReq outgoing ID %d.\n",
++                    pkt->requestorId());
++            if (!targetPort->sendTimingReq(pkt)) {
++                restoreReqID(pkt, state->data());
++                DPRINTF(SysBridge, "recvTimingReq restored ID %d.\n",
++                        pkt->requestorId());
++                pkt->popSenderState();
++                delete state;
++                return false;
++            } else {
++                return true;
++            }
++        }
++
++        bool
++        tryTiming(PacketPtr pkt) override
++        {
++            // Since tryTiming shouldn't actually send the packet, we should
++            // be able to clean up inline like we would for atomic methods.
++            // This may not actually be necessary at all, but it's a little
++            // safer.
++            DPRINTF(SysBridge, "tryTiming incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "tryTiming outgoing ID %d.\n",
++                    pkt->requestorId());
++            bool ret = targetPort->tryTiming(pkt);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "tryTiming restored ID %d.\n",
++                    pkt->requestorId());
++            return ret;
++        }
++
++        bool
++        recvTimingSnoopResp(PacketPtr pkt) override
++        {
++            auto *state = dynamic_cast<SysBridgeSenderState *>(
++                    pkt->popSenderState());
++            DPRINTF(SysBridge, "recvTimingSnoopResp incoming ID %d.\n",
++                    pkt->requestorId());
++            restoreReqID(pkt, state->data());
++            DPRINTF(SysBridge, "recvTimingSnoopResp restored ID %d.\n",
++                    pkt->requestorId());
++            return targetPort->sendTimingSnoopResp(pkt);
++        }
++
++        void recvRespRetry() override { targetPort->sendRetryResp(); }
++
++        Tick
++        recvAtomic(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvAtomic incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "recvAtomic outgoing ID %d.\n",
++                    pkt->requestorId());
++            Tick tick = targetPort->sendAtomic(pkt);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "recvAtomic restored ID %d.\n",
++                    pkt->requestorId());
++            return tick;
++        }
++
++        Tick
++        recvAtomicBackdoor(PacketPtr pkt, MemBackdoorPtr &backdoor) override
++        {
++            DPRINTF(SysBridge, "recvAtomicBackdoor incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "recvAtomicBackdoor outgoing ID %d.\n",
++                    pkt->requestorId());
++            Tick tick = targetPort->sendAtomicBackdoor(pkt, backdoor);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "recvAtomicBackdoor restored ID %d.\n",
++                    pkt->requestorId());
++            return tick;
++        }
++
++        void
++        recvFunctional(PacketPtr pkt) override
++        {
++            DPRINTF(SysBridge, "recvFunctional incoming ID %d.\n",
++                    pkt->requestorId());
++            auto data = replaceReqID(pkt);
++            DPRINTF(SysBridge, "recvFunctional outgoing ID %d.\n",
++                    pkt->requestorId());
++            targetPort->sendFunctional(pkt);
++            restoreReqID(pkt, data);
++            DPRINTF(SysBridge, "recvFunctional restored ID %d.\n",
++                    pkt->requestorId());
++        }
++
++        AddrRangeList
++        getAddrRanges() const override
++        {
++            return targetPort->getAddrRanges();
++        }
++    };
++
++    SysBridgeSourcePort sourcePort;
++    SysBridgeTargetPort targetPort;
++
++  public:
++    Port &getPort(const std::string &if_name,
++            PortID idx=InvalidPortID) override;
++
++    SysBridge(const SysBridgeParams &p);
++};
++
++} // namespace gem5
++
++#endif //__MEM_SYS_BRIDGE_HH__
+-- 
+1.8.3.1
+

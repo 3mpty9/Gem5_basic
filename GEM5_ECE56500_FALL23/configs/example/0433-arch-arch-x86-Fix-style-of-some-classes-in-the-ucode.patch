@@ -1,0 +1,118 @@
+From 4d970c59b501daa6a717a8729c3dd56496b1f507 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 30 Jan 2022 23:16:36 -0800
+Subject: [PATCH 433/757] arch:arch-x86: Fix style of some classes in the ucode
+ assembler.
+
+Change-Id: I13091707f4e44980ad9a3df022fbbfbafb1d0969
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56332
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/micro_asm.py         | 8 ++++----
+ src/arch/micro_asm_test.py    | 6 +++---
+ src/arch/x86/isa/macroop.isa  | 4 ++--
+ src/arch/x86/isa/microasm.isa | 4 ++--
+ 4 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/src/arch/micro_asm.py b/src/arch/micro_asm.py
+index d85bd8f..54f7b61 100644
+--- a/src/arch/micro_asm.py
++++ b/src/arch/micro_asm.py
+@@ -40,7 +40,7 @@ from ply import yacc
+ #
+ ##########################################################################
+ 
+-class Micro_Container(object):
++class MicroContainer:
+     def __init__(self, name):
+         self.microops = []
+         self.name = name
+@@ -59,10 +59,10 @@ class Micro_Container(object):
+             string += "  %s\n" % microop
+         return string
+ 
+-class Combinational_Macroop(Micro_Container):
++class CombinationalMacroop(MicroContainer):
+     pass
+ 
+-class Rom_Macroop(object):
++class RomMacroop:
+     def __init__(self, name, target):
+         self.name = name
+         self.target = target
+@@ -70,7 +70,7 @@ class Rom_Macroop(object):
+     def __str__(self):
+         return "%s: %s\n" % (self.name, self.target)
+ 
+-class Rom(Micro_Container):
++class Rom(MicroContainer):
+     def __init__(self, name):
+         super().__init__(name)
+         self.externs = {}
+diff --git a/src/arch/micro_asm_test.py b/src/arch/micro_asm_test.py
+index d3ad420..08c2412 100755
+--- a/src/arch/micro_asm_test.py
++++ b/src/arch/micro_asm_test.py
+@@ -24,7 +24,7 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+-from micro_asm import MicroAssembler, Combinational_Macroop, Rom_Macroop, Rom
++from micro_asm import MicroAssembler, CombinationalMacroop, RomMacroop, Rom
+ 
+ class Bah(object):
+     def __init__(self):
+@@ -50,7 +50,7 @@ microops = {
+     "dah": Dah
+ }
+ 
+-class TestMacroop(Combinational_Macroop):
++class TestMacroop(CombinationalMacroop):
+     def tweak(self):
+         microops["bah"] = Bah_Tweaked
+     def untweak(self):
+@@ -66,7 +66,7 @@ class TestMacroop(Combinational_Macroop):
+             "print": self.print_debug
+         }
+ 
+-assembler = MicroAssembler(TestMacroop, microops, Rom('main ROM'), Rom_Macroop)
++assembler = MicroAssembler(TestMacroop, microops, Rom('main ROM'), RomMacroop)
+ 
+ testAssembly = '''
+ # Single line comment
+diff --git a/src/arch/x86/isa/macroop.isa b/src/arch/x86/isa/macroop.isa
+index 1cbdc85..8bd3b7e 100644
+--- a/src/arch/x86/isa/macroop.isa
++++ b/src/arch/x86/isa/macroop.isa
+@@ -131,8 +131,8 @@ def template MacroConstructor {{
+ }};
+ 
+ let {{
+-    from micro_asm import Combinational_Macroop, Rom_Macroop
+-    class X86Macroop(Combinational_Macroop):
++    from micro_asm import CombinationalMacroop, RomMacroop
++    class X86Macroop(CombinationalMacroop):
+         def setAdjustEnv(self, val):
+             self.adjust_env = val
+         def adjustImm(self, val):
+diff --git a/src/arch/x86/isa/microasm.isa b/src/arch/x86/isa/microasm.isa
+index 4d4409a..7d621b7 100644
+--- a/src/arch/x86/isa/microasm.isa
++++ b/src/arch/x86/isa/microasm.isa
+@@ -52,9 +52,9 @@ let {{
+     sys.path[0:0] = ["src/arch/x86/isa/"]
+     from insts import microcode
+     # print microcode
+-    from micro_asm import MicroAssembler, Rom_Macroop
++    from micro_asm import MicroAssembler, RomMacroop
+     mainRom = X86MicrocodeRom('main ROM')
+-    assembler = MicroAssembler(X86Macroop, microopClasses, mainRom, Rom_Macroop)
++    assembler = MicroAssembler(X86Macroop, microopClasses, mainRom, RomMacroop)
+ 
+     def gpRegIdx(idx):
+         return "X86ISA::GpRegIndex(%s)" % idx
+-- 
+1.8.3.1
+

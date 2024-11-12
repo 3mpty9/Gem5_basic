@@ -1,0 +1,42 @@
+From 2d012222c23dda1d7574bffc81ec6f87a8d75a22 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 21:38:28 -0700
+Subject: [PATCH 305/757] arch: Get rid of the unused numAccessNeeded variable.
+
+This was defined in a few operand classes makeConstructor methods, but
+never used for anything.
+
+Change-Id: If2f62ff0a29a26ae7067728651440f864999fc67
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49718
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/isa_parser/operand_types.py | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 41e410b..e8aeddc 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -344,8 +344,6 @@ class VecRegOperand(Operand):
+         c_src = ''
+         c_dest = ''
+ 
+-        numAccessNeeded = 1
+-
+         if self.is_src:
+             c_src = self.src_reg_constructor % (self.reg_class, self.reg_spec)
+ 
+@@ -474,8 +472,6 @@ class VecElemOperand(Operand):
+         c_src = ''
+         c_dest = ''
+ 
+-        numAccessNeeded = 1
+-
+         if self.is_src:
+             c_src = ('\n\tsetSrcRegIdx(_numSrcRegs++, RegId(%s, %s));' %
+                     (self.reg_class, self.reg_spec))
+-- 
+1.8.3.1
+

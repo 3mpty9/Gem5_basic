@@ -1,0 +1,34 @@
+From 8e150924cbabfda5267b2bca21ddf3701c86f198 Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Wed, 1 Jun 2022 12:51:22 -0700
+Subject: [PATCH 683/757] systemc: Add SimObject::regStats to systemc kernel
+
+Without this call, not all stats are registered correctly.
+
+Change-Id: I81ff5305fdb8491c717c1ac2d41434d101c6ed3b
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60252
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Matthias Jung <jungma@eit.uni-kl.de>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/systemc/core/kernel.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/systemc/core/kernel.cc b/src/systemc/core/kernel.cc
+index a9ff4bb..ae67e46 100644
+--- a/src/systemc/core/kernel.cc
++++ b/src/systemc/core/kernel.cc
+@@ -85,6 +85,8 @@ Kernel::init()
+ void
+ Kernel::regStats()
+ {
++    gem5::SimObject::regStats();
++
+     if (scMainFiber.finished() || stopAfterCallbacks)
+         return;
+ 
+-- 
+1.8.3.1
+

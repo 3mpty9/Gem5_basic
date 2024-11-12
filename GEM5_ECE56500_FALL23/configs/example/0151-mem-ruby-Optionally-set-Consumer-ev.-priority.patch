@@ -1,0 +1,70 @@
+From 43232cdb9f0fbccdc83c87cc3bec2091338592bc Mon Sep 17 00:00:00 2001
+From: Tiago Muck <tiago.muck@arm.com>
+Date: Fri, 7 Jun 2019 18:18:47 -0500
+Subject: [PATCH 151/757] mem-ruby: Optionally set Consumer ev. priority
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I62dc6656bbed4e7f4d575a6a82ac254382294ed1
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41855
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/common/Consumer.cc | 6 +++---
+ src/mem/ruby/common/Consumer.hh | 5 +++--
+ 2 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/src/mem/ruby/common/Consumer.cc b/src/mem/ruby/common/Consumer.cc
+index 8017ed7..4ac8292 100644
+--- a/src/mem/ruby/common/Consumer.cc
++++ b/src/mem/ruby/common/Consumer.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2020 ARM Limited
++ * Copyright (c) 2020-2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -46,9 +46,9 @@ namespace gem5
+ namespace ruby
+ {
+ 
+-Consumer::Consumer(ClockedObject *_em)
++Consumer::Consumer(ClockedObject *_em, Event::Priority ev_prio)
+     : m_wakeup_event([this]{ processCurrentEvent(); },
+-                    "Consumer Event", false),
++                    "Consumer Event", false, ev_prio),
+       em(_em)
+ { }
+ 
+diff --git a/src/mem/ruby/common/Consumer.hh b/src/mem/ruby/common/Consumer.hh
+index 8849294..9e8e89a 100644
+--- a/src/mem/ruby/common/Consumer.hh
++++ b/src/mem/ruby/common/Consumer.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2020 ARM Limited
++ * Copyright (c) 2020-2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -61,7 +61,8 @@ namespace ruby
+ class Consumer
+ {
+   public:
+-    Consumer(ClockedObject *_em);
++    Consumer(ClockedObject *em,
++             Event::Priority ev_prio = Event::Default_Pri);
+ 
+     virtual
+     ~Consumer()
+-- 
+1.8.3.1
+

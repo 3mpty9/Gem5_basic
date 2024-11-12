@@ -1,0 +1,103 @@
+From 17c7f33fdb3adcba81cd45789dbc0959e896a3c4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 04:41:16 -0700
+Subject: [PATCH 235/757] cpu: Implement (get|set)Reg(Flat|) for the checker
+ CPU.
+
+These are very simple, since they just delegate to other TCs.
+
+Change-Id: I08fd8de09c90c74548987d537e282edc297ac4e8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49111
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/cpu/checker/thread_context.hh | 64 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 64 insertions(+)
+
+diff --git a/src/cpu/checker/thread_context.hh b/src/cpu/checker/thread_context.hh
+index d97e7a0..f8c3ce7 100644
+--- a/src/cpu/checker/thread_context.hh
++++ b/src/cpu/checker/thread_context.hh
+@@ -227,6 +227,38 @@ class CheckerThreadContext : public ThreadContext
+     // New accessors for new decoder.
+     //
+     RegVal
++    getReg(const RegId &reg) const override
++    {
++        return actualTC->getReg(reg);
++    }
++
++    void
++    getReg(const RegId &reg, void *val) const override
++    {
++        actualTC->getReg(reg, val);
++    }
++
++    void *
++    getWritableReg(const RegId &reg) override
++    {
++        return actualTC->getWritableReg(reg);
++    }
++
++    void
++    setReg(const RegId &reg, RegVal val) override
++    {
++        actualTC->setReg(reg, val);
++        checkerTC->setReg(reg, val);
++    }
++
++    void
++    setReg(const RegId &reg, const void *val) override
++    {
++        actualTC->setReg(reg, val);
++        checkerTC->setReg(reg, val);
++    }
++
++    RegVal
+     readIntReg(RegIndex reg_idx) const override
+     {
+         return actualTC->readIntReg(reg_idx);
+@@ -389,6 +421,38 @@ class CheckerThreadContext : public ThreadContext
+     }
+ 
+     RegVal
++    getRegFlat(const RegId &reg) const override
++    {
++        return actualTC->getRegFlat(reg);
++    }
++
++    void
++    getRegFlat(const RegId &reg, void *val) const override
++    {
++        actualTC->getRegFlat(reg, val);
++    }
++
++    void *
++    getWritableRegFlat(const RegId &reg) override
++    {
++        return actualTC->getWritableRegFlat(reg);
++    }
++
++    void
++    setRegFlat(const RegId &reg, RegVal val) override
++    {
++        actualTC->setRegFlat(reg, val);
++        checkerTC->setRegFlat(reg, val);
++    }
++
++    void
++    setRegFlat(const RegId &reg, const void *val) override
++    {
++        actualTC->setRegFlat(reg, val);
++        checkerTC->setRegFlat(reg, val);
++    }
++
++    RegVal
+     readIntRegFlat(RegIndex idx) const override
+     {
+         return actualTC->readIntRegFlat(idx);
+-- 
+1.8.3.1
+

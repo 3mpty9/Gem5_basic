@@ -1,0 +1,120 @@
+From c22ec209d801c0a5200c55e03868b124072954dd Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 11 Jan 2022 00:08:20 -0800
+Subject: [PATCH 133/757] arch-x86: Split out and implement INT for real mode.
+
+The INT instruction is much simpler in real mode than it is in legacy
+protected mode.
+
+Change-Id: I79f5bc7ebe36726537cd61657f301905085c1199
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55449
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa      |  8 ++-
+ .../control_transfer/interrupts_and_exceptions.py  | 59 ++++++++++++++++++++--
+ 2 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index e34b477..66cb2c3 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -403,7 +403,13 @@
+                             }});
+                     }
+ 
+-                    default: Inst::INT(Ib);
++                    default: decode MODE_MODE {
++                        0x0: Inst::INT_LONG(Ib);
++                        0x1: decode MODE_SUBMODE {
++                            0x4: Inst::INT_REAL(Ib);
++                            default: Inst::INT_PROT(Ib);
++                        }
++                    }
+                 }
+                 0x6: decode MODE_SUBMODE {
+                     0x0: Inst::UD2();
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+index 2b0c5cb..983d95e 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+@@ -263,8 +263,18 @@ def macroop INT3 {
+     br rom_label("legacyModeInterrupt")
+ };
+ 
+-def macroop INT_I {
++def macroop INT_LONG_I {
++    #load the byte-sized interrupt vector specified in the instruction
++    .adjust_imm trimImm(8)
++    limm t1, imm, dataSize=8
+ 
++    rdip t7
++
++    # Are we in long mode?
++    br rom_label("longModeSoftInterrupt")
++};
++
++def macroop INT_PROT_I {
+     #load the byte-sized interrupt vector specified in the instruction
+     .adjust_imm trimImm(8)
+     limm t1, imm, dataSize=8
+@@ -272,11 +282,52 @@ def macroop INT_I {
+     rdip t7
+ 
+     # Are we in long mode?
+-    rdm5reg t5
+-    andi t0, t5, 0x1, flags=(EZF,)
+-    br rom_label("longModeSoftInterrupt"), flags=(CEZF,)
+     br rom_label("legacyModeInterrupt")
+ };
++
++def macroop INT_REAL_I {
++    #load the byte-sized interrupt vector specified in the instruction
++    .adjust_imm trimImm(8)
++    limm t1, imm, dataSize=8
++
++    # temp_RIP
++    ld t2, idtr, [4, t1, t0], dataSize=2, addressSize=8
++    # temp_CS
++    ld t3, idtr, [4, t1, t0], 2, dataSize=2, addressSize=8
++
++    cda ss, [1, t0, rsp], -2, dataSize=2, addressSize=ssz
++    cda ss, [1, t0, rsp], -6, dataSize=2, addressSize=ssz
++
++    rflags t4, dataSize=8
++    rdsel t5, cs, dataSize=8
++    rdip t6
++
++    # Push RFLAGS.
++    st t4, ss, [1, t0, rsp], -2, dataSize=2, addressSize=ssz
++    # Push CS.
++    st t5, ss, [1, t0, rsp], -4, dataSize=2, addressSize=ssz
++    # Push the next RIP.
++    st t6, ss, [1, t0, rsp], -6, dataSize=2, addressSize=ssz
++
++    # Update RSP
++    subi rsp, rsp, 6, dataSize=ssz
++
++    # Set the CS selector.
++    wrsel cs, t3, dataSize=2
++    # Make sure there isn't any junk in the upper bits of the base.
++    mov t3, t0, t3
++    # Compute and set CS base.
++    slli t3, t3, 4, dataSize=8
++    wrbase cs, t3, dataSize=8
++
++    # If AC, TF, IF or RF are set, we want to flip them.
++    limm t7, "(ACBit | TFBit | IFBit | RFBit)", dataSize=8
++    and t7, t4, t7, dataSize=8
++    wrflags t4, t7, dataSize=8
++
++    # Set the new RIP
++    wrip t2, t0
++};
+ '''
+ #let {{
+ #    class INT(Inst):
+-- 
+1.8.3.1
+

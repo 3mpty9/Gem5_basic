@@ -1,0 +1,54 @@
+From 530b389acef4542c1e4370c507ef42af1ba8c575 Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Thu, 19 May 2022 14:21:35 -0700
+Subject: [PATCH 641/757] mem-ruby: SLICC-allow expressions in is_valid
+
+Currently, the is_valid statement in slicc requires that there is a
+variable passed in as the only parameter. As far as I can tell, there's
+no reason not to allow a more flexible expression. If we allow expr
+instead of var, then we can eliminate unused variable warnings more
+easily.
+
+For instance, the following code won't compile with gem5.fast:
+```
+TBE tbe := getTBE(...);
+assert(is_valid(tbe));
+```
+
+However, with this changeset we can fix the problem by using the
+following code:
+```
+assert(is_valid(getTBE(...)));
+```
+
+Change-Id: I38a9f0dff9e942a387a8b2de655380d1af82afb8
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59830
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/mem/slicc/parser.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/slicc/parser.py b/src/mem/slicc/parser.py
+index cc45f95..36df4b6 100644
+--- a/src/mem/slicc/parser.py
++++ b/src/mem/slicc/parser.py
+@@ -752,11 +752,11 @@ class SLICC(Grammar):
+         p[0] = p[2]
+ 
+     def p_expr__is_valid_ptr(self, p):
+-        "aexpr : IS_VALID '(' var ')'"
++        "aexpr : IS_VALID '(' expr ')'"
+         p[0] = ast.IsValidPtrExprAST(self, p[3], True)
+ 
+     def p_expr__is_invalid_ptr(self, p):
+-        "aexpr : IS_INVALID '(' var ')'"
++        "aexpr : IS_INVALID '(' expr ')'"
+         p[0] = ast.IsValidPtrExprAST(self, p[3], False)
+ 
+     def p_literal__string(self, p):
+-- 
+1.8.3.1
+

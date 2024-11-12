@@ -1,0 +1,53 @@
+From bd687d48eb4060cb14b64f591c95587a98690018 Mon Sep 17 00:00:00 2001
+From: Alex Richardson <alexrichardson@google.com>
+Date: Tue, 11 Jan 2022 12:24:41 +0000
+Subject: [PATCH 121/757] arch-riscv: Add an ostream operator for PrivilegeMode
+
+This makes it easier to use the current privilege mode in error messages.
+
+Change-Id: I425d45d3957a70d8afb6cbde18955fae1461c960
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55403
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa.cc | 14 ++++++++++++++
+ src/arch/riscv/isa.hh |  2 ++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/arch/riscv/isa.cc b/src/arch/riscv/isa.cc
+index c8b752c..f49a2a8 100644
+--- a/src/arch/riscv/isa.cc
++++ b/src/arch/riscv/isa.cc
+@@ -575,3 +575,17 @@ ISA::globalClearExclusive()
+ 
+ } // namespace RiscvISA
+ } // namespace gem5
++
++std::ostream &
++operator<<(std::ostream &os, gem5::RiscvISA::PrivilegeMode pm)
++{
++    switch (pm) {
++    case gem5::RiscvISA::PRV_U:
++        return os << "PRV_U";
++    case gem5::RiscvISA::PRV_S:
++        return os << "PRV_S";
++    case gem5::RiscvISA::PRV_M:
++        return os << "PRV_M";
++    }
++    return os << "PRV_<invalid>";
++}
+diff --git a/src/arch/riscv/isa.hh b/src/arch/riscv/isa.hh
+index 143cc69..81923b5 100644
+--- a/src/arch/riscv/isa.hh
++++ b/src/arch/riscv/isa.hh
+@@ -119,4 +119,6 @@ class ISA : public BaseISA
+ } // namespace RiscvISA
+ } // namespace gem5
+ 
++std::ostream &operator<<(std::ostream &os, gem5::RiscvISA::PrivilegeMode pm);
++
+ #endif // __ARCH_RISCV_ISA_HH__
+-- 
+1.8.3.1
+

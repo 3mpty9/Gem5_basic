@@ -1,0 +1,253 @@
+From 967bada8db0e677a135f73bae417fd3d03fb6cb0 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 19:30:16 -0700
+Subject: [PATCH 306/757] arch,cpu: Replace StaticInst::_num${TYPE}DestRegs
+ members with an array.
+
+The array is indexed using the register class.
+
+Change-Id: I6cfd9735afa03e386e01e9e255fd6e55b7ba7272
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49712
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/insts/tme64.cc          | 34 ++--------------------------
+ src/arch/isa_parser/isa_parser.py    |  8 -------
+ src/arch/isa_parser/operand_types.py | 12 +++++-----
+ src/cpu/static_inst.hh               | 43 ++++++++++++++++--------------------
+ 4 files changed, 27 insertions(+), 70 deletions(-)
+
+diff --git a/src/arch/arm/insts/tme64.cc b/src/arch/arm/insts/tme64.cc
+index 12a66a8..7a6ede7 100644
+--- a/src/arch/arm/insts/tme64.cc
++++ b/src/arch/arm/insts/tme64.cc
+@@ -82,11 +82,6 @@ MicroTfence64::MicroTfence64(ExtMachInst machInst)
+ {
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+     flags[IsMicroop] = true;
+     flags[IsReadBarrier] = true;
+     flags[IsWriteBarrier] = true;
+@@ -128,13 +123,8 @@ Tstart64::Tstart64(ExtMachInst machInst, IntRegIndex _dest)
+ 
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+     setDestRegIdx(_numDestRegs++, RegId(IntRegClass, dest));
+-    _numIntDestRegs++;
++    _numTypedDestRegs[IntRegClass]++;
+     flags[IsHtmStart] = true;
+     flags[IsInteger] = true;
+     flags[IsLoad] = true;
+@@ -162,13 +152,8 @@ Ttest64::Ttest64(ExtMachInst machInst, IntRegIndex _dest)
+ 
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+     setDestRegIdx(_numDestRegs++, RegId(IntRegClass, dest));
+-    _numIntDestRegs++;
++    _numTypedDestRegs[IntRegClass]++;
+     flags[IsInteger] = true;
+     flags[IsMicroop] = true;
+ }
+@@ -178,11 +163,6 @@ Tcancel64::Tcancel64(ExtMachInst machInst, uint64_t _imm)
+ {
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+     flags[IsLoad] = true;
+     flags[IsMicroop] = true;
+     flags[IsNonSpeculative] = true;
+@@ -204,11 +184,6 @@ MacroTmeOp::MacroTmeOp(const char *mnem,
+   PredMacroOp(mnem, machInst, __opClass) {
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+ 
+     numMicroops = 0;
+     microOps = nullptr;
+@@ -219,11 +194,6 @@ MicroTcommit64::MicroTcommit64(ExtMachInst machInst)
+ {
+     _numSrcRegs = 0;
+     _numDestRegs = 0;
+-    _numFPDestRegs = 0;
+-    _numVecDestRegs = 0;
+-    _numVecElemDestRegs = 0;
+-    _numIntDestRegs = 0;
+-    _numCCDestRegs = 0;
+     flags[IsHtmStop] = true;
+     flags[IsLoad] = true;
+     flags[IsMicroop] = true;
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 901662f..ee7f21f 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -400,14 +400,6 @@ class InstObjParams(object):
+         # The header of the constructor declares the variables to be used
+         # in the body of the constructor.
+         header = ''
+-        header += '\n\t_numSrcRegs = 0;'
+-        header += '\n\t_numDestRegs = 0;'
+-        header += '\n\t_numFPDestRegs = 0;'
+-        header += '\n\t_numVecDestRegs = 0;'
+-        header += '\n\t_numVecElemDestRegs = 0;'
+-        header += '\n\t_numVecPredDestRegs = 0;'
+-        header += '\n\t_numIntDestRegs = 0;'
+-        header += '\n\t_numCCDestRegs = 0;'
+ 
+         self.constructor = header + \
+                            self.operands.concatAttrStrings('constructor')
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index e8aeddc..e4d56c0 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -192,7 +192,7 @@ class IntRegOperand(Operand):
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % (self.reg_class, self.reg_spec)
+-            c_dest += '\n\t_numIntDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+             if self.hasWritePred():
+                 c_dest = '\n\tif (%s) {%s\n\t}' % \
+                          (self.write_predicate, c_dest)
+@@ -261,7 +261,7 @@ class FloatRegOperand(Operand):
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % (self.reg_class, self.reg_spec)
+-            c_dest += '\n\t_numFPDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+ 
+         return c_src + c_dest
+ 
+@@ -349,7 +349,7 @@ class VecRegOperand(Operand):
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % (self.reg_class, self.reg_spec)
+-            c_dest += '\n\t_numVecDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+ 
+         return c_src + c_dest
+ 
+@@ -479,7 +479,7 @@ class VecElemOperand(Operand):
+         if self.is_dest:
+             c_dest = ('\n\tsetDestRegIdx(_numDestRegs++, RegId(%s, %s));' %
+                     (self.reg_class, self.reg_spec))
+-            c_dest += '\n\t_numVecElemDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+         return c_src + c_dest
+ 
+     def makeRead(self, predRead):
+@@ -521,7 +521,7 @@ class VecPredRegOperand(Operand):
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % (self.reg_class, self.reg_spec)
+-            c_dest += '\n\t_numVecPredDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+ 
+         return c_src + c_dest
+ 
+@@ -601,7 +601,7 @@ class CCRegOperand(Operand):
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % (self.reg_class, self.reg_spec)
+-            c_dest += '\n\t_numCCDestRegs++;'
++            c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+             if self.hasWritePred():
+                 c_dest = '\n\tif (%s) {%s\n\t}' % \
+                          (self.write_predicate, c_dest)
+diff --git a/src/cpu/static_inst.hh b/src/cpu/static_inst.hh
+index 3e6357b..e9bd63e 100644
+--- a/src/cpu/static_inst.hh
++++ b/src/cpu/static_inst.hh
+@@ -105,25 +105,12 @@ class StaticInst : public RefCounted, public StaticInstFlags
+     OpClass _opClass;
+ 
+     /// See numSrcRegs().
+-    int8_t _numSrcRegs = 0;
++    uint8_t _numSrcRegs = 0;
+ 
+     /// See numDestRegs().
+-    int8_t _numDestRegs = 0;
++    uint8_t _numDestRegs = 0;
+ 
+-    /// The following are used to track physical register usage
+-    /// for machines with separate int & FP reg files.
+-    //@{
+-    int8_t _numFPDestRegs = 0;
+-    int8_t _numIntDestRegs = 0;
+-    int8_t _numCCDestRegs = 0;
+-    //@}
+-
+-    /** To use in architectures with vector register file. */
+-    /** @{ */
+-    int8_t _numVecDestRegs = 0;
+-    int8_t _numVecElemDestRegs = 0;
+-    int8_t _numVecPredDestRegs = 0;
+-    /** @} */
++    std::array<uint8_t, MiscRegClass + 1> _numTypedDestRegs = {};
+ 
+   public:
+ 
+@@ -135,21 +122,29 @@ class StaticInst : public RefCounted, public StaticInstFlags
+     /// machines with vector and predicate register files.
+     //@{
+     /// Number of source registers.
+-    int8_t numSrcRegs()  const { return _numSrcRegs; }
++    uint8_t numSrcRegs()  const { return _numSrcRegs; }
+     /// Number of destination registers.
+-    int8_t numDestRegs() const { return _numDestRegs; }
++    uint8_t numDestRegs() const { return _numDestRegs; }
+     /// Number of floating-point destination regs.
+-    int8_t numFPDestRegs()  const { return _numFPDestRegs; }
++    uint8_t numFPDestRegs() const { return _numTypedDestRegs[FloatRegClass]; }
+     /// Number of integer destination regs.
+-    int8_t numIntDestRegs() const { return _numIntDestRegs; }
++    uint8_t numIntDestRegs() const { return _numTypedDestRegs[IntRegClass]; }
+     /// Number of vector destination regs.
+-    int8_t numVecDestRegs() const { return _numVecDestRegs; }
++    uint8_t numVecDestRegs() const { return _numTypedDestRegs[VecRegClass]; }
+     /// Number of vector element destination regs.
+-    int8_t numVecElemDestRegs() const { return _numVecElemDestRegs; }
++    uint8_t
++    numVecElemDestRegs() const
++    {
++        return _numTypedDestRegs[VecElemClass];
++    }
+     /// Number of predicate destination regs.
+-    int8_t numVecPredDestRegs() const { return _numVecPredDestRegs; }
++    uint8_t
++    numVecPredDestRegs() const
++    {
++        return _numTypedDestRegs[VecPredRegClass];
++    }
+     /// Number of coprocesor destination regs.
+-    int8_t numCCDestRegs() const { return _numCCDestRegs; }
++    uint8_t numCCDestRegs() const { return _numTypedDestRegs[CCRegClass]; }
+     //@}
+ 
+     /// @name Flag accessors.
+-- 
+1.8.3.1
+

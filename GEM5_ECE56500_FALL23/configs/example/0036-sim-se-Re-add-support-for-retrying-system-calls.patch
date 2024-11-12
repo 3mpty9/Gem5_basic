@@ -1,0 +1,123 @@
+From 0679fc9c796c35b4f483f17d39b4b206d2ce2f76 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 11 Dec 2021 21:49:09 -0800
+Subject: [PATCH 036/757] sim-se: (Re)add support for retrying system calls.
+
+The previous incarnation of this support used faults to make the CPU
+reexecute the system call instruction again and again to prevent
+emulating/passing through blocking system calls from blocking gem5 as
+a whole. That support was accidentally removed a while ago. This new
+version suspends the thread context executing the system call, and
+periodically wakes it up to retry using a periodically scheduled event.
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1123
+
+Change-Id: I4fad23bd119021df23fe6082891fbcd0ee8fb839
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54024
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/sim/syscall_desc.cc | 55 +++++++++++++++++++++++++++++++++++++++++++++----
+ src/sim/syscall_desc.hh |  5 +++++
+ 2 files changed, 56 insertions(+), 4 deletions(-)
+
+diff --git a/src/sim/syscall_desc.cc b/src/sim/syscall_desc.cc
+index 7427f41..d293167 100644
+--- a/src/sim/syscall_desc.cc
++++ b/src/sim/syscall_desc.cc
+@@ -30,6 +30,7 @@
+ #include "sim/syscall_desc.hh"
+ 
+ #include "base/types.hh"
++#include "sim/eventq.hh"
+ #include "sim/syscall_debug_macros.hh"
+ 
+ namespace gem5
+@@ -45,12 +46,58 @@ SyscallDesc::doSyscall(ThreadContext *tc)
+     SyscallReturn retval = executor(this, tc);
+ 
+     if (retval.needsRetry()) {
+-        DPRINTF_SYSCALL(Base, "Needs retry.\n", name());
+-    } else if (retval.suppressed()) {
++        // Suspend this ThreadContext while the syscall is pending.
++        tc->suspend();
++
++        DPRINTF_SYSCALL(Base, "%s needs retry.\n", name());
++        setupRetry(tc);
++        return;
++    }
++
++    handleReturn(tc, retval);
++}
++
++void
++SyscallDesc::retrySyscall(ThreadContext *tc)
++{
++    DPRINTF_SYSCALL(Base, "Retrying %s...\n", dumper(name(), tc));
++
++    SyscallReturn retval = executor(this, tc);
++
++    if (retval.needsRetry()) {
++        DPRINTF_SYSCALL(Base, "%s still needs retry.\n", name());
++        setupRetry(tc);
++        return;
++    }
++
++    // We're done retrying, so reactivate this ThreadContext.
++    tc->activate();
++
++    handleReturn(tc, retval);
++}
++
++void
++SyscallDesc::setupRetry(ThreadContext *tc)
++{
++    // Create an event which will retry the system call later.
++    auto retry = [this, tc]() { retrySyscall(tc); };
++    auto *event = new EventFunctionWrapper(retry, name(), true);
++
++    // Schedule it in about 100 CPU cycles. That will give other contexts
++    // a chance to execute a bit of code before trying again.
++    auto *cpu = tc->getCpuPtr();
++    curEventQueue()->schedule(event,
++            curTick() + cpu->cyclesToTicks(Cycles(100)));
++}
++
++void
++SyscallDesc::handleReturn(ThreadContext *tc, const SyscallReturn &ret)
++{
++    if (ret.suppressed()) {
+         DPRINTF_SYSCALL(Base, "No return value.\n", name());
+     } else {
+-        returnInto(tc, retval);
+-        DPRINTF_SYSCALL(Base, "Returned %d.\n", retval.encodedValue());
++        returnInto(tc, ret);
++        DPRINTF_SYSCALL(Base, "Returned %d.\n", ret.encodedValue());
+     }
+ }
+ 
+diff --git a/src/sim/syscall_desc.hh b/src/sim/syscall_desc.hh
+index 6ded904..e89cf49 100644
+--- a/src/sim/syscall_desc.hh
++++ b/src/sim/syscall_desc.hh
+@@ -95,11 +95,16 @@ class SyscallDesc
+         _name(name), _num(num), executor(exec), dumper(dump)
+     {}
+ 
++    void retrySyscall(ThreadContext *tc);
++
+   private:
+     /** System call name (e.g., open, mmap, clone, socket, etc.) */
+     std::string _name;
+     int _num;
+ 
++    void setupRetry(ThreadContext *tc);
++    void handleReturn(ThreadContext *tc, const SyscallReturn &ret);
++
+     /** Mechanism for ISAs to connect to the emul function definitions */
+     Executor executor;
+     Dumper dumper;
+-- 
+1.8.3.1
+

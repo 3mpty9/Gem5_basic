@@ -1,0 +1,39 @@
+From 4ccb2643c1eba68a2efcbec99aee8545c1ae3c0f Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 6 May 2022 14:00:50 +0100
+Subject: [PATCH 617/757] base: clang-7 can't deduce non type parameter with
+ auto
+
+We now use explicit types instead (size_t)
+This is fixing compiler checks, build 224 [1]
+
+[1]: https://jenkins.gem5.org/job/compiler-checks/224/\
+    artifact/compile-test-out/clang-version-7/
+
+Change-Id: I5e94652b2fef554b1c47ce2972462401703ca5d5
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59430
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/base/memoizer.hh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/base/memoizer.hh b/src/base/memoizer.hh
+index 219e9260..c339088 100644
+--- a/src/base/memoizer.hh
++++ b/src/base/memoizer.hh
+@@ -141,7 +141,7 @@ class Memoizer
+         });
+     }
+ 
+-    template <auto Start, auto End, auto Inc, class F>
++    template <size_t Start, size_t End, size_t Inc, class F>
+     constexpr void
+     iterateTupleArgs(F&& func)
+     {
+-- 
+1.8.3.1
+

@@ -1,0 +1,56 @@
+From 1cf1f98c1aa5e8a0eec70ec4586fa0ad198fbf57 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 8 Mar 2022 14:32:44 -0800
+Subject: [PATCH 373/757] configs: Make VIPER memory MessageBuffers ordered
+
+The VIPER configuration uses the MOESI_AMD_Base protocol's directory.
+This protocol does not wait for memory ACKs. As a result, this can lead
+to read requests being pulled out of the MessageBuffer between the
+directory and DRAMCtrl before a write request to the same address. This
+leads to inconsistent data. To fix this, make the MessageBuffers
+ordered. Since these MessageBuffers are essentially just an interface
+between SLICC and DRAMCtrl, and DRAMCtrl can reorder requests properly,
+this should not cause any large impact on performance due to the
+constraint.
+
+Also remove the duplicate instantiation of these MessageBuffers.
+
+Change-Id: I59653717cc79884e733af3958adfc14941703958
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57411
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Matthew Poremba <matthew.poremba@amd.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/ruby/GPU_VIPER.py | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/configs/ruby/GPU_VIPER.py b/configs/ruby/GPU_VIPER.py
+index f8a7386..c3e146b 100644
+--- a/configs/ruby/GPU_VIPER.py
++++ b/configs/ruby/GPU_VIPER.py
+@@ -443,8 +443,8 @@ def construct_dirs(options, system, ruby_system, network):
+ 
+         dir_cntrl.triggerQueue = MessageBuffer(ordered = True)
+         dir_cntrl.L3triggerQueue = MessageBuffer(ordered = True)
+-        dir_cntrl.requestToMemory = MessageBuffer()
+-        dir_cntrl.responseFromMemory = MessageBuffer()
++        dir_cntrl.requestToMemory = MessageBuffer(ordered = True)
++        dir_cntrl.responseFromMemory = MessageBuffer(ordered = True)
+ 
+         dir_cntrl.requestFromDMA = MessageBuffer(ordered=True)
+         dir_cntrl.requestFromDMA.in_port = network.out_port
+@@ -452,9 +452,6 @@ def construct_dirs(options, system, ruby_system, network):
+         dir_cntrl.responseToDMA = MessageBuffer()
+         dir_cntrl.responseToDMA.out_port = network.in_port
+ 
+-        dir_cntrl.requestToMemory = MessageBuffer()
+-        dir_cntrl.responseFromMemory = MessageBuffer()
+-
+         exec("ruby_system.dir_cntrl%d = dir_cntrl" % i)
+         dir_cntrl_nodes.append(dir_cntrl)
+ 
+-- 
+1.8.3.1
+

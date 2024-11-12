@@ -1,0 +1,90 @@
+From 46266596ff9cbeb85c332d4dd1c0b23420ee43fb Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Sun, 1 May 2022 21:49:31 +0000
+Subject: [PATCH 596/757] arch-arm,cpu: Move KVM_CAP_ARM_IRQ_LINE_LAYOUT_2
+ check to Kvm
+
+This change [1] requires performing KVM_CAP_ARM_IRQ_LINE_LAYOUT_2 check.
+However, checkExtension() is only available within the Kvm class and
+the KvmVM class.
+
+A new function, Kvm::capIRQLineLayout2(), is added for checking the
+status of KVM_CAP_ARM_IRQ_LINE_LAYOUT_2.
+
+This fixes a compilation error on Arm systems.
+
+[1] https://gem5-review.googlesource.com/c/public/gem5/+/55964
+
+Change-Id: Ia190e06ab451e0ff8d1c4833cd23b7de8852c6dd
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59310
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/kvm/gic.cc | 11 +++--------
+ src/cpu/kvm/vm.cc       |  9 +++++++++
+ src/cpu/kvm/vm.hh       |  4 ++++
+ 3 files changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index f5e5b4e..e87bdde 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -94,15 +94,10 @@ KvmKernelGic::setIntState(unsigned type, unsigned vcpu, unsigned irq,
+     const unsigned vcpu_index = vcpu & 0xff;
+     const unsigned vcpu2_index = (vcpu >> 8) & 0xff;
+ 
+-#if defined(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2) && defined(KVM_ARM_IRQ_VCPU2_SHIFT)
+-    static const bool vcpu2_enabled = vm.checkExtension(
+-        KVM_CAP_ARM_IRQ_LINE_LAYOUT_2);
+-    uint32_t kvm_vcpu = (vcpu2_index << KVM_ARM_IRQ_VCPU2_SHIFT) |
+-                        (vcpu_index << KVM_ARM_IRQ_VCPU_SHIFT);
+-#else
+-    static const bool vcpu2_enabled = false;
++    static const bool vcpu2_enabled = vm.kvm->capIRQLineLayout2();
+     uint32_t kvm_vcpu = (vcpu_index << KVM_ARM_IRQ_VCPU_SHIFT);
+-#endif
++    if (vcpu2_enabled)
++        kvm_vcpu |= vcpu2_index << KVM_ARM_IRQ_VCPU2_SHIFT;
+ 
+     panic_if((!vcpu2_enabled && vcpu2_index) || kvm_vcpu > 0xffff,
+               "VCPU out of range");
+diff --git a/src/cpu/kvm/vm.cc b/src/cpu/kvm/vm.cc
+index fc84594..d3d8f1d 100644
+--- a/src/cpu/kvm/vm.cc
++++ b/src/cpu/kvm/vm.cc
+@@ -204,6 +204,15 @@ Kvm::capXSave() const
+ #endif
+ }
+ 
++bool
++Kvm::capIRQLineLayout2() const
++{
++#if defined(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2) && defined(KVM_ARM_IRQ_VCPU2_SHIFT)
++    return checkExtension(KVM_CAP_ARM_IRQ_LINE_LAYOUT_2) != 0;
++#else
++    return false;
++#endif
++}
+ 
+ #if defined(__i386__) || defined(__x86_64__)
+ bool
+diff --git a/src/cpu/kvm/vm.hh b/src/cpu/kvm/vm.hh
+index 4433672..e5e9d80 100644
+--- a/src/cpu/kvm/vm.hh
++++ b/src/cpu/kvm/vm.hh
+@@ -145,6 +145,10 @@ class Kvm
+ 
+     /** Support for getting and setting the kvm_xsave structure. */
+     bool capXSave() const;
++
++    /** Support for ARM IRQ line layout 2 **/
++    bool capIRQLineLayout2() const;
++
+     /** @} */
+ 
+ #if defined(__i386__) || defined(__x86_64__)
+-- 
+1.8.3.1
+

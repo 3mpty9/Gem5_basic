@@ -1,0 +1,239 @@
+From e6797303c464b622e9a5d8b0efbd554dd28da0bb Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Tue, 15 Mar 2022 20:46:56 +0000
+Subject: [PATCH 458/757] arch-arm, dev-arm: Implement EL2 Secure Physical
+ Timer
+
+Change-Id: I052f72695e670fad492079ab912268d05c797100
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58111
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.cc    | 19 +++++++++++--------
+ src/dev/arm/GenericTimer.py  |  1 +
+ src/dev/arm/RealView.py      |  7 +++++--
+ src/dev/arm/generic_timer.cc | 34 ++++++++++++++++++++++++++++++++--
+ src/dev/arm/generic_timer.hh |  5 ++++-
+ 5 files changed, 53 insertions(+), 13 deletions(-)
+
+diff --git a/src/arch/arm/regs/misc.cc b/src/arch/arm/regs/misc.cc
+index e8533e4..c0a7bbc 100644
+--- a/src/arch/arm/regs/misc.cc
++++ b/src/arch/arm/regs/misc.cc
+@@ -1230,6 +1230,9 @@ std::unordered_map<MiscRegNum64, MiscRegIndex> miscRegNumToIdx{
+     { MiscRegNum64(3, 4, 14, 3, 0), MISCREG_CNTHV_TVAL_EL2 },
+     { MiscRegNum64(3, 4, 14, 3, 1), MISCREG_CNTHV_CTL_EL2 },
+     { MiscRegNum64(3, 4, 14, 3, 2), MISCREG_CNTHV_CVAL_EL2 },
++    { MiscRegNum64(3, 4, 14, 5, 0), MISCREG_CNTHPS_TVAL_EL2 },
++    { MiscRegNum64(3, 4, 14, 5, 1), MISCREG_CNTHPS_CTL_EL2 },
++    { MiscRegNum64(3, 4, 14, 5, 2), MISCREG_CNTHPS_CVAL_EL2 },
+     { MiscRegNum64(3, 5, 1, 0, 0), MISCREG_SCTLR_EL12 },
+     { MiscRegNum64(3, 5, 1, 0, 2), MISCREG_CPACR_EL12 },
+     { MiscRegNum64(3, 5, 1, 2, 0), MISCREG_ZCR_EL12 },
+@@ -1350,6 +1353,7 @@ ISA::initializeMiscRegMetadata()
+     bool EnIB = true; // using APIBKey_EL1 key of instr addrs in ELs 0,1
+ 
+     const bool vhe_implemented = release->has(ArmExtension::FEAT_VHE);
++    const bool sel2_implemented = release->has(ArmExtension::FEAT_SEL2);
+     /**
+      * Some registers alias with others, and therefore need to be translated.
+      * When two mapping registers are given, they are the 32b lower and
+@@ -3298,19 +3302,18 @@ ISA::initializeMiscRegMetadata()
+       .mapsTo(MISCREG_CNTHP_TVAL);
+     InitReg(MISCREG_CNTHPS_CTL_EL2)
+       .mon()
+-      .hyp()
++      .hypSecure()
+       .res0(0xfffffffffffffff8)
+-      .unimplemented();
++      .implemented(sel2_implemented);
+     InitReg(MISCREG_CNTHPS_CVAL_EL2)
+       .mon()
+-      .hyp()
+-      .res0(0xfffffffffffffff8)
+-      .unimplemented();
++      .hypSecure()
++      .implemented(sel2_implemented);
+     InitReg(MISCREG_CNTHPS_TVAL_EL2)
+       .mon()
+-      .hyp()
+-      .res0(0xfffffffffffffff8)
+-      .unimplemented();
++      .hypSecure()
++      .res0(0xffffffff00000000)
++      .implemented(sel2_implemented);
+     InitReg(MISCREG_CNTHV_CTL_EL2)
+       .mon()
+       .hyp()
+diff --git a/src/dev/arm/GenericTimer.py b/src/dev/arm/GenericTimer.py
+index 25be04e..f9e77a3 100644
+--- a/src/dev/arm/GenericTimer.py
++++ b/src/dev/arm/GenericTimer.py
+@@ -90,6 +90,7 @@ Reference:
+     int_el1_virt = Param.ArmPPI("EL1 virtual timer interrupt")
+     int_el2_ns_phys = Param.ArmPPI("EL2 Non-secure physical timer interrupt")
+     int_el2_ns_virt = Param.ArmPPI("EL2 Non-secure virtual timer interrupt")
++    int_el2_s_phys = Param.ArmPPI("EL2 Secure physical timer interrupt")
+     int_el3_phys = Param.ArmPPI("EL3 physical timer interrupt")
+ 
+     # This value should be in theory initialized by the highest
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 91ade57..71f32f1 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -836,7 +836,8 @@ class VExpress_EMM(RealView):
+         int_el1_phys=ArmPPI(num=30, int_type='IRQ_TYPE_LEVEL_LOW'),
+         int_el1_virt=ArmPPI(num=27, int_type='IRQ_TYPE_LEVEL_LOW'),
+         int_el2_ns_phys=ArmPPI(num=26, int_type='IRQ_TYPE_LEVEL_LOW'),
+-        int_el2_ns_virt=ArmPPI(num=28, int_type='IRQ_TYPE_LEVEL_LOW'))
++        int_el2_ns_virt=ArmPPI(num=28, int_type='IRQ_TYPE_LEVEL_LOW'),
++        int_el2_s_phys=ArmPPI(num=20, int_type='IRQ_TYPE_LEVEL_LOW'))
+ 
+     timer0 = Sp804(int0=ArmSPI(num=34), int1=ArmSPI(num=34),
+                    pio_addr=0x1C110000, clock0='1MHz', clock1='1MHz')
+@@ -1045,6 +1046,7 @@ Memory map:
+ Interrupts:
+       0- 15: Software generated interrupts (SGIs)
+      16- 31: On-chip private peripherals (PPIs)
++        20   : generic_timer (phys sec EL2)
+         25   : vgic
+         26   : generic_timer (phys non-sec EL2)
+         27   : generic_timer (virt EL1)
+@@ -1130,7 +1132,8 @@ Interrupts:
+         int_el1_phys=ArmPPI(num=30, int_type='IRQ_TYPE_LEVEL_LOW'),
+         int_el1_virt=ArmPPI(num=27, int_type='IRQ_TYPE_LEVEL_LOW'),
+         int_el2_ns_phys=ArmPPI(num=26, int_type='IRQ_TYPE_LEVEL_LOW'),
+-        int_el2_ns_virt=ArmPPI(num=28, int_type='IRQ_TYPE_LEVEL_LOW'))
++        int_el2_ns_virt=ArmPPI(num=28, int_type='IRQ_TYPE_LEVEL_LOW'),
++        int_el2_s_phys=ArmPPI(num=20, int_type='IRQ_TYPE_LEVEL_LOW'))
+     generic_timer_mem = GenericTimerMem(cnt_control_base=0x2a430000,
+                                         cnt_read_base=0x2a800000,
+                                         cnt_ctl_base=0x2a810000,
+diff --git a/src/dev/arm/generic_timer.cc b/src/dev/arm/generic_timer.cc
+index 5bdc5dc..ea486d5 100644
+--- a/src/dev/arm/generic_timer.cc
++++ b/src/dev/arm/generic_timer.cc
+@@ -499,7 +499,8 @@ GenericTimer::createTimers(unsigned cpus)
+                            p.int_el1_phys->get(tc),
+                            p.int_el1_virt->get(tc),
+                            p.int_el2_ns_phys->get(tc),
+-                           p.int_el2_ns_virt->get(tc)));
++                           p.int_el2_ns_virt->get(tc),
++                           p.int_el2_s_phys->get(tc)));
+     }
+ }
+ 
+@@ -661,6 +662,19 @@ GenericTimer::setMiscReg(int reg, unsigned cpu, RegVal val)
+         core.virtNsEL2.setTimerValue(val);
+         return;
+ 
++      // EL2 Secure physical timer
++      case MISCREG_CNTHPS_CTL_EL2:
++        core.physSEL2.setControl(val);
++        return;
++
++      case MISCREG_CNTHPS_CVAL_EL2:
++        core.physSEL2.setCompareValue(val);
++        return;
++
++      case MISCREG_CNTHPS_TVAL_EL2:
++        core.physSEL2.setTimerValue(val);
++        return;
++
+       default:
+         warn("Writing to unknown register: %s\n", miscRegName[reg]);
+         return;
+@@ -758,6 +772,16 @@ GenericTimer::readMiscReg(int reg, unsigned cpu)
+       case MISCREG_CNTHV_TVAL_EL2:
+         return core.virtNsEL2.timerValue();
+ 
++      // EL2 Secure physical timer
++      case MISCREG_CNTHPS_CTL_EL2:
++        return core.physSEL2.control();
++
++      case MISCREG_CNTHPS_CVAL_EL2:
++        return core.physSEL2.compareValue();
++
++      case MISCREG_CNTHPS_TVAL_EL2:
++        return core.physSEL2.timerValue();
++
+       default:
+         warn("Reading from unknown register: %s\n", miscRegName[reg]);
+         return 0;
+@@ -768,7 +792,7 @@ GenericTimer::CoreTimers::CoreTimers(GenericTimer &_parent,
+     ArmSystem &system, unsigned cpu,
+     ArmInterruptPin *irq_el3_phys, ArmInterruptPin *irq_el1_phys,
+     ArmInterruptPin *irq_el1_virt, ArmInterruptPin *irq_el2_ns_phys,
+-    ArmInterruptPin *irq_el2_ns_virt)
++    ArmInterruptPin *irq_el2_ns_virt, ArmInterruptPin *irq_el2_s_phys)
+       : parent(_parent),
+         cntfrq(parent.params().cntfrq),
+         cntkctl(0), cnthctl(0),
+@@ -778,6 +802,7 @@ GenericTimer::CoreTimers::CoreTimers(GenericTimer &_parent,
+         irqVirtEL1(irq_el1_virt),
+         irqPhysNsEL2(irq_el2_ns_phys),
+         irqVirtNsEL2(irq_el2_ns_virt),
++        irqPhysSEL2(irq_el2_s_phys),
+         physEL3(csprintf("%s.el3_phys_timer%d", parent.name(), cpu),
+                 system, parent, parent.systemCounter,
+                 irq_el3_phys),
+@@ -793,6 +818,9 @@ GenericTimer::CoreTimers::CoreTimers(GenericTimer &_parent,
+         virtNsEL2(csprintf("%s.el2_ns_virt_timer%d", parent.name(), cpu),
+                   system, parent, parent.systemCounter,
+                   irq_el2_ns_virt),
++        physSEL2(csprintf("%s.el2_s_phys_timer%d", parent.name(), cpu),
++                 system, parent, parent.systemCounter,
++                 irq_el2_s_phys),
+         physEvStream{
+            EventFunctionWrapper([this]{ physEventStreamCallback(); },
+            csprintf("%s.phys_event_gen%d", parent.name(), cpu)), 0, 0
+@@ -870,6 +898,7 @@ GenericTimer::CoreTimers::serialize(CheckpointOut &cp) const
+     virtEL1.serializeSection(cp, "virt_el1_timer");
+     physNsEL2.serializeSection(cp, "phys_ns_el2_timer");
+     virtNsEL2.serializeSection(cp, "virt_ns_el2_timer");
++    physSEL2.serializeSection(cp, "phys_s_el2_timer");
+ }
+ 
+ void
+@@ -904,6 +933,7 @@ GenericTimer::CoreTimers::unserialize(CheckpointIn &cp)
+     virtEL1.unserializeSection(cp, "virt_el1_timer");
+     physNsEL2.unserializeSection(cp, "phys_ns_el2_timer");
+     virtNsEL2.unserializeSection(cp, "virt_ns_el2_timer");
++    physSEL2.unserializeSection(cp, "phys_s_el2_timer");
+ }
+ 
+ void
+diff --git a/src/dev/arm/generic_timer.hh b/src/dev/arm/generic_timer.hh
+index 66d913f..39473be 100644
+--- a/src/dev/arm/generic_timer.hh
++++ b/src/dev/arm/generic_timer.hh
+@@ -306,7 +306,8 @@ class GenericTimer : public SimObject
+                    ArmInterruptPin *irq_el1_phys,
+                    ArmInterruptPin *irq_el1_virt,
+                    ArmInterruptPin *irq_el2_ns_phys,
+-                   ArmInterruptPin *irq_el2_ns_virt);
++                   ArmInterruptPin *irq_el2_ns_virt,
++                   ArmInterruptPin *irq_el2_s_phys);
+ 
+         /// Generic Timer parent reference
+         GenericTimer &parent;
+@@ -328,12 +329,14 @@ class GenericTimer : public SimObject
+         ArmInterruptPin const *irqVirtEL1;
+         ArmInterruptPin const *irqPhysNsEL2;
+         ArmInterruptPin const *irqVirtNsEL2;
++        ArmInterruptPin const *irqPhysSEL2;
+ 
+         ArchTimerKvm physEL3;
+         ArchTimerKvm physEL1;
+         ArchTimerKvm virtEL1;
+         ArchTimerKvm physNsEL2;
+         ArchTimerKvm virtNsEL2;
++        ArchTimerKvm physSEL2;
+ 
+         // Event Stream. Events are generated based on a configurable
+         // transitionBit over the counter value. transitionTo indicates
+-- 
+1.8.3.1
+

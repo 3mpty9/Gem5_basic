@@ -1,0 +1,108 @@
+From 72d67e6426508a6aa9e4252c97005621c09b362f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 17 Mar 2022 21:18:34 -0700
+Subject: [PATCH 425/757] arch-vega: Replace deprecated Stats namespace
+ recently reintroduced.
+
+The deprecated "Stats" namespace was recently reintroduced to the vega
+TLB code. Replace it with the new statistics namespace.
+
+Change-Id: Ie5daf288176ce7e8aadd27b84a70baf4cbc72dff
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57949
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Matthew Poremba <matthew.poremba@amd.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/tlb.hh           | 28 ++++++++++++++--------------
+ src/arch/amdgpu/vega/tlb_coalescer.hh | 14 +++++++-------
+ 2 files changed, 21 insertions(+), 21 deletions(-)
+
+diff --git a/src/arch/amdgpu/vega/tlb.hh b/src/arch/amdgpu/vega/tlb.hh
+index 5ac108a..c38f591 100644
+--- a/src/arch/amdgpu/vega/tlb.hh
++++ b/src/arch/amdgpu/vega/tlb.hh
+@@ -158,31 +158,31 @@ class GpuTLB : public ClockedObject
+     {
+         VegaTLBStats(statistics::Group *parent);
+ 
+-        Stats::Scalar maxDownstreamReached;
+-        Stats::Scalar outstandingReqsMax;
++        statistics::Scalar maxDownstreamReached;
++        statistics::Scalar outstandingReqsMax;
+ 
+         // local_stats are as seen from the TLB
+         // without taking into account coalescing
+-        Stats::Scalar localNumTLBAccesses;
+-        Stats::Scalar localNumTLBHits;
+-        Stats::Scalar localNumTLBMisses;
+-        Stats::Formula localTLBMissRate;
++        statistics::Scalar localNumTLBAccesses;
++        statistics::Scalar localNumTLBHits;
++        statistics::Scalar localNumTLBMisses;
++        statistics::Formula localTLBMissRate;
+ 
+         // global_stats are as seen from the
+         // CU's perspective taking into account
+         // all coalesced requests.
+-        Stats::Scalar globalNumTLBAccesses;
+-        Stats::Scalar globalNumTLBHits;
+-        Stats::Scalar globalNumTLBMisses;
+-        Stats::Formula globalTLBMissRate;
++        statistics::Scalar globalNumTLBAccesses;
++        statistics::Scalar globalNumTLBHits;
++        statistics::Scalar globalNumTLBMisses;
++        statistics::Formula globalTLBMissRate;
+ 
+         // from the CU perspective (global)
+-        Stats::Scalar accessCycles;
+-        Stats::Scalar pageTableCycles;
++        statistics::Scalar accessCycles;
++        statistics::Scalar pageTableCycles;
+ 
+         // from the perspective of this TLB
+-        Stats::Scalar localCycles;
+-        Stats::Formula localLatency;
++        statistics::Scalar localCycles;
++        statistics::Formula localLatency;
+     } stats;
+ 
+ 
+diff --git a/src/arch/amdgpu/vega/tlb_coalescer.hh b/src/arch/amdgpu/vega/tlb_coalescer.hh
+index 127c159..da73b2e 100644
+--- a/src/arch/amdgpu/vega/tlb_coalescer.hh
++++ b/src/arch/amdgpu/vega/tlb_coalescer.hh
+@@ -110,24 +110,24 @@ class VegaTLBCoalescer : public ClockedObject
+     CoalescingTable issuedTranslationsTable;
+ 
+     // number of packets the coalescer receives
+-    Stats::Scalar uncoalescedAccesses;
++    statistics::Scalar uncoalescedAccesses;
+     // number packets the coalescer send to the TLB
+-    Stats::Scalar coalescedAccesses;
++    statistics::Scalar coalescedAccesses;
+ 
+     // Number of cycles the coalesced requests spend waiting in
+     // coalescerFIFO. For each packet the coalescer receives we take into
+     // account the number of all uncoalesced requests this pkt "represents"
+-    Stats::Scalar queuingCycles;
++    statistics::Scalar queuingCycles;
+ 
+     // On average how much time a request from the
+     // uncoalescedAccesses that reaches the TLB
+     // spends waiting?
+-    Stats::Scalar localqueuingCycles;
+-    Stats::Scalar localCycles;
++    statistics::Scalar localqueuingCycles;
++    statistics::Scalar localCycles;
+   // localqueuingCycles/uncoalescedAccesses
+-    Stats::Formula localLatency;
++    statistics::Formula localLatency;
+    // latency of a request to be completed
+-    Stats::Formula latency;
++    statistics::Formula latency;
+ 
+     bool canCoalesce(PacketPtr pkt1, PacketPtr pkt2);
+     void updatePhysAddresses(PacketPtr pkt);
+-- 
+1.8.3.1
+

@@ -1,0 +1,88 @@
+From 2eb3ac388048ce112ded3403686c3c69569589ed Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 29 Jan 2022 22:16:10 -0800
+Subject: [PATCH 430/757] arch: Switch to a new state to process macrocoop
+ headers.
+
+The "header" of a macroop definition is the part after "def rom" but
+before the "{". This is pretty minimal now, but will be more complex
+once macros are introduced.
+
+Change-Id: I002d6501a015f46be6ae28b8d2a5e6064438da32
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56328
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/micro_asm.py | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/micro_asm.py b/src/arch/micro_asm.py
+index 60d7216..1eb82b5 100644
+--- a/src/arch/micro_asm.py
++++ b/src/arch/micro_asm.py
+@@ -197,6 +197,7 @@ tokens = reserved + (
+ states = (
+     ('asm', 'exclusive'),
+     ('params', 'exclusive'),
++    ('header', 'exclusive'),
+ )
+ 
+ reserved_map = { }
+@@ -244,17 +245,27 @@ def t_asm_ID(t):
+         t.lexer.push_state('params')
+     return t
+ 
++def t_header_ID(t):
++    r'[A-Za-z_]\w*'
++    return t
++
+ # If there is a label and you're -not- in the assembler (which would be caught
+ # above), don't start looking for parameters.
+ def t_ANY_ID(t):
+     r'[A-Za-z_]\w*'
+     t.type = reserved_map.get(t.value, 'ID')
++    if t.type == 'MACROOP':
++        t.lexer.push_state('asm')
++        t.lexer.push_state('header')
++    elif t.type == 'ROM':
++        t.lexer.push_state('asm')
++        t.lexer.push_state('header')
+     return t
+ 
+ # Braces enter and exit micro assembly
+-def t_INITIAL_LBRACE(t):
++def t_header_LBRACE(t):
+     r'\{'
+-    t.lexer.push_state('asm')
++    t.lexer.pop_state()
+     return t
+ 
+ def t_asm_RBRACE(t):
+@@ -262,11 +273,6 @@ def t_asm_RBRACE(t):
+     t.lexer.pop_state()
+     return t
+ 
+-# At the top level, keep track of newlines only for line counting.
+-def t_INITIAL_NEWLINE(t):
+-    r'\n+'
+-    t.lineno += t.value.count('\n')
+-
+ # In the micro assembler, do line counting but also return a token. The
+ # token is needed by the parser to detect the end of a statement.
+ def t_asm_NEWLINE(t):
+@@ -287,6 +293,11 @@ def t_params_SEMI(t):
+     t.lexer.pop_state()
+     return t
+ 
++# Unless handled specially above, track newlines only for line counting.
++def t_ANY_NEWLINE(t):
++    r'\n+'
++    t.lineno += t.value.count('\n')
++
+ # Basic regular expressions to pick out simple tokens
+ t_ANY_LPAREN = r'\('
+ t_ANY_RPAREN = r'\)'
+-- 
+1.8.3.1
+

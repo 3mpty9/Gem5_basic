@@ -1,0 +1,64 @@
+From cfce0ad8743a7eb5e30a3028f94e816ebed45ccb Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 10 Jan 2022 23:28:35 -0800
+Subject: [PATCH 132/757] arch-x86: Implement IRET for real mode.
+
+The IRET instruction is comparitively very simple in real mode. It just
+pops a few values off the stack into CS, RIP, and RFLAGS, and sets the
+CS base.
+
+Change-Id: I2bc6015209f1beca31253e288dad7c8de5cd22fc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55448
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../control_transfer/interrupts_and_exceptions.py  | 32 +++++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+index cc32b78..2b0c5cb 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+@@ -36,7 +36,37 @@
+ microcode = '''
+ def macroop IRET_REAL {
+     .serialize_after
+-    panic "Real mode iret isn't implemented!"
++
++    # temp_RIP
++    ld t1, ss, [1, t0, rsp], "0 * env.dataSize", addressSize=ssz
++    # temp_CS
++    ld t2, ss, [1, t0, rsp], "1 * env.dataSize", addressSize=ssz
++    # temp_RFLAGS
++    ld t3, ss, [1, t0, rsp], "2 * env.dataSize", addressSize=ssz
++
++    # Update RSP now that all memory accesses have succeeded.
++    addi rsp, rsp, "3 * env.dataSize", dataSize=ssz
++
++    # Update CS.
++    wrsel cs, t2
++    # Make sure there isn't any junk in the upper bits of the base.
++    mov t4, t0, t2
++    slli t4, t4, 4, dataSize=8
++    wrbase cs, t4, dataSize=8
++
++    # Update RFLAGS
++    # Get the current RFLAGS
++    rflags t4
++    # Flip flag bits if they should change.
++    xor t5, t4, t3
++    # Don't change VIF, VIP, or VM
++    limm t6, "~(VIFBit | VIPBit | VMBit)", dataSize=8
++    and t5, t5, t6, dataSize=8
++    # Write back RFLAGS with flipped bits.
++    wrflags t4, t5, dataSize=8
++
++    # Update RIP
++    wrip t1, t0
+ };
+ 
+ def macroop IRET_PROT {
+-- 
+1.8.3.1
+

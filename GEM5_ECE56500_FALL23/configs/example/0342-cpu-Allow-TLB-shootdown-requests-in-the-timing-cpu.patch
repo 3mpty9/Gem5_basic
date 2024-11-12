@@ -1,0 +1,62 @@
+From 9dfac012431864d1dcc44f1941f987a0fe7cf21b Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 26 Oct 2021 14:57:05 +0100
+Subject: [PATCH 342/757] cpu: Allow TLB shootdown requests in the timing cpu
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: Ied38e9ed1f02d8e48bc5d62cc34baaec740bf6b8
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56599
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/simple/timing.cc | 23 ++++++++++++++---------
+ 1 file changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/src/cpu/simple/timing.cc b/src/cpu/simple/timing.cc
+index d791e3f..9e29cde 100644
+--- a/src/cpu/simple/timing.cc
++++ b/src/cpu/simple/timing.cc
+@@ -1236,7 +1236,7 @@ TimingSimpleCPU::initiateSpecialMemCmd(Request::Flags flags)
+     req->taskId(taskId());
+     req->setInstCount(t_info.numInst);
+ 
+-    assert(req->isHTMCmd());
++    assert(req->isHTMCmd() || req->isTlbiCmd());
+ 
+     // Use the payload as a sanity check,
+     // the memory subsystem will clear allocated data
+@@ -1246,14 +1246,19 @@ TimingSimpleCPU::initiateSpecialMemCmd(Request::Flags flags)
+     memcpy (data, &rc, size);
+ 
+     // debugging output
+-    if (req->isHTMStart())
+-        DPRINTF(HtmCpu, "HTMstart htmUid=%u\n", t_info.getHtmTransactionUid());
+-    else if (req->isHTMCommit())
+-        DPRINTF(HtmCpu, "HTMcommit htmUid=%u\n", t_info.getHtmTransactionUid());
+-    else if (req->isHTMCancel())
+-        DPRINTF(HtmCpu, "HTMcancel htmUid=%u\n", t_info.getHtmTransactionUid());
+-    else
+-        panic("initiateHtmCmd: unknown CMD");
++    if (req->isHTMCmd()) {
++        if (req->isHTMStart())
++            DPRINTF(HtmCpu, "HTMstart htmUid=%u\n",
++                t_info.getHtmTransactionUid());
++        else if (req->isHTMCommit())
++            DPRINTF(HtmCpu, "HTMcommit htmUid=%u\n",
++                t_info.getHtmTransactionUid());
++        else if (req->isHTMCancel())
++            DPRINTF(HtmCpu, "HTMcancel htmUid=%u\n",
++                t_info.getHtmTransactionUid());
++        else
++            panic("initiateSpecialMemCmd: unknown HTM CMD");
++    }
+ 
+     sendData(req, data, nullptr, true);
+ 
+-- 
+1.8.3.1
+

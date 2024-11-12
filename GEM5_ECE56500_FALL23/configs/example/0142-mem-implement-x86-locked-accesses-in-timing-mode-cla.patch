@@ -1,0 +1,542 @@
+From 41ee8ec7d8578b87b4f9b50440f82c57a544cc62 Mon Sep 17 00:00:00 2001
+From: Austin Harris <mail@austin-harris.com>
+Date: Mon, 10 Jan 2022 18:20:52 -0600
+Subject: [PATCH 142/757] mem: implement x86 locked accesses in timing-mode
+ classic cache
+
+Add LockedRMW(Read|Write)(Req|Resp) commands.  In timing mode,
+use a combination of clearing permission bits and leaving
+an MSHR in place to prevent accesses & snoops from touching
+a locked block between the read and write parts of an locked
+RMW sequence.
+
+Based on an old patch by Steve Reinhardt:
+http://reviews.gem5.org/r/2691/index.html
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1105
+
+Change-Id: Ieadda4deb17667ca4a6282f87f6da2af3b011f66
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/52303
+Reviewed-by: Nikos Nikoleris <nikos.nikoleris@arm.com>
+Maintainer: Nikos Nikoleris <nikos.nikoleris@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/base.cc        | 164 +++++++++++++++++++++++++++++++------------
+ src/mem/cache/cache.cc       |  60 +++++++++++++---
+ src/mem/cache/mshr.cc        |  54 +++++++++++---
+ src/mem/cache/mshr.hh        |  16 +++++
+ src/mem/cache/queue_entry.hh |   2 +-
+ src/mem/packet.cc            |  12 ++++
+ src/mem/packet.hh            |  11 +++
+ 7 files changed, 253 insertions(+), 66 deletions(-)
+
+diff --git a/src/mem/cache/base.cc b/src/mem/cache/base.cc
+index dc21151..435684a 100644
+--- a/src/mem/cache/base.cc
++++ b/src/mem/cache/base.cc
+@@ -223,6 +223,59 @@ BaseCache::inRange(Addr addr) const
+ void
+ BaseCache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time)
+ {
++
++    // handle special cases for LockedRMW transactions
++    if (pkt->isLockedRMW()) {
++        Addr blk_addr = pkt->getBlockAddr(blkSize);
++
++        if (pkt->isRead()) {
++            // Read hit for LockedRMW.  Since it requires exclusive
++            // permissions, there should be no outstanding access.
++            assert(!mshrQueue.findMatch(blk_addr, pkt->isSecure()));
++            // The keys to LockedRMW are that (1) we always have an MSHR
++            // allocated during the RMW interval to catch snoops and
++            // defer them until after the RMW completes, and (2) we
++            // clear permissions on the block to turn any upstream
++            // access other than the matching write into a miss, causing
++            // it to append to the MSHR as well.
++
++            // Because we hit in the cache, we have to fake an MSHR to
++            // achieve part (1).  If the read had missed, this MSHR
++            // would get allocated as part of normal miss processing.
++            // Basically we need to get the MSHR in the same state as if
++            // we had missed and just received the response.
++            // Request *req2 = new Request(*(pkt->req));
++            RequestPtr req2 = std::make_shared<Request>(*(pkt->req));
++            PacketPtr pkt2 = new Packet(req2, pkt->cmd);
++            MSHR *mshr = allocateMissBuffer(pkt2, curTick(), true);
++            // Mark the MSHR "in service" (even though it's not) to prevent
++            // the cache from sending out a request.
++            mshrQueue.markInService(mshr, false);
++            // Part (2): mark block inaccessible
++            assert(blk);
++            blk->clearCoherenceBits(CacheBlk::ReadableBit);
++            blk->clearCoherenceBits(CacheBlk::WritableBit);
++        } else {
++            assert(pkt->isWrite());
++            // All LockedRMW writes come here, as they cannot miss.
++            // Need to undo the two things described above.  Block
++            // permissions were already restored earlier in this
++            // function, prior to the access() call.  Now we just need
++            // to clear out the MSHR.
++
++            // Read should have already allocated MSHR.
++            MSHR *mshr = mshrQueue.findMatch(blk_addr, pkt->isSecure());
++            assert(mshr);
++            // Fake up a packet and "respond" to the still-pending
++            // LockedRMWRead, to process any pending targets and clear
++            // out the MSHR
++            PacketPtr resp_pkt =
++                new Packet(pkt->req, MemCmd::LockedRMWWriteResp);
++            resp_pkt->senderState = mshr;
++            recvTimingResp(resp_pkt);
++        }
++    }
++
+     if (pkt->needsResponse()) {
+         // These delays should have been consumed by now
+         assert(pkt->headerDelay == 0);
+@@ -353,6 +406,20 @@ BaseCache::recvTimingReq(PacketPtr pkt)
+     // the delay provided by the crossbar
+     Tick forward_time = clockEdge(forwardLatency) + pkt->headerDelay;
+ 
++    if (pkt->cmd == MemCmd::LockedRMWWriteReq) {
++        // For LockedRMW accesses, we mark the block inaccessible after the
++        // read (see below), to make sure no one gets in before the write.
++        // Now that the write is here, mark it accessible again, so the
++        // write will succeed.  LockedRMWReadReq brings the block in in
++        // exclusive mode, so we know it was previously writable.
++        CacheBlk *blk = tags->findBlock(pkt->getAddr(), pkt->isSecure());
++        assert(blk && blk->isValid());
++        assert(!blk->isSet(CacheBlk::WritableBit) &&
++               !blk->isSet(CacheBlk::ReadableBit));
++        blk->setCoherenceBits(CacheBlk::ReadableBit);
++        blk->setCoherenceBits(CacheBlk::WritableBit);
++    }
++
+     Cycles lat;
+     CacheBlk *blk = nullptr;
+     bool satisfied = false;
+@@ -438,7 +505,7 @@ BaseCache::recvTimingResp(PacketPtr pkt)
+ 
+     // if this is a write, we should be looking at an uncacheable
+     // write
+-    if (pkt->isWrite()) {
++    if (pkt->isWrite() && pkt->cmd != MemCmd::LockedRMWWriteResp) {
+         assert(pkt->req->isUncacheable());
+         handleUncacheableWriteResp(pkt);
+         return;
+@@ -491,61 +558,68 @@ BaseCache::recvTimingResp(PacketPtr pkt)
+         ppFill->notify(pkt);
+     }
+ 
+-    if (blk && blk->isValid() && pkt->isClean() && !pkt->isInvalidate()) {
+-        // The block was marked not readable while there was a pending
+-        // cache maintenance operation, restore its flag.
+-        blk->setCoherenceBits(CacheBlk::ReadableBit);
++    // Don't want to promote the Locked RMW Read until
++    // the locked write comes in
++    if (!mshr->hasLockedRMWReadTarget()) {
++        if (blk && blk->isValid() && pkt->isClean() && !pkt->isInvalidate()) {
++            // The block was marked not readable while there was a pending
++            // cache maintenance operation, restore its flag.
++            blk->setCoherenceBits(CacheBlk::ReadableBit);
+ 
+-        // This was a cache clean operation (without invalidate)
+-        // and we have a copy of the block already. Since there
+-        // is no invalidation, we can promote targets that don't
+-        // require a writable copy
+-        mshr->promoteReadable();
+-    }
++            // This was a cache clean operation (without invalidate)
++            // and we have a copy of the block already. Since there
++            // is no invalidation, we can promote targets that don't
++            // require a writable copy
++            mshr->promoteReadable();
++        }
+ 
+-    if (blk && blk->isSet(CacheBlk::WritableBit) &&
+-        !pkt->req->isCacheInvalidate()) {
+-        // If at this point the referenced block is writable and the
+-        // response is not a cache invalidate, we promote targets that
+-        // were deferred as we couldn't guarrantee a writable copy
+-        mshr->promoteWritable();
++        if (blk && blk->isSet(CacheBlk::WritableBit) &&
++            !pkt->req->isCacheInvalidate()) {
++            // If at this point the referenced block is writable and the
++            // response is not a cache invalidate, we promote targets that
++            // were deferred as we couldn't guarrantee a writable copy
++            mshr->promoteWritable();
++        }
+     }
+ 
+     serviceMSHRTargets(mshr, pkt, blk);
++    // We are stopping servicing targets early for the Locked RMW Read until
++    // the write comes.
++    if (!mshr->hasLockedRMWReadTarget()) {
++        if (mshr->promoteDeferredTargets()) {
++            // avoid later read getting stale data while write miss is
++            // outstanding.. see comment in timingAccess()
++            if (blk) {
++                blk->clearCoherenceBits(CacheBlk::ReadableBit);
++            }
++            mshrQueue.markPending(mshr);
++            schedMemSideSendEvent(clockEdge() + pkt->payloadDelay);
++        } else {
++            // while we deallocate an mshr from the queue we still have to
++            // check the isFull condition before and after as we might
++            // have been using the reserved entries already
++            const bool was_full = mshrQueue.isFull();
++            mshrQueue.deallocate(mshr);
++            if (was_full && !mshrQueue.isFull()) {
++                clearBlocked(Blocked_NoMSHRs);
++            }
+ 
+-    if (mshr->promoteDeferredTargets()) {
+-        // avoid later read getting stale data while write miss is
+-        // outstanding.. see comment in timingAccess()
+-        if (blk) {
+-            blk->clearCoherenceBits(CacheBlk::ReadableBit);
+-        }
+-        mshrQueue.markPending(mshr);
+-        schedMemSideSendEvent(clockEdge() + pkt->payloadDelay);
+-    } else {
+-        // while we deallocate an mshr from the queue we still have to
+-        // check the isFull condition before and after as we might
+-        // have been using the reserved entries already
+-        const bool was_full = mshrQueue.isFull();
+-        mshrQueue.deallocate(mshr);
+-        if (was_full && !mshrQueue.isFull()) {
+-            clearBlocked(Blocked_NoMSHRs);
++            // Request the bus for a prefetch if this deallocation freed enough
++            // MSHRs for a prefetch to take place
++            if (prefetcher && mshrQueue.canPrefetch() && !isBlocked()) {
++                Tick next_pf_time = std::max(
++                    prefetcher->nextPrefetchReadyTime(), clockEdge());
++                if (next_pf_time != MaxTick)
++                    schedMemSideSendEvent(next_pf_time);
++            }
+         }
+ 
+-        // Request the bus for a prefetch if this deallocation freed enough
+-        // MSHRs for a prefetch to take place
+-        if (prefetcher && mshrQueue.canPrefetch() && !isBlocked()) {
+-            Tick next_pf_time = std::max(prefetcher->nextPrefetchReadyTime(),
+-                                         clockEdge());
+-            if (next_pf_time != MaxTick)
+-                schedMemSideSendEvent(next_pf_time);
++        // if we used temp block, check to see if its valid and then clear it
++        if (blk == tempBlock && tempBlock->isValid()) {
++            evictBlock(blk, writebacks);
+         }
+     }
+ 
+-    // if we used temp block, check to see if its valid and then clear it out
+-    if (blk == tempBlock && tempBlock->isValid()) {
+-        evictBlock(blk, writebacks);
+-    }
+-
+     const Tick forward_time = clockEdge(forwardLatency) + pkt->headerDelay;
+     // copy writebacks to write buffer
+     doWritebacks(writebacks, forward_time);
+diff --git a/src/mem/cache/cache.cc b/src/mem/cache/cache.cc
+index 466aeec..24b3fe7 100644
+--- a/src/mem/cache/cache.cc
++++ b/src/mem/cache/cache.cc
+@@ -324,6 +324,9 @@ void
+ Cache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk, Tick forward_time,
+                            Tick request_time)
+ {
++
++    // These should always hit due to the earlier Locked Read
++    assert(pkt->cmd != MemCmd::LockedRMWWriteReq);
+     if (pkt->req->isUncacheable()) {
+         // ignore any existing MSHR if we are dealing with an
+         // uncacheable request
+@@ -696,6 +699,21 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
+     bool from_core = false;
+     bool from_pref = false;
+ 
++    if (pkt->cmd == MemCmd::LockedRMWWriteResp) {
++        // This is the fake response generated by the write half of the RMW;
++        // see comments in recvTimingReq().  The first target on the list
++        // should be the LockedRMWReadReq which has already been satisfied,
++        // either because it was a hit (and the MSHR was allocated in
++        // recvTimingReq()) or because it was left there after the inital
++        // response in extractServiceableTargets. In either case, we
++        // don't need to respond now, so pop it off to prevent the loop
++        // below from generating another response.
++        assert(initial_tgt->pkt->cmd == MemCmd::LockedRMWReadReq);
++        mshr->popTarget();
++        delete initial_tgt->pkt;
++        initial_tgt = nullptr;
++    }
++
+     MSHR::TargetList targets = mshr->extractServiceableTargets(pkt);
+     for (auto &target: targets) {
+         Packet *tgt_pkt = target.pkt;
+@@ -786,6 +804,21 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
+                 stats.cmdStats(tgt_pkt)
+                     .missLatency[tgt_pkt->req->requestorId()] +=
+                     completion_time - target.recvTime;
++
++                if (tgt_pkt->cmd == MemCmd::LockedRMWReadReq) {
++                    // We're going to leave a target in the MSHR until the
++                    // write half of the RMW occurs (see comments above in
++                    // recvTimingReq()).  Since we'll be using the current
++                    // request packet (which has the allocated data pointer)
++                    // to form the response, we have to allocate a new dummy
++                    // packet to save in the MSHR target.
++                    mshr->updateLockedRMWReadTarget(tgt_pkt);
++                    // skip the rest of target processing after we
++                    // send the response
++                    // Mark block inaccessible until write arrives
++                    blk->clearCoherenceBits(CacheBlk::WritableBit);
++                    blk->clearCoherenceBits(CacheBlk::ReadableBit);
++                }
+             } else if (pkt->cmd == MemCmd::UpgradeFailResp) {
+                 // failed StoreCond upgrade
+                 assert(tgt_pkt->cmd == MemCmd::StoreCondReq ||
+@@ -797,6 +830,11 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
+                 completion_time += clockEdge(responseLatency) +
+                     pkt->payloadDelay;
+                 tgt_pkt->req->setExtraData(0);
++            } else if (pkt->cmd == MemCmd::LockedRMWWriteResp) {
++                // Fake response on LockedRMW completion, see above.
++                // Since the data is already in the cache, we just use
++                // responseLatency with no extra penalties.
++                completion_time = clockEdge(responseLatency);
+             } else {
+                 if (is_invalidate && blk && blk->isValid()) {
+                     // We are about to send a response to a cache above
+@@ -891,16 +929,18 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
+         blk->setPrefetched();
+     }
+ 
+-    maintainClusivity(targets.hasFromCache, blk);
+-
+-    if (blk && blk->isValid()) {
+-        // an invalidate response stemming from a write line request
+-        // should not invalidate the block, so check if the
+-        // invalidation should be discarded
+-        if (is_invalidate || mshr->hasPostInvalidate()) {
+-            invalidateBlock(blk);
+-        } else if (mshr->hasPostDowngrade()) {
+-            blk->clearCoherenceBits(CacheBlk::WritableBit);
++    if (!mshr->hasLockedRMWReadTarget()) {
++        maintainClusivity(targets.hasFromCache, blk);
++
++        if (blk && blk->isValid()) {
++            // an invalidate response stemming from a write line request
++            // should not invalidate the block, so check if the
++            // invalidation should be discarded
++            if (is_invalidate || mshr->hasPostInvalidate()) {
++                invalidateBlock(blk);
++            } else if (mshr->hasPostDowngrade()) {
++                blk->clearCoherenceBits(CacheBlk::WritableBit);
++            }
+         }
+     }
+ }
+diff --git a/src/mem/cache/mshr.cc b/src/mem/cache/mshr.cc
+index 6aaaf9e..8477048 100644
+--- a/src/mem/cache/mshr.cc
++++ b/src/mem/cache/mshr.cc
+@@ -137,7 +137,7 @@ MSHR::TargetList::updateWriteFlags(PacketPtr pkt)
+         const Request::FlagsType no_merge_flags =
+             Request::UNCACHEABLE | Request::STRICT_ORDER |
+             Request::PRIVILEGED | Request::LLSC | Request::MEM_SWAP |
+-            Request::MEM_SWAP_COND | Request::SECURE;
++            Request::MEM_SWAP_COND | Request::SECURE | Request::LOCKED_RMW;
+         const auto &req_flags = pkt->req->getFlags();
+         bool compat_write = !req_flags.isSet(no_merge_flags);
+ 
+@@ -558,19 +558,34 @@ MSHR::extractServiceableTargets(PacketPtr pkt)
+         assert((it->source == Target::FromCPU) ||
+                (it->source == Target::FromPrefetcher));
+         ready_targets.push_back(*it);
+-        it = targets.erase(it);
+-        while (it != targets.end()) {
+-            if (it->source == Target::FromCPU) {
+-                it++;
+-            } else {
+-                assert(it->source == Target::FromSnoop);
+-                ready_targets.push_back(*it);
+-                it = targets.erase(it);
++        // Leave the Locked RMW Read until the corresponding Locked Write
++        // request comes in
++        if (it->pkt->cmd != MemCmd::LockedRMWReadReq) {
++            it = targets.erase(it);
++            while (it != targets.end()) {
++                if (it->source == Target::FromCPU) {
++                    it++;
++                } else {
++                    assert(it->source == Target::FromSnoop);
++                    ready_targets.push_back(*it);
++                    it = targets.erase(it);
++                }
+             }
+         }
+         ready_targets.populateFlags();
+     } else {
+-        std::swap(ready_targets, targets);
++        auto it = targets.begin();
++        while (it != targets.end()) {
++            ready_targets.push_back(*it);
++            if (it->pkt->cmd == MemCmd::LockedRMWReadReq) {
++                // Leave the Locked RMW Read until the corresponding Locked
++                // Write comes in. Also don't service any later targets as the
++                // line is now "locked".
++                break;
++            }
++            it = targets.erase(it);
++        }
++        ready_targets.populateFlags();
+     }
+     targets.populateFlags();
+ 
+@@ -763,4 +778,23 @@ MSHR::conflictAddr(const QueueEntry* entry) const
+     return entry->matchBlockAddr(blkAddr, isSecure);
+ }
+ 
++void
++MSHR::updateLockedRMWReadTarget(PacketPtr pkt)
++{
++    assert(!targets.empty() && targets.front().pkt == pkt);
++    RequestPtr r = std::make_shared<Request>(*(pkt->req));
++    targets.front().pkt = new Packet(r, MemCmd::LockedRMWReadReq);
++}
++
++bool
++MSHR::hasLockedRMWReadTarget()
++{
++    if (!targets.empty() &&
++        targets.front().pkt->cmd == MemCmd::LockedRMWReadReq) {
++        return true;
++    }
++    return false;
++}
++
++
+ } // namespace gem5
+diff --git a/src/mem/cache/mshr.hh b/src/mem/cache/mshr.hh
+index a9deec6..4d5c3b6 100644
+--- a/src/mem/cache/mshr.hh
++++ b/src/mem/cache/mshr.hh
+@@ -350,6 +350,22 @@ class MSHR : public QueueEntry, public Printable
+         return targets.hasFromCache;
+     }
+ 
++    /**
++     * Replaces the matching packet in the Targets list with a dummy packet to
++     * ensure the MSHR remains allocated until the corresponding locked write
++     * arrives.
++     *
++     * @param pkt The LockedRMWRead packet to be updated
++     */
++    void updateLockedRMWReadTarget(PacketPtr pkt);
++
++    /**
++     * Determine if there are any LockedRMWReads in the Targets list
++     *
++     * @return true if Targets list contains a LockedRMWRead
++     */
++    bool hasLockedRMWReadTarget();
++
+   private:
+     /**
+      * Promotes deferred targets that satisfy a predicate
+diff --git a/src/mem/cache/queue_entry.hh b/src/mem/cache/queue_entry.hh
+index d891365..55c1928 100644
+--- a/src/mem/cache/queue_entry.hh
++++ b/src/mem/cache/queue_entry.hh
+@@ -90,7 +90,7 @@ class QueueEntry : public Packet::SenderState, public Named
+         const Tick recvTime;  //!< Time when request was received (for stats)
+         const Tick readyTime; //!< Time when request is ready to be serviced
+         const Counter order;  //!< Global order (for memory consistency mgmt)
+-        const PacketPtr pkt;  //!< Pending request packet.
++        PacketPtr pkt;  //!< Pending request packet.
+ 
+         /**
+          * Default constructor. Assigns the current tick as the arrival time
+diff --git a/src/mem/packet.cc b/src/mem/packet.cc
+index 219bc76..5b23f13 100644
+--- a/src/mem/packet.cc
++++ b/src/mem/packet.cc
+@@ -164,6 +164,18 @@ MemCmd::commandInfo[] =
+     /* StoreCondResp */
+     { {IsWrite, IsLlsc, IsResponse},
+             InvalidCmd, "StoreCondResp" },
++    /* LockedRMWReadReq */
++    { {IsRead, IsLockedRMW, NeedsWritable, IsRequest, NeedsResponse},
++            LockedRMWReadResp, "LockedRMWReadReq" },
++    /* LockedRMWReadResp */
++    { {IsRead, IsLockedRMW, NeedsWritable, IsResponse, HasData},
++            InvalidCmd, "LockedRMWReadResp" },
++    /* LockedRMWWriteReq */
++    { {IsWrite, IsLockedRMW, NeedsWritable, IsRequest, NeedsResponse,
++           HasData}, LockedRMWWriteResp, "LockedRMWWriteReq" },
++    /* LockedRMWWriteResp */
++    { {IsWrite, IsLockedRMW, NeedsWritable, IsResponse},
++            InvalidCmd, "LockedRMWWriteResp" },
+     /* SwapReq -- for Swap ldstub type operations */
+     { {IsRead, IsWrite, NeedsWritable, IsRequest, HasData, NeedsResponse},
+         SwapResp, "SwapReq" },
+diff --git a/src/mem/packet.hh b/src/mem/packet.hh
+index 88995f1..d42ea27 100644
+--- a/src/mem/packet.hh
++++ b/src/mem/packet.hh
+@@ -112,6 +112,10 @@ class MemCmd
+         StoreCondReq,
+         StoreCondFailReq,       // Failed StoreCondReq in MSHR (never sent)
+         StoreCondResp,
++        LockedRMWReadReq,
++        LockedRMWReadResp,
++        LockedRMWWriteReq,
++        LockedRMWWriteResp,
+         SwapReq,
+         SwapResp,
+         // MessageReq and MessageResp are deprecated.
+@@ -162,6 +166,7 @@ class MemCmd
+         IsSWPrefetch,
+         IsHWPrefetch,
+         IsLlsc,         //!< Alpha/MIPS LL or SC access
++        IsLockedRMW,    //!< x86 locked RMW access
+         HasData,        //!< There is an associated payload
+         IsError,        //!< Error response
+         IsPrint,        //!< Print state matching address (for debugging)
+@@ -239,6 +244,7 @@ class MemCmd
+      */
+     bool hasData() const        { return testCmdAttrib(HasData); }
+     bool isLLSC() const         { return testCmdAttrib(IsLlsc); }
++    bool isLockedRMW() const    { return testCmdAttrib(IsLockedRMW); }
+     bool isSWPrefetch() const   { return testCmdAttrib(IsSWPrefetch); }
+     bool isHWPrefetch() const   { return testCmdAttrib(IsHWPrefetch); }
+     bool isPrefetch() const     { return testCmdAttrib(IsSWPrefetch) ||
+@@ -607,6 +613,7 @@ class Packet : public Printable
+         return resp_cmd.hasData();
+     }
+     bool isLLSC() const              { return cmd.isLLSC(); }
++    bool isLockedRMW() const         { return cmd.isLockedRMW(); }
+     bool isError() const             { return cmd.isError(); }
+     bool isPrint() const             { return cmd.isPrint(); }
+     bool isFlush() const             { return cmd.isFlush(); }
+@@ -976,6 +983,8 @@ class Packet : public Printable
+             return MemCmd::SoftPFExReq;
+         else if (req->isPrefetch())
+             return MemCmd::SoftPFReq;
++        else if (req->isLockedRMW())
++            return MemCmd::LockedRMWReadReq;
+         else
+             return MemCmd::ReadReq;
+     }
+@@ -995,6 +1004,8 @@ class Packet : public Printable
+               MemCmd::InvalidateReq;
+         } else if (req->isCacheClean()) {
+             return MemCmd::CleanSharedReq;
++        } else if (req->isLockedRMW()) {
++            return MemCmd::LockedRMWWriteReq;
+         } else
+             return MemCmd::WriteReq;
+     }
+-- 
+1.8.3.1
+

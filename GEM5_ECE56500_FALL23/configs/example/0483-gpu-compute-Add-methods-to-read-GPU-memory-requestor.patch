@@ -1,0 +1,124 @@
+From 51648570ead9b17b6a2ac312cedccac8cac1d3db Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Mon, 14 Mar 2022 22:58:06 -0500
+Subject: [PATCH 483/757] gpu-compute: Add methods to read GPU memory requestor
+ ID
+
+These methods are called from various places to override the requestor
+ID of a request in order to determine which Ruby network a request
+should be routed on.
+
+Change-Id: Ic0270ddd7123f0457a13144e69ef9132204d4334
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57651
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/gpu-compute/compute_unit.cc          | 9 +++++++++
+ src/gpu-compute/compute_unit.hh          | 1 +
+ src/gpu-compute/gpu_command_processor.cc | 9 +++++++++
+ src/gpu-compute/gpu_command_processor.hh | 1 +
+ src/gpu-compute/shader.cc                | 9 +++++++++
+ src/gpu-compute/shader.hh                | 2 ++
+ 6 files changed, 31 insertions(+)
+
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index f3db81c..cc6244b 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -2010,6 +2010,15 @@ ComputeUnit::sendToLds(GPUDynInstPtr gpuDynInst)
+ }
+ 
+ /**
++ * Forward the VRAM requestor ID needed for device memory from shader.
++ */
++RequestorID
++ComputeUnit::vramRequestorId()
++{
++    return FullSystem ? shader->vramRequestorId() : requestorId();
++}
++
++/**
+  * get the result of packets sent to the LDS when they return
+  */
+ bool
+diff --git a/src/gpu-compute/compute_unit.hh b/src/gpu-compute/compute_unit.hh
+index 10fd2f9..87ed541 100644
+--- a/src/gpu-compute/compute_unit.hh
++++ b/src/gpu-compute/compute_unit.hh
+@@ -458,6 +458,7 @@ class ComputeUnit : public ClockedObject
+     void updatePageDivergenceDist(Addr addr);
+ 
+     RequestorID requestorId() { return _requestorId; }
++    RequestorID vramRequestorId();
+ 
+     bool isDone() const;
+     bool isVectorAluIdle(uint32_t simdId) const;
+diff --git a/src/gpu-compute/gpu_command_processor.cc b/src/gpu-compute/gpu_command_processor.cc
+index 9499d47..0f74cb1 100644
+--- a/src/gpu-compute/gpu_command_processor.cc
++++ b/src/gpu-compute/gpu_command_processor.cc
+@@ -65,6 +65,15 @@ GPUCommandProcessor::hsaPacketProc()
+     return *hsaPP;
+ }
+ 
++/**
++ * Forward the VRAM requestor ID needed for device memory from GPU device.
++ */
++RequestorID
++GPUCommandProcessor::vramRequestorId()
++{
++    return gpuDevice->vramRequestorId();
++}
++
+ TranslationGenPtr
+ GPUCommandProcessor::translate(Addr vaddr, Addr size)
+ {
+diff --git a/src/gpu-compute/gpu_command_processor.hh b/src/gpu-compute/gpu_command_processor.hh
+index 1bc19c7..ec163ed 100644
+--- a/src/gpu-compute/gpu_command_processor.hh
++++ b/src/gpu-compute/gpu_command_processor.hh
+@@ -76,6 +76,7 @@ class GPUCommandProcessor : public DmaVirtDevice
+     GPUCommandProcessor(const Params &p);
+ 
+     HSAPacketProcessor& hsaPacketProc();
++    RequestorID vramRequestorId();
+ 
+     void setGPUDevice(AMDGPUDevice *gpu_device);
+     void setShader(Shader *shader);
+diff --git a/src/gpu-compute/shader.cc b/src/gpu-compute/shader.cc
+index a4e72b3..ebacbb5 100644
+--- a/src/gpu-compute/shader.cc
++++ b/src/gpu-compute/shader.cc
+@@ -523,6 +523,15 @@ Shader::notifyCuSleep() {
+         stats.shaderActiveTicks += curTick() - _lastInactiveTick;
+ }
+ 
++/**
++ * Forward the VRAM requestor ID needed for device memory from CP.
++ */
++RequestorID
++Shader::vramRequestorId()
++{
++    return gpuCmdProc.vramRequestorId();
++}
++
+ Shader::ShaderStats::ShaderStats(statistics::Group *parent, int wf_size)
+     : statistics::Group(parent),
+       ADD_STAT(allLatencyDist, "delay distribution for all"),
+diff --git a/src/gpu-compute/shader.hh b/src/gpu-compute/shader.hh
+index 0ea8741..96ad15d 100644
+--- a/src/gpu-compute/shader.hh
++++ b/src/gpu-compute/shader.hh
+@@ -183,6 +183,8 @@ class Shader : public ClockedObject
+         shHiddenPrivateBaseVmid = sh_hidden_base_new;
+     }
+ 
++    RequestorID vramRequestorId();
++
+     EventFunctionWrapper tickEvent;
+ 
+     // is this simulation going to be timing mode in the memory?
+-- 
+1.8.3.1
+

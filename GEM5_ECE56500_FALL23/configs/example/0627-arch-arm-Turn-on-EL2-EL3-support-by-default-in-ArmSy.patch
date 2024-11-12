@@ -1,0 +1,49 @@
+From 1455ac0e0c75a3ea5a2dbf027d4d51e32a7fdeaa Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 23 Sep 2021 16:16:26 +0100
+Subject: [PATCH 627/757] arch-arm: Turn on EL2/EL3 support by default in
+ ArmSystem
+
+In order to turn them off a user needs to explicitly do so
+by providing a different ArmRelease objec
+
+Change-Id: I227cee80c5517cdd50cf07c62d9a131ce261310f
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/51011
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/arm/baremetal.py | 2 --
+ src/arch/arm/ArmSystem.py        | 2 +-
+ 2 files changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/configs/example/arm/baremetal.py b/configs/example/arm/baremetal.py
+index 0944344..44e3fd1 100644
+--- a/configs/example/arm/baremetal.py
++++ b/configs/example/arm/baremetal.py
+@@ -141,8 +141,6 @@ def create(args):
+     system.realview.gic.gicv4 = False
+ 
+     system.highest_el_is_64 = True
+-    system.release.add(ArmExtension('SECURITY'))
+-    system.release.add(ArmExtension('VIRTUALIZATION'))
+ 
+     workload_class = workloads.workload_list.get(args.workload)
+     system.workload = workload_class(
+diff --git a/src/arch/arm/ArmSystem.py b/src/arch/arm/ArmSystem.py
+index 9755e0d..f9df791 100644
+--- a/src/arch/arm/ArmSystem.py
++++ b/src/arch/arm/ArmSystem.py
+@@ -103,7 +103,7 @@ class ArmRelease(SimObject):
+ 
+ class Armv8(ArmRelease):
+     extensions = [
+-        'LPAE'
++        'LPAE', 'VIRTUALIZATION', 'SECURITY'
+     ]
+ 
+ class ArmDefaultRelease(Armv8):
+-- 
+1.8.3.1
+

@@ -1,0 +1,52 @@
+From 13852f08116e19cb657c0c3ad4539f025fd13453 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Mon, 10 Jan 2022 13:36:30 +0800
+Subject: [PATCH 215/757] fastmodel: Fix cluster build failed
+
+FastModelCortexCluster subclasses don't have `type` property. They don't
+need to be specified in sim_objects for generating *Params class.
+
+Change-Id: Ic09e494042e05d68c890f9603b8b78a4a8d815a9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55305
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56247
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/arm/fastmodel/CortexA76/SConscript | 3 +--
+ src/arch/arm/fastmodel/CortexR52/SConscript | 3 +--
+ 2 files changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexA76/SConscript b/src/arch/arm/fastmodel/CortexA76/SConscript
+index ce51268..016f613 100644
+--- a/src/arch/arm/fastmodel/CortexA76/SConscript
++++ b/src/arch/arm/fastmodel/CortexA76/SConscript
+@@ -39,8 +39,7 @@ for name in ('x1', 'x2', 'x3', 'x4'):
+ 
+ SimObject('FastModelCortexA76.py', sim_objects=[
+     'FastModelCortexA76', 'FastModelCortexA76Cluster'] +
+-    [f'FastModelScxEvsCortexA76x{num}' for num in (1, 2, 3, 4)] +
+-    [f'FastModelCortexA76x{num}' for num in (1, 2, 3, 4)])
++    [f'FastModelScxEvsCortexA76x{num}' for num in (1, 2, 3, 4)])
+ Source('cortex_a76.cc')
+ Source('evs.cc')
+ Source('thread_context.cc')
+diff --git a/src/arch/arm/fastmodel/CortexR52/SConscript b/src/arch/arm/fastmodel/CortexR52/SConscript
+index 4e5e147..c1dc1fe 100644
+--- a/src/arch/arm/fastmodel/CortexR52/SConscript
++++ b/src/arch/arm/fastmodel/CortexR52/SConscript
+@@ -40,8 +40,7 @@ for name in ('x1', 'x2', 'x3', 'x4'):
+ 
+ SimObject('FastModelCortexR52.py', sim_objects=[
+     'FastModelCortexR52', 'FastModelCortexR52Cluster'] +
+-    [f'FastModelScxEvsCortexR52x{num}' for num in (1, 2, 3, 4)] +
+-    [f'FastModelCortexR52x{num}' for num in (1, 2, 3, 4)])
++    [f'FastModelScxEvsCortexR52x{num}' for num in (1, 2, 3, 4)])
+ Source('cortex_r52.cc')
+ Source('evs.cc')
+ Source('thread_context.cc')
+-- 
+1.8.3.1
+

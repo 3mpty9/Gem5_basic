@@ -1,0 +1,39 @@
+From 0ad4a0b7748928b32748babc4a9d88a5e99f2215 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 9 Jan 2022 21:29:12 -0800
+Subject: [PATCH 240/757] arch-x86: Fix immediate based IN instructions.
+
+These were loading the immediate into a temporary microcode register
+which would then be used to calculate the address to actually send to
+the memory system. Unfortunately this was using a data size equal to the
+address size, which would mean that the immediate would be merged into
+that temporary, leaving previously set bits intact. The data size
+*should* have been set to 8, and was already in other similar
+instructions. That forces the limm microop to overwrite the temporary
+entirely.
+
+Change-Id: I87c82b4677db768ccb6401a3dbda61317c014152
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55286
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/x86/isa/insts/general_purpose/input_output/general_io.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py b/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
+index 27396e2..58b38e5 100644
+--- a/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
++++ b/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
+@@ -39,7 +39,7 @@
+ microcode = '''
+     def macroop IN_R_I {
+         .adjust_imm trimImm(8)
+-        limm t1, imm, dataSize=asz
++        limm t1, imm, dataSize=8
+         mfence
+         ld reg, intseg, [1, t1, t0], "IntAddrPrefixIO << 3", addressSize=8, \
+             nonSpec=True
+-- 
+1.8.3.1
+

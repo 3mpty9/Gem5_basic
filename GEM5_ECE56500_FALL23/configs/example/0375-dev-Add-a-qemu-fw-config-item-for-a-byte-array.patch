@@ -1,0 +1,94 @@
+From 9cfd3c8c3723e2c5cce3f47b4f62a9c7590179d4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 21 Jan 2022 23:04:52 -0800
+Subject: [PATCH 375/757] dev: Add a qemu fw config item for a byte array.
+
+This is similar to the string item, except it's easier to set up with
+binary data, and harder to set up if the data is a string constant.
+
+Change-Id: I9aa2aa223386e275308377a98bdadaf65e6cb896
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55783
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/qemu/QemuFwCfg.py |  8 ++++++++
+ src/dev/qemu/SConscript   |  3 ++-
+ src/dev/qemu/fw_cfg.hh    | 21 +++++++++++++++++++++
+ 3 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/src/dev/qemu/QemuFwCfg.py b/src/dev/qemu/QemuFwCfg.py
+index 3a21063..0851ef0 100644
+--- a/src/dev/qemu/QemuFwCfg.py
++++ b/src/dev/qemu/QemuFwCfg.py
+@@ -56,6 +56,14 @@ class QemuFwCfgItemString(QemuFwCfgItem):
+     # The string which directly populates this item.
+     string = Param.String('String to export')
+ 
++class QemuFwCfgItemBytes(QemuFwCfgItem):
++    type = 'QemuFwCfgItemBytes'
++    cxx_class = 'gem5::qemu::FwCfgItemFactory<gem5::qemu::FwCfgItemBytes>'
++    cxx_template_params = ['class ItemType']
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++
++    data = VectorParam.UInt8('Bytes to export')
++
+ class QemuFwCfg(PioDevice):
+     type = 'QemuFwCfg'
+     cxx_class = 'gem5::qemu::FwCfg'
+diff --git a/src/dev/qemu/SConscript b/src/dev/qemu/SConscript
+index a2fff02..59a50cf 100644
+--- a/src/dev/qemu/SConscript
++++ b/src/dev/qemu/SConscript
+@@ -26,7 +26,8 @@
+ Import('*')
+ 
+ SimObject('QemuFwCfg.py', sim_objects=[
+-    'QemuFwCfgItem', 'QemuFwCfgItemFile', 'QemuFwCfgItemString',
++    'QemuFwCfgItem',
++    'QemuFwCfgItemBytes', 'QemuFwCfgItemFile', 'QemuFwCfgItemString',
+     'QemuFwCfg', 'QemuFwCfgIo', 'QemuFwCfgMmio'])
+ Source('fw_cfg.cc')
+ 
+diff --git a/src/dev/qemu/fw_cfg.hh b/src/dev/qemu/fw_cfg.hh
+index 4c780b3..c196eb6 100644
+--- a/src/dev/qemu/fw_cfg.hh
++++ b/src/dev/qemu/fw_cfg.hh
+@@ -40,6 +40,7 @@
+ #include "params/QemuFwCfg.hh"
+ #include "params/QemuFwCfgIo.hh"
+ #include "params/QemuFwCfgItem.hh"
++#include "params/QemuFwCfgItemBytes.hh"
+ #include "params/QemuFwCfgItemFile.hh"
+ #include "params/QemuFwCfgItemString.hh"
+ #include "params/QemuFwCfgMmio.hh"
+@@ -134,6 +135,26 @@ class FwCfgItemString : public FwCfgItemFixed
+     }
+ };
+ 
++// An item who's value comes from an array of bytes.
++class FwCfgItemBytes : public FwCfgItemFixed
++{
++  private:
++    std::vector<uint8_t> data;
++
++  public:
++    FwCfgItemBytes(const std::string &new_path, bool arch_specific,
++            const std::vector<uint8_t> &_data, uint16_t new_index=0) :
++        FwCfgItemFixed(new_path, arch_specific, new_index), data(_data)
++    {}
++
++    FwCfgItemBytes(const QemuFwCfgItemBytesParams &p) :
++        FwCfgItemBytes(p.path, p.arch_specific, p.data, p.index)
++    {}
++
++    const void *bytes() const override { return (void *)data.data(); }
++    uint64_t length() const override { return data.size(); }
++};
++
+ /*
+  * Base and template classes for creating SimObject wrappers for item types.
+  */
+-- 
+1.8.3.1
+

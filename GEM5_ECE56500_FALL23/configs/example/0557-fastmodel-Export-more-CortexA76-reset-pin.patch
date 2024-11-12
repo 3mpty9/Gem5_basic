@@ -1,0 +1,268 @@
+From 9dce95844ab02fab02eb8492e84dfbe4e054bd11 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 8 Apr 2022 18:29:27 +0800
+Subject: [PATCH 557/757] fastmodel: Export more CortexA76 reset pin
+
+Change-Id: I386cf659fa77b2005f808fde51ef772ac0a57735
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58812
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../arm/fastmodel/CortexA76/FastModelCortexA76.py  |  9 +++++++++
+ src/arch/arm/fastmodel/CortexA76/cortex_a76.cc     |  5 +++--
+ src/arch/arm/fastmodel/CortexA76/evs.cc            | 22 +++++++++++++++++++++-
+ src/arch/arm/fastmodel/CortexA76/evs.hh            |  7 +++++++
+ src/arch/arm/fastmodel/CortexA76/x1/x1.lisa        | 10 ++++++++++
+ src/arch/arm/fastmodel/CortexA76/x2/x2.lisa        | 10 ++++++++++
+ src/arch/arm/fastmodel/CortexA76/x3/x3.lisa        | 10 ++++++++++
+ src/arch/arm/fastmodel/CortexA76/x4/x4.lisa        | 10 ++++++++++
+ 8 files changed, 80 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py b/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
+index c7d46ff..9a56f29 100644
+--- a/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
++++ b/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
+@@ -31,6 +31,7 @@ from m5.objects.ArmInterrupts import ArmInterrupts
+ from m5.objects.ArmISA import ArmISA
+ from m5.objects.FastModel import AmbaInitiatorSocket, AmbaTargetSocket
+ from m5.objects.FastModelGIC import Gicv3CommsTargetSocket
++from m5.objects.IntPin import IntSinkPin
+ from m5.objects.Gic import ArmPPI
+ from m5.objects.Iris import IrisBaseCPU
+ from m5.objects.SystemC import SystemC_ScModule
+@@ -46,6 +47,10 @@ class FastModelCortexA76(IrisBaseCPU):
+     evs = Parent.evs
+ 
+     redistributor = Gicv3CommsTargetSocket('GIC communication target')
++    core_reset = IntSinkPin('Raising this signal will put the core into ' \
++                            'reset mode.')
++    poweron_reset = IntSinkPin('Power on reset. Initializes all the ' \
++                               'processor logic, including debug logic.')
+ 
+     CFGEND = Param.Bool(False, "Endianness configuration at reset.  "\
+             "0, little endian. 1, big endian.")
+@@ -163,6 +168,10 @@ class FastModelCortexA76Cluster(SimObject):
+             "Non-secure physical timer event")
+ 
+     amba = AmbaInitiatorSocket(64, 'AMBA initiator socket')
++    top_reset = IntSinkPin('A single cluster-wide power on reset signal for ' \
++            'all resettable registers in DynamIQ.')
++    dbg_reset = IntSinkPin('Initialize the shared debug APB, Cross Trigger ' \
++            'Interface (CTI), and Cross Trigger Matrix (CTM) logic.')
+ 
+     # These parameters are described in "Fast Models Reference Manual" section
+     # 3.4.19, "ARMCortexA7x1CT".
+diff --git a/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc b/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
+index e77e734..e67a0f6 100644
+--- a/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
++++ b/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
+@@ -104,7 +104,7 @@ CortexA76::setResetAddr(Addr addr, bool secure)
+ Port &
+ CortexA76::getPort(const std::string &if_name, PortID idx)
+ {
+-    if (if_name == "redistributor")
++    if (if_name == "redistributor" || if_name == "core_reset")
+         return cluster->getEvs()->gem5_getPort(if_name, num);
+     else
+         return Base::getPort(if_name, idx);
+@@ -199,7 +199,8 @@ CortexA76Cluster::CortexA76Cluster(const Params &p) :
+ Port &
+ CortexA76Cluster::getPort(const std::string &if_name, PortID idx)
+ {
+-    if (if_name == "amba") {
++    if (if_name == "amba" || if_name == "top_reset" ||
++        if_name == "dbg_reset") {
+         return evs->gem5_getPort(if_name, idx);
+     } else {
+         return SimObject::getPort(if_name, idx);
+diff --git a/src/arch/arm/fastmodel/CortexA76/evs.cc b/src/arch/arm/fastmodel/CortexA76/evs.cc
+index 935d139..d54ad78 100644
+--- a/src/arch/arm/fastmodel/CortexA76/evs.cc
++++ b/src/arch/arm/fastmodel/CortexA76/evs.cc
+@@ -73,7 +73,10 @@ ScxEvsCortexA76<Types>::setResetAddr(int core, Addr addr, bool secure)
+ template <class Types>
+ ScxEvsCortexA76<Types>::ScxEvsCortexA76(
+         const sc_core::sc_module_name &mod_name, const Params &p) :
+-    Base(mod_name), amba(Base::amba, p.name + ".amba", -1),
++    Base(mod_name),
++    amba(Base::amba, p.name + ".amba", -1),
++    top_reset(p.name + ".top_reset", 0),
++    dbg_reset(p.name + ".dbg_reset", 0),
+     params(p)
+ {
+     for (int i = 0; i < CoreCount; i++) {
+@@ -93,6 +96,10 @@ ScxEvsCortexA76<Types>::ScxEvsCortexA76(
+                 new SignalReceiver(csprintf("cntpnsirq[%d]", i)));
+         rvbaraddr.emplace_back(new SignalInitiator<uint64_t>(
+                     csprintf("rvbaraddr[%d]", i).c_str()));
++        core_reset.emplace_back(
++                new SignalSender(csprintf("core_reset[%d]", i), 0));
++        poweron_reset.emplace_back(
++                new SignalSender(csprintf("poweron_reset[%d]", i), 0));
+ 
+         Base::cnthpirq[i].bind(cnthpirq[i]->signal_in);
+         Base::cnthvirq[i].bind(cnthvirq[i]->signal_in);
+@@ -104,8 +111,13 @@ ScxEvsCortexA76<Types>::ScxEvsCortexA76(
+         Base::vcpumntirq[i].bind(vcpumntirq[i]->signal_in);
+         Base::cntpnsirq[i].bind(cntpnsirq[i]->signal_in);
+         rvbaraddr[i]->bind(Base::rvbaraddr[i]);
++        core_reset[i]->signal_out.bind(Base::core_reset[i]);
++        poweron_reset[i]->signal_out.bind(Base::poweron_reset[i]);
+     }
+ 
++    top_reset.signal_out.bind(Base::top_reset);
++    dbg_reset.signal_out.bind(Base::dbg_reset);
++
+     clockRateControl.bind(this->clock_rate_s);
+     periphClockRateControl.bind(this->periph_clock_rate_s);
+ }
+@@ -156,8 +168,16 @@ ScxEvsCortexA76<Types>::gem5_getPort(const std::string &if_name, int idx)
+ {
+     if (if_name == "redistributor")
+         return *redist.at(idx);
++    else if (if_name == "core_reset")
++        return *core_reset.at(idx);
++    else if (if_name == "poweron_reset")
++        return *poweron_reset.at(idx);
+     else if (if_name == "amba")
+         return amba;
++    else if (if_name == "top_reset")
++        return top_reset;
++    else if (if_name == "dbg_reset")
++        return dbg_reset;
+     else
+         return Base::gem5_getPort(if_name, idx);
+ }
+diff --git a/src/arch/arm/fastmodel/CortexA76/evs.hh b/src/arch/arm/fastmodel/CortexA76/evs.hh
+index 7c834d0..e1b6aed 100644
+--- a/src/arch/arm/fastmodel/CortexA76/evs.hh
++++ b/src/arch/arm/fastmodel/CortexA76/evs.hh
+@@ -32,6 +32,7 @@
+ 
+ #include "arch/arm/fastmodel/amba_ports.hh"
+ #include "arch/arm/fastmodel/common/signal_receiver.hh"
++#include "arch/arm/fastmodel/common/signal_sender.hh"
+ #include "arch/arm/fastmodel/iris/cpu.hh"
+ #include "arch/arm/fastmodel/protocol/exported_clock_rate_control.hh"
+ #include "mem/port_proxy.hh"
+@@ -90,6 +91,12 @@ class ScxEvsCortexA76 : public Types::Base, public Iris::BaseCpuEvs
+     std::vector<std::unique_ptr<SignalReceiver>> vcpumntirq;
+     std::vector<std::unique_ptr<SignalReceiver>> cntpnsirq;
+     std::vector<std::unique_ptr<SignalInitiator<uint64_t>>> rvbaraddr;
++    std::vector<std::unique_ptr<SignalSender>> core_reset;
++    std::vector<std::unique_ptr<SignalSender>> poweron_reset;
++
++    SignalSender top_reset;
++
++    SignalSender dbg_reset;
+ 
+     CortexA76Cluster *gem5CpuCluster;
+ 
+diff --git a/src/arch/arm/fastmodel/CortexA76/x1/x1.lisa b/src/arch/arm/fastmodel/CortexA76/x1/x1.lisa
+index b83efc6..5cadfac 100644
+--- a/src/arch/arm/fastmodel/CortexA76/x1/x1.lisa
++++ b/src/arch/arm/fastmodel/CortexA76/x1/x1.lisa
+@@ -60,6 +60,12 @@ component CortexA76x1
+         // Core reset addrs.
+         self.rvbaraddr => core.rvbaraddr;
+ 
++        // Reset signals.
++        self.core_reset => core.reset;
++        self.poweron_reset => core.cpuporeset;
++        self.top_reset => core.sporeset;
++        self.dbg_reset => core.presetdbg;
++
+         // Clocks.
+         clock1Hz.clk_out => clockDiv.clk_in;
+         clock1Hz.clk_out => clockDivPeriph.clk_in;
+@@ -100,4 +106,8 @@ component CortexA76x1
+     master port<Signal> vcpumntirq[1];
+     master port<Signal> cntpnsirq[1];
+     slave port<Value_64> rvbaraddr[1];
++    slave port<Signal> core_reset[1];
++    slave port<Signal> poweron_reset[1];
++    slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+ }
+diff --git a/src/arch/arm/fastmodel/CortexA76/x2/x2.lisa b/src/arch/arm/fastmodel/CortexA76/x2/x2.lisa
+index 4ab0b07..5805fd5 100644
+--- a/src/arch/arm/fastmodel/CortexA76/x2/x2.lisa
++++ b/src/arch/arm/fastmodel/CortexA76/x2/x2.lisa
+@@ -60,6 +60,12 @@ component CortexA76x2
+         // Core reset addrs.
+         self.rvbaraddr => core.rvbaraddr;
+ 
++        // Reset signals.
++        self.core_reset => core.reset;
++        self.poweron_reset => core.cpuporeset;
++        self.top_reset => core.sporeset;
++        self.dbg_reset => core.presetdbg;
++
+         // Clocks.
+         clock1Hz.clk_out => clockDiv.clk_in;
+         clock1Hz.clk_out => clockDivPeriph.clk_in;
+@@ -100,4 +106,8 @@ component CortexA76x2
+     master port<Signal> vcpumntirq[2];
+     master port<Signal> cntpnsirq[2];
+     slave port<Value_64> rvbaraddr[2];
++    slave port<Signal> core_reset[2];
++    slave port<Signal> poweron_reset[2];
++    slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+ }
+diff --git a/src/arch/arm/fastmodel/CortexA76/x3/x3.lisa b/src/arch/arm/fastmodel/CortexA76/x3/x3.lisa
+index 7625769..991f8b8 100644
+--- a/src/arch/arm/fastmodel/CortexA76/x3/x3.lisa
++++ b/src/arch/arm/fastmodel/CortexA76/x3/x3.lisa
+@@ -60,6 +60,12 @@ component CortexA76x3
+         // Core reset addrs.
+         self.rvbaraddr => core.rvbaraddr;
+ 
++        // Reset signals.
++        self.core_reset => core.reset;
++        self.poweron_reset => core.cpuporeset;
++        self.top_reset => core.sporeset;
++        self.dbg_reset => core.presetdbg;
++
+         // Clocks.
+         clock1Hz.clk_out => clockDiv.clk_in;
+         clock1Hz.clk_out => clockDivPeriph.clk_in;
+@@ -100,4 +106,8 @@ component CortexA76x3
+     master port<Signal> vcpumntirq[3];
+     master port<Signal> cntpnsirq[3];
+     slave port<Value_64> rvbaraddr[3];
++    slave port<Signal> core_reset[3];
++    slave port<Signal> poweron_reset[3];
++    slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+ }
+diff --git a/src/arch/arm/fastmodel/CortexA76/x4/x4.lisa b/src/arch/arm/fastmodel/CortexA76/x4/x4.lisa
+index 3e67719..f8c50fc 100644
+--- a/src/arch/arm/fastmodel/CortexA76/x4/x4.lisa
++++ b/src/arch/arm/fastmodel/CortexA76/x4/x4.lisa
+@@ -60,6 +60,12 @@ component CortexA76x4
+         // Core reset addrs.
+         self.rvbaraddr => core.rvbaraddr;
+ 
++        // Reset signals.
++        self.core_reset => core.reset;
++        self.poweron_reset => core.cpuporeset;
++        self.top_reset => core.sporeset;
++        self.dbg_reset => core.presetdbg;
++
+         // Clocks.
+         clock1Hz.clk_out => clockDiv.clk_in;
+         clock1Hz.clk_out => clockDivPeriph.clk_in;
+@@ -100,4 +106,8 @@ component CortexA76x4
+     master port<Signal> vcpumntirq[4];
+     master port<Signal> cntpnsirq[4];
+     slave port<Value_64> rvbaraddr[4];
++    slave port<Signal> core_reset[4];
++    slave port<Signal> poweron_reset[4];
++    slave port<Signal> top_reset;
++    slave port<Signal> dbg_reset;
+ }
+-- 
+1.8.3.1
+

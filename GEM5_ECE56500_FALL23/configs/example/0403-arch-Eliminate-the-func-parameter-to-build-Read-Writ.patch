@@ -1,0 +1,132 @@
+From 1dad34a403a5afa66916e14cf7b66313036cf9f1 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 00:57:22 -0700
+Subject: [PATCH 403/757] arch: Eliminate the "func" parameter to
+ build(Read|Write)Code.
+
+The correct accessor is well known by the code providing a template for
+buildReadCode/buildWriteCode, and so can be simply inserted without the
+indirection. This makes the code a little easier to read, and those
+templating functions simpler and easier to understand.
+
+Change-Id: I403c6e4c291708f8b58cce08bfa32ee2a930c296
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49737
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/operands.isa        | 24 +++++++++++++-----------
+ src/arch/isa_parser/operand_types.py | 10 ++++------
+ 2 files changed, 17 insertions(+), 17 deletions(-)
+
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index 88d45c4..0b0d381 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -63,19 +63,20 @@ def operand_types {{
+ 
+ let {{
+     maybePCRead = '''
+-        ((%(reg_idx)s == PCReg) ? readPC(xc) : xc->%(func)s(this, %(op_idx)s))
++        ((%(reg_idx)s == PCReg) ? readPC(xc) :
++         xc->getRegOperand(this, %(op_idx)s))
+     '''
+     maybeAlignedPCRead = '''
+         ((%(reg_idx)s == PCReg) ? (roundDown(readPC(xc), 4)) :
+-         xc->%(func)s(this, %(op_idx)s))
++         xc->getRegOperand(this, %(op_idx)s))
+     '''
+     maybePCWrite = '''
+         ((%(reg_idx)s == PCReg) ? setNextPC(xc, %(final_val)s) :
+-         xc->%(func)s(this, %(op_idx)s, %(final_val)s))
++         xc->setRegOperand(this, %(op_idx)s, %(final_val)s))
+     '''
+     maybeIWPCWrite = '''
+         ((%(reg_idx)s == PCReg) ? setIWNextPC(xc, %(final_val)s) :
+-         xc->%(func)s(this, %(op_idx)s, %(final_val)s))
++         xc->setRegOperand(this, %(op_idx)s, %(final_val)s))
+     '''
+     maybeAIWPCWrite = '''
+         if (%(reg_idx)s == PCReg) {
+@@ -86,26 +87,27 @@ let {{
+                 setIWNextPC(xc, %(final_val)s);
+             }
+         } else {
+-            xc->%(func)s(this, %(op_idx)s, %(final_val)s);
++            xc->setRegOperand(this, %(op_idx)s, %(final_val)s);
+         }
+     '''
+     aarch64Read = '''
+-        ((xc->%(func)s(this, %(op_idx)s)) & mask(intWidth))
++        ((xc->getRegOperand(this, %(op_idx)s)) & mask(intWidth))
+     '''
+     aarch64Write = '''
+-        xc->%(func)s(this, %(op_idx)s, (%(final_val)s) & mask(intWidth))
++        xc->setRegOperand(this, %(op_idx)s, (%(final_val)s) & mask(intWidth))
+     '''
+     aarchX64Read = '''
+-        ((xc->%(func)s(this, %(op_idx)s)) & mask(aarch64 ? 64 : 32))
++        ((xc->getRegOperand(this, %(op_idx)s)) & mask(aarch64 ? 64 : 32))
+     '''
+     aarchX64Write = '''
+-        xc->%(func)s(this, %(op_idx)s, (%(final_val)s) & mask(aarch64 ? 64 : 32))
++        xc->setRegOperand(this, %(op_idx)s, (%(final_val)s) &
++                mask(aarch64 ? 64 : 32))
+     '''
+     aarchW64Read = '''
+-        ((xc->%(func)s(this, %(op_idx)s)) & mask(32))
++        ((xc->getRegOperand(this, %(op_idx)s)) & mask(32))
+     '''
+     aarchW64Write = '''
+-        xc->%(func)s(this, %(op_idx)s, (%(final_val)s) & mask(32))
++        xc->setRegOperand(this, %(op_idx)s, (%(final_val)s) & mask(32))
+     '''
+     cntrlNsBankedWrite = '''
+         xc->setMiscReg(snsBankedIndex(dest, xc->tcBase()), %(final_val)s)
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 342bd6f..b5cfccf 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -103,9 +103,8 @@ class Operand(object):
+     src_reg_constructor = '\n\tsetSrcRegIdx(_numSrcRegs++, RegId(%s, %s));'
+     dst_reg_constructor = '\n\tsetDestRegIdx(_numDestRegs++, RegId(%s, %s));'
+ 
+-    def buildReadCode(self, predRead, func='getRegOperand'):
++    def buildReadCode(self, predRead):
+         subst_dict = {"name": self.base_name,
+-                      "func": func,
+                       "reg_idx": self.reg_spec,
+                       "ctype": self.ctype}
+         if hasattr(self, 'src_reg_idx'):
+@@ -114,9 +113,8 @@ class Operand(object):
+         code = self.read_code % subst_dict
+         return '%s = %s;\n' % (self.base_name, code)
+ 
+-    def buildWriteCode(self, predWrite, func='setRegOperand'):
++    def buildWriteCode(self, predWrite):
+         subst_dict = {"name": self.base_name,
+-                      "func": func,
+                       "reg_idx": self.reg_spec,
+                       "ctype": self.ctype,
+                       "final_val": self.base_name}
+@@ -515,7 +513,7 @@ class ControlRegOperand(Operand):
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to read control register as FP')
+         if self.read_code != None:
+-            return self.buildReadCode(predRead, 'readMiscRegOperand')
++            return self.buildReadCode(predRead)
+ 
+         if predRead:
+             rindex = '_sourceIndex++'
+@@ -529,7 +527,7 @@ class ControlRegOperand(Operand):
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to write control register as FP')
+         if self.write_code != None:
+-            return self.buildWriteCode(predWrite, 'setMiscRegOperand')
++            return self.buildWriteCode(predWrite)
+ 
+         if predWrite:
+             windex = '_destIndex++'
+-- 
+1.8.3.1
+

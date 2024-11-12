@@ -1,0 +1,31 @@
+From a8e8d64e5d52647d9114af97c66d4383be37912f Mon Sep 17 00:00:00 2001
+From: Angie Lee <peiyinglee@google.com>
+Date: Wed, 4 May 2022 06:22:09 +0000
+Subject: [PATCH 619/757] fastmodel: Fix an index parsing bug on
+ PL330::gem5_getPort
+
+Change-Id: I2cf1abb0eb21c6bd65f81628be52650ef9250fbb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59369
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/PL330_DMAC/pl330.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/fastmodel/PL330_DMAC/pl330.cc b/src/arch/arm/fastmodel/PL330_DMAC/pl330.cc
+index dc3f9ec..e582404 100644
+--- a/src/arch/arm/fastmodel/PL330_DMAC/pl330.cc
++++ b/src/arch/arm/fastmodel/PL330_DMAC/pl330.cc
+@@ -246,7 +246,7 @@ PL330::gem5_getPort(const std::string &if_name, int idx)
+             port = suffix[0] - '0';
+         } else if (suffix.size() == 2 && isdigit(suffix[0]) &&
+                 isdigit(suffix[1])) {
+-            port = (suffix[1] - '0') * 10 + (suffix[0] - '0');
++            port = (suffix[0] - '0') * 10 + (suffix[1] - '0');
+         }
+         if (port != -1 && port < irqPort.size())
+             return *irqPort[port].at(idx);
+-- 
+1.8.3.1
+

@@ -1,0 +1,145 @@
+From 8e8c1ded15177276929aa4951c4ecbc34495e78a Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Wed, 11 May 2022 13:53:58 -0700
+Subject: [PATCH 639/757] scons: Update enum output when not using python
+
+This changeset brings the enum_cc.py file in line with how the
+sim_object_param_struct_cc.py file works and updates the SConscript to
+correctly tag the created source files.
+
+Change-Id: I4635a4f46de7d62a6c38e71ace121c06e139d486
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59609
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ build_tools/enum_cc.py | 64 +++++++++++++++++++++++++++-----------------------
+ src/SConscript         |  8 ++++---
+ 2 files changed, 40 insertions(+), 32 deletions(-)
+
+diff --git a/build_tools/enum_cc.py b/build_tools/enum_cc.py
+index e05f19f..c706ffe 100644
+--- a/build_tools/enum_cc.py
++++ b/build_tools/enum_cc.py
+@@ -48,11 +48,20 @@ from code_formatter import code_formatter
+ parser = argparse.ArgumentParser()
+ parser.add_argument('modpath', help='module the enum belongs to')
+ parser.add_argument('enum_cc', help='enum cc file to generate')
+-parser.add_argument('--use-python', action="store_true",
+-        help='python is enabled in gem5')
++parser.add_argument('use_python',
++        help='whether python is enabled in gem5 (True or False)')
+ 
+ args = parser.parse_args()
+ 
++use_python = args.use_python.lower()
++if use_python == 'true':
++    use_python = True
++elif use_python == 'false':
++    use_python = False
++else:
++    print(f'Unrecognized "use_python" value {use_python}', file=sys.stderr)
++    sys.exit(1)
++
+ basename = os.path.basename(args.enum_cc)
+ enum_name = os.path.splitext(basename)[0]
+ 
+@@ -103,16 +112,13 @@ if not enum.wrapper_is_struct and not enum.is_class:
+ code('} // namespace gem5')
+ 
+ 
+-if not args.use_python:
+-    code.write(args.enum_cc)
+-    exit(0)
+-
++if use_python:
+ 
+-name = enum.__name__
+-enum_name = enum.__name__ if enum.enum_name is None else enum.enum_name
+-wrapper_name = enum_name if enum.is_class else enum.wrapper_name
++    name = enum.__name__
++    enum_name = enum.__name__ if enum.enum_name is None else enum.enum_name
++    wrapper_name = enum_name if enum.is_class else enum.wrapper_name
+ 
+-code('''#include "pybind11/pybind11.h"
++    code('''#include "pybind11/pybind11.h"
+ #include "pybind11/stl.h"
+ 
+ #include <sim/init.hh>
+@@ -128,27 +134,27 @@ module_init(py::module_ &m_internal)
+     py::module_ m = m_internal.def_submodule("enum_${name}");
+ 
+ ''')
+-if enum.is_class:
+-    code('py::enum_<${enum_name}>(m, "enum_${name}")')
+-else:
+-    code('py::enum_<${wrapper_name}::${enum_name}>(m, "enum_${name}")')
+-
+-code.indent()
+-code.indent()
+-for val in enum.vals:
+-    code('.value("${val}", ${wrapper_name}::${val})')
+-code('.value("Num_${name}", ${wrapper_name}::Num_${enum_name})')
+-if not enum.is_class:
+-    code('.export_values()')
+-code(';')
+-code.dedent()
+-
+-code('}')
+-code.dedent()
+-code('''
++    if enum.is_class:
++        code('py::enum_<${enum_name}>(m, "enum_${name}")')
++    else:
++        code('py::enum_<${wrapper_name}::${enum_name}>(m, "enum_${name}")')
++
++    code.indent()
++    code.indent()
++    for val in enum.vals:
++        code('.value("${val}", ${wrapper_name}::${val})')
++    code('.value("Num_${name}", ${wrapper_name}::Num_${enum_name})')
++    if not enum.is_class:
++        code('.export_values()')
++    code(';')
++    code.dedent()
++
++    code('}')
++    code.dedent()
++    code('''
+ static EmbeddedPyBind embed_enum("enum_${name}", module_init);
+ 
+ } // namespace gem5
+-''')
++    ''')
+ 
+ code.write(args.enum_cc)
+diff --git a/src/SConscript b/src/SConscript
+index a7b6cec..2ddf4bf 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -186,7 +186,8 @@ class SimObject(PySource):
+                     SIMOBJ=simobj,
+                     PARAMS_CC=cc_file,
+                     USE_PYTHON=env['USE_PYTHON'])
+-            Source(cc_file, tags=self.tags, add_tags='python')
++            Source(cc_file, tags=self.tags,
++                   add_tags=('python' if env['USE_PYTHON'] else None))
+ 
+             # CXX config header.
+             gem5py_env.Command([ "${CXXCONFIG_HH}" ], srcs,
+@@ -230,8 +231,9 @@ class SimObject(PySource):
+                     ENUM=enum,
+                     ENUM_CC=cc_file,
+                     ENUMCC_PY=build_tools.File('enum_cc.py'),
+-                    USE_PYTHON='--use-python' if env['USE_PYTHON'] else '')
+-            Source(cc_file, tags=self.tags, add_tags='python')
++                    USE_PYTHON=env['USE_PYTHON'])
++            Source(cc_file, tags=self.tags,
++                   add_tags=('python' if env['USE_PYTHON'] else None))
+ 
+ # This regular expression is simplistic and assumes that the import takes up
+ # the entire line, doesn't have the keyword "public", uses double quotes, has
+-- 
+1.8.3.1
+

@@ -1,0 +1,38 @@
+From e32de659738d97d1f3a6aabc5b7e3bf7b2413978 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Thu, 14 Apr 2022 14:43:37 -0700
+Subject: [PATCH 562/757] stdlib, configs: Fix riscv-ubuntu-run error
+
+This change,
+https://gem5-review.googlesource.com/c/public/gem5/+/58790,
+mistakenly constructs the root object outside of the
+Simulator object, which would create another Root object.
+
+The correct usage of a Simulator object is to pass the board to
+the object without defining the root.
+
+Change-Id: Iaa9aabe058a00abd964bf935b1b3f05456713275
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58889
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/riscv-ubuntu-run.py | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/configs/example/gem5_library/riscv-ubuntu-run.py b/configs/example/gem5_library/riscv-ubuntu-run.py
+index 1c95d3f..f3e6d13 100644
+--- a/configs/example/gem5_library/riscv-ubuntu-run.py
++++ b/configs/example/gem5_library/riscv-ubuntu-run.py
+@@ -115,7 +115,5 @@ board.set_kernel_disk_workload(
+     ),
+ )
+ 
+-root = Root(full_system=True, system=board)
+-
+ simulator = Simulator(board=board)
+ simulator.run()
+-- 
+1.8.3.1
+

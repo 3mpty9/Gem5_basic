@@ -1,0 +1,99 @@
+From d2910d68c14c008ec1da2992acfd24bd5380ff2b Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 25 Oct 2021 15:18:30 +0100
+Subject: [PATCH 420/757] arch-arm: Implement TLBI Shareable as a DVM op
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: Ie0a374abce41997af600773cc270a47cdf2c1338
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56606
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/formats/aarch64.isa | 10 +++++-----
+ src/arch/arm/isa/insts/data64.isa    | 18 +++++++++++++++---
+ 2 files changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/src/arch/arm/isa/formats/aarch64.isa b/src/arch/arm/isa/formats/aarch64.isa
+index dc039da..c7339c6 100644
+--- a/src/arch/arm/isa/formats/aarch64.isa
++++ b/src/arch/arm/isa/formats/aarch64.isa
+@@ -1,4 +1,4 @@
+-// Copyright (c) 2011-2021 Arm Limited
++// Copyright (c) 2011-2022 Arm Limited
+ // All rights reserved
+ //
+ // The license below extends only to copyright in the software and shall
+@@ -37,7 +37,7 @@ output header {{
+ namespace Aarch64
+ {
+     StaticInstPtr decodeDataProcImm(ExtMachInst machInst);
+-    StaticInstPtr decodeBranchExcSys(ExtMachInst machInst);
++    StaticInstPtr decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst);
+     StaticInstPtr decodeLoadsStores(ExtMachInst machInst);
+     StaticInstPtr decodeDataProcReg(ExtMachInst machInst);
+ 
+@@ -207,7 +207,7 @@ output decoder {{
+ namespace Aarch64
+ {
+     StaticInstPtr
+-    decodeBranchExcSys(ExtMachInst machInst)
++    decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst)
+     {
+         switch (bits(machInst, 30, 29)) {
+           case 0x0:
+@@ -551,7 +551,7 @@ namespace Aarch64
+                               case MISCREG_TLBI_IPAS2E1IS_Xt:
+                               case MISCREG_TLBI_IPAS2LE1IS_Xt:
+                                 return new Tlbi64ShareableHub(
+-                                  machInst, miscReg, rt, iss);
++                                  machInst, miscReg, rt, iss, dec.dvmEnabled);
+                               default:
+                                 return new Msr64(machInst, miscReg, rt, iss);
+                             }
+@@ -3106,7 +3106,7 @@ def format Aarch64() {{
+                 return decodeDataProcImm(machInst);
+             else
+                 // bit 28:26=101
+-                return decodeBranchExcSys(machInst);
++                return decodeBranchExcSys(*this, machInst);
+         } else if (bits(machInst, 25) == 0) {
+             // bit 27=1, 25=0
+             return decodeLoadsStores(machInst);
+diff --git a/src/arch/arm/isa/insts/data64.isa b/src/arch/arm/isa/insts/data64.isa
+index 038963d..5cf8b8a 100644
+--- a/src/arch/arm/isa/insts/data64.isa
++++ b/src/arch/arm/isa/insts/data64.isa
+@@ -378,12 +378,24 @@ let {{
+     decoder_output += MiscRegRegOp64Constructor.subst(msrTlbiIop)
+     exec_output += BasicExecute.subst(msrTlbiIop)
+ 
++    dvmCode = '''
++    if (dvmEnabled) {
++        Request::Flags memAccessFlags =
++            Request::STRICT_ORDER | Request::TLBI;
++
++        fault = xc->initiateSpecialMemCmd(memAccessFlags);
++
++        PendingDvm = true;
++    }
++    '''
+     msrTlbiSIop = ArmInstObjParams("msr", "Tlbi64ShareableHub", "TlbiOp64",
+-                                  tlbiCode,
++                                  { "code" : tlbiCode, "dvm_code" : dvmCode },
+                                   ["IsSerializeAfter", "IsNonSpeculative"])
+-    header_output += MiscRegRegOp64Declare.subst(msrTlbiSIop)
+-    decoder_output += MiscRegRegOp64Constructor.subst(msrTlbiSIop)
++    header_output += DvmTlbiDeclare.subst(msrTlbiSIop)
++    decoder_output += DvmTlbiConstructor.subst(msrTlbiSIop)
+     exec_output += BasicExecute.subst(msrTlbiSIop)
++    exec_output += DvmInitiateAcc.subst(msrTlbiSIop)
++    exec_output += DvmCompleteAcc.subst(msrTlbiSIop)
+ 
+     buildDataXRegInst("msrNZCV", 1, '''
+         CPSR cpsr = XOp1;
+-- 
+1.8.3.1
+

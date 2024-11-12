@@ -1,0 +1,62 @@
+From dea2a73554254807370b51cf49ee72d132079e4f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 09:37:09 -0800
+Subject: [PATCH 383/757] arch-x86: Make the flags microops handle reserved
+ bits better.
+
+These microops should report bits which are RAZ as zero and RAO as one,
+and not let those bits get overwritten with anything else.
+
+Change-Id: I8e867b311b485234ac457bf58fad1673892dfa6a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55823
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/microops/regop.isa | 17 ++++++++++-------
+ 1 file changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/src/arch/x86/isa/microops/regop.isa b/src/arch/x86/isa/microops/regop.isa
+index d56e17c..556a02c 100644
+--- a/src/arch/x86/isa/microops/regop.isa
++++ b/src/arch/x86/isa/microops/regop.isa
+@@ -1177,18 +1177,21 @@ let {{
+ 
+     class Wrflags(WrRegOp):
+         code = '''
+-            RegVal newFlags = PSrcReg1 ^ op2;
+-            RegVal userFlagMask = 0xDD5;
++            const RegVal new_flags = PSrcReg1 ^ op2;
+ 
+             // Get only the user flags
+-            ccFlagBits = newFlags & ccFlagMask;
+-            dfBit = newFlags & DFBit;
+-            cfofBits = newFlags & cfofMask;
++            ccFlagBits = new_flags & ccFlagMask;
++            dfBit = new_flags & DFBit;
++            cfofBits = new_flags & cfofMask;
+             ecfBit = 0;
+             ezfBit = 0;
+ 
+             // Get everything else
+-            nccFlagBits = newFlags & ~userFlagMask;
++            const RegVal IOPLMask = mask(2) << 12;
++            const RegVal SysFlagMask =
++                TFBit | IFBit | IOPLMask | NTBit | RFBit | VMBit |
++                ACBit | VIFBit | VIPBit | IDBit;
++            nccFlagBits = new_flags & SysFlagMask;
+         '''
+ 
+     class Rdip(RdRegOp):
+@@ -1200,7 +1203,7 @@ let {{
+     class Rflags(RdRegOp):
+         code = '''
+             DestReg = ccFlagBits | cfofBits | dfBit |
+-                      ecfBit | ezfBit | nccFlagBits;
++                      ecfBit | ezfBit | nccFlagBits | (1 << 1);
+             '''
+ 
+     class Ruflag(RegOp):
+-- 
+1.8.3.1
+

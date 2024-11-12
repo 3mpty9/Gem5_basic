@@ -1,0 +1,35 @@
+From 94bb3291fa938ae6402f8dbf061a9c890cca9644 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 16 Jan 2022 11:24:12 -0800
+Subject: [PATCH 331/757] arch-x86: Truncate RIPs properly in the wrip microop.
+
+For all instructions which affect the RIP, they are supposed to
+truncate/zero extend the RIP based on the width of the instruction. We
+should do that after the target is calculated by adding the two operands
+together, but before adding in the segment base address.
+
+Change-Id: I105e58de6a07c7aa3155a9a188d8877c2955651f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55592
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa/microops/regop.isa | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/microops/regop.isa b/src/arch/x86/isa/microops/regop.isa
+index d37cb6f..d56e17c 100644
+--- a/src/arch/x86/isa/microops/regop.isa
++++ b/src/arch/x86/isa/microops/regop.isa
+@@ -1162,7 +1162,7 @@ let {{
+         code = 'DoubleBits = PSrcReg1 ^ op2;'
+ 
+     class Wrip(WrRegOp, CondRegOp):
+-        code = 'NRIP = PSrcReg1 + sop2 + CSBase;'
++        code = 'NRIP = ((SrcReg1 + sop2) & mask(dataSize * 8)) + CSBase;'
+         else_code = "NRIP = NRIP;"
+ 
+     class Wruflags(WrRegOp):
+-- 
+1.8.3.1
+

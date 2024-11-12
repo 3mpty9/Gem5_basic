@@ -1,0 +1,751 @@
+From a40950a5c97d484b30922fa60091e04e9efd2a99 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 06:04:31 -0700
+Subject: [PATCH 696/757] arch,cpu: Remove the idea of a zero register.
+
+This is now handled by using the InvalidRegClass.
+
+Change-Id: If43d8f27cfebc249ec6600847bcfd98c9e94cf40
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49746
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.cc               |  6 +++---
+ src/arch/mips/isa.cc              |  2 +-
+ src/arch/power/isa.cc             |  2 +-
+ src/arch/riscv/isa.cc             |  2 +-
+ src/arch/sparc/isa.cc             |  2 +-
+ src/arch/x86/isa.cc               |  2 +-
+ src/cpu/checker/cpu.cc            |  1 -
+ src/cpu/checker/cpu.hh            |  2 --
+ src/cpu/checker/cpu_impl.hh       |  3 ---
+ src/cpu/minor/dyn_inst.cc         |  6 +-----
+ src/cpu/minor/exec_context.hh     |  2 +-
+ src/cpu/minor/execute.cc          | 16 +++++-----------
+ src/cpu/minor/execute.hh          |  3 ---
+ src/cpu/minor/lsq.cc              | 15 ++++++---------
+ src/cpu/minor/lsq.hh              | 14 ++++----------
+ src/cpu/minor/scoreboard.cc       |  9 ++-------
+ src/cpu/minor/scoreboard.hh       |  3 ---
+ src/cpu/o3/cpu.cc                 |  3 +--
+ src/cpu/o3/probe/elastic_trace.cc | 11 ++---------
+ src/cpu/o3/probe/elastic_trace.hh |  2 --
+ src/cpu/o3/regfile.cc             |  2 --
+ src/cpu/o3/regfile.hh             |  4 +---
+ src/cpu/o3/rename_map.cc          |  9 ++-------
+ src/cpu/o3/rename_map.hh          |  9 ---------
+ src/cpu/o3/scoreboard.cc          |  6 +++---
+ src/cpu/o3/scoreboard.hh          | 17 ++---------------
+ src/cpu/reg_class.hh              | 11 ++++-------
+ src/cpu/simple/base.cc            |  1 -
+ src/cpu/simple/base.hh            |  2 --
+ src/cpu/simple_thread.hh          |  6 ------
+ 30 files changed, 42 insertions(+), 131 deletions(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index d96d39a..e1d5ab9 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -92,14 +92,14 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _decoderFlavor(p.decoderFlavor), pmu(p.pmu), impdefAsNop(p.impdef_nop),
+     afterStartup(false)
+ {
+-    _regClasses.emplace_back(NUM_INTREGS, debug::IntRegs, INTREG_ZERO);
++    _regClasses.emplace_back(NUM_INTREGS, debug::IntRegs);
+     _regClasses.emplace_back(0, debug::FloatRegs);
+-    _regClasses.emplace_back(NumVecRegs, vecRegClassOps, debug::VecRegs, -1,
++    _regClasses.emplace_back(NumVecRegs, vecRegClassOps, debug::VecRegs,
+             sizeof(VecRegContainer));
+     _regClasses.emplace_back(NumVecRegs * NumVecElemPerVecReg,
+             vecRegElemClassOps, debug::VecRegs);
+     _regClasses.emplace_back(NumVecPredRegs, vecPredRegClassOps,
+-            debug::VecPredRegs, -1, sizeof(VecPredRegContainer));
++            debug::VecPredRegs, sizeof(VecPredRegContainer));
+     _regClasses.emplace_back(NUM_CCREGS, debug::CCRegs);
+     _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps, debug::MiscRegs);
+ 
+diff --git a/src/arch/mips/isa.cc b/src/arch/mips/isa.cc
+index 66348a4..683ed72 100644
+--- a/src/arch/mips/isa.cc
++++ b/src/arch/mips/isa.cc
+@@ -100,7 +100,7 @@ ISA::miscRegNames[MISCREG_NUMREGS] =
+ ISA::ISA(const Params &p) : BaseISA(p), numThreads(p.num_threads),
+     numVpes(p.num_vpes)
+ {
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to MIPS.
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to MIPS.
+diff --git a/src/arch/power/isa.cc b/src/arch/power/isa.cc
+index 4cf7b39..d28894d 100644
+--- a/src/arch/power/isa.cc
++++ b/src/arch/power/isa.cc
+@@ -54,7 +54,7 @@ namespace PowerISA
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, NumIntRegs - 1);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs);
+     _regClasses.emplace_back(2, debug::IntRegs);
+diff --git a/src/arch/riscv/isa.cc b/src/arch/riscv/isa.cc
+index f9d7ba1..6bf34af 100644
+--- a/src/arch/riscv/isa.cc
++++ b/src/arch/riscv/isa.cc
+@@ -196,7 +196,7 @@ namespace RiscvISA
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to RISCV
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to RISCV
+diff --git a/src/arch/sparc/isa.cc b/src/arch/sparc/isa.cc
+index 0ee2314..cec483f 100644
+--- a/src/arch/sparc/isa.cc
++++ b/src/arch/sparc/isa.cc
+@@ -70,7 +70,7 @@ static const PSTATE PstateMask = buildPstateMask();
+ 
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, 0);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable for SPARC
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable for SPARC
+diff --git a/src/arch/x86/isa.cc b/src/arch/x86/isa.cc
+index f426137..ac9f49a 100644
+--- a/src/arch/x86/isa.cc
++++ b/src/arch/x86/isa.cc
+@@ -146,7 +146,7 @@ ISA::ISA(const X86ISAParams &p) : BaseISA(p), vendorString(p.vendor_string)
+     fatal_if(vendorString.size() != 12,
+              "CPUID vendor string must be 12 characters\n");
+ 
+-    _regClasses.emplace_back(NumIntRegs, debug::IntRegs, INTREG_T0);
++    _regClasses.emplace_back(NumIntRegs, debug::IntRegs);
+     _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs); // Not applicable to X86
+     _regClasses.emplace_back(2, debug::IntRegs); // Not applicable to X86
+diff --git a/src/cpu/checker/cpu.cc b/src/cpu/checker/cpu.cc
+index f374331..ca1f1a0 100644
+--- a/src/cpu/checker/cpu.cc
++++ b/src/cpu/checker/cpu.cc
+@@ -64,7 +64,6 @@ CheckerCPU::init()
+ 
+ CheckerCPU::CheckerCPU(const Params &p)
+     : BaseCPU(p, true),
+-      zeroReg(params().isa[0]->regClasses().at(IntRegClass).zeroReg()),
+       systemPtr(NULL), icachePort(NULL), dcachePort(NULL),
+       tc(NULL), thread(NULL),
+       unverifiedReq(nullptr),
+diff --git a/src/cpu/checker/cpu.hh b/src/cpu/checker/cpu.hh
+index 66e9ef8..b5fdc64 100644
+--- a/src/cpu/checker/cpu.hh
++++ b/src/cpu/checker/cpu.hh
+@@ -87,8 +87,6 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     /** id attached to all issued requests */
+     RequestorID requestorId;
+ 
+-    const RegIndex zeroReg;
+-
+   public:
+     void init() override;
+ 
+diff --git a/src/cpu/checker/cpu_impl.hh b/src/cpu/checker/cpu_impl.hh
+index 8137812..61128e1 100644
+--- a/src/cpu/checker/cpu_impl.hh
++++ b/src/cpu/checker/cpu_impl.hh
+@@ -201,9 +201,6 @@ Checker<DynInstPtr>::verify(const DynInstPtr &completed_inst)
+ 
+         Fault fault = NoFault;
+ 
+-        // maintain $r0 semantics
+-        thread->setIntReg(zeroReg, 0);
+-
+         // Check if any recent PC changes match up with anything we
+         // expect to happen.  This is mostly to check if traps or
+         // PC-based events have occurred in both the checker and CPU.
+diff --git a/src/cpu/minor/dyn_inst.cc b/src/cpu/minor/dyn_inst.cc
+index e8b22a0..45889f9 100644
+--- a/src/cpu/minor/dyn_inst.cc
++++ b/src/cpu/minor/dyn_inst.cc
+@@ -158,11 +158,7 @@ printRegName(std::ostream &os, const RegId& reg,
+         os << reg_class.regName(reg);
+         break;
+       case IntRegClass:
+-        if (reg.index() == reg_class.zeroReg()) {
+-            os << 'z';
+-        } else {
+-            os << 'r' << reg.index();
+-        }
++        os << 'r' << reg.index();
+         break;
+       case CCRegClass:
+         os << 'c' << reg.index();
+diff --git a/src/cpu/minor/exec_context.hh b/src/cpu/minor/exec_context.hh
+index d3ae878..f3dc3ba 100644
+--- a/src/cpu/minor/exec_context.hh
++++ b/src/cpu/minor/exec_context.hh
+@@ -87,7 +87,7 @@ class ExecContext : public gem5::ExecContext
+     ExecContext (
+         MinorCPU &cpu_,
+         SimpleThread &thread_, Execute &execute_,
+-        MinorDynInstPtr inst_, RegIndex zeroReg) :
++        MinorDynInstPtr inst_) :
+         cpu(cpu_),
+         thread(thread_),
+         execute(execute_),
+diff --git a/src/cpu/minor/execute.cc b/src/cpu/minor/execute.cc
+index f7022d1..d320e67 100644
+--- a/src/cpu/minor/execute.cc
++++ b/src/cpu/minor/execute.cc
+@@ -70,8 +70,6 @@ Execute::Execute(const std::string &name_,
+     inp(inp_),
+     out(out_),
+     cpu(cpu_),
+-    zeroReg(cpu.threads[0]->getIsaPtr()->regClasses().
+-        at(IntRegClass).zeroReg()),
+     issueLimit(params.executeIssueLimit),
+     memoryIssueLimit(params.executeMemoryIssueLimit),
+     commitLimit(params.executeCommitLimit),
+@@ -90,8 +88,7 @@ Execute::Execute(const std::string &name_,
+         params.executeLSQRequestsQueueSize,
+         params.executeLSQTransfersQueueSize,
+         params.executeLSQStoreBufferSize,
+-        params.executeLSQMaxStoreBufferStoresPerCycle,
+-        zeroReg),
++        params.executeLSQMaxStoreBufferStoresPerCycle),
+     executeInfo(params.numThreads,
+             ExecuteThreadInfo(params.executeCommitLimit)),
+     interruptPriority(0),
+@@ -332,7 +329,7 @@ Execute::handleMemResponse(MinorDynInstPtr inst,
+     ThreadID thread_id = inst->id.threadId;
+     ThreadContext *thread = cpu.getContext(thread_id);
+ 
+-    ExecContext context(cpu, *cpu.threads[thread_id], *this, inst, zeroReg);
++    ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
+ 
+     PacketPtr packet = response->packet;
+ 
+@@ -467,8 +464,7 @@ Execute::executeMemRefInst(MinorDynInstPtr inst, BranchData &branch,
+         ThreadContext *thread = cpu.getContext(inst->id.threadId);
+         std::unique_ptr<PCStateBase> old_pc(thread->pcState().clone());
+ 
+-        ExecContext context(cpu, *cpu.threads[inst->id.threadId],
+-            *this, inst, zeroReg);
++        ExecContext context(cpu, *cpu.threads[inst->id.threadId], *this, inst);
+ 
+         DPRINTF(MinorExecute, "Initiating memRef inst: %s\n", *inst);
+ 
+@@ -914,8 +910,7 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
+         panic("We should never hit the case where we try to commit from a "
+               "suspended thread as the streamSeqNum should not match");
+     } else if (inst->isFault()) {
+-        ExecContext context(cpu, *cpu.threads[thread_id], *this,
+-                inst, zeroReg);
++        ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
+ 
+         DPRINTF(MinorExecute, "Fault inst reached Execute: %s\n",
+             inst->fault->name());
+@@ -976,8 +971,7 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
+          * backwards, so no other branches may evaluate this cycle*/
+         completed_inst = false;
+     } else {
+-        ExecContext context(cpu, *cpu.threads[thread_id], *this,
+-                inst, zeroReg);
++        ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
+ 
+         DPRINTF(MinorExecute, "Committing inst: %s\n", *inst);
+ 
+diff --git a/src/cpu/minor/execute.hh b/src/cpu/minor/execute.hh
+index 521b3b6..8a8c263 100644
+--- a/src/cpu/minor/execute.hh
++++ b/src/cpu/minor/execute.hh
+@@ -78,9 +78,6 @@ class Execute : public Named
+     /** Pointer back to the containing CPU */
+     MinorCPU &cpu;
+ 
+-    /** Index of the zero integer register. */
+-    const RegIndex zeroReg;
+-
+     /** Number of instructions that can be issued per cycle */
+     unsigned int issueLimit;
+ 
+diff --git a/src/cpu/minor/lsq.cc b/src/cpu/minor/lsq.cc
+index 17ae290..f2fa5be 100644
+--- a/src/cpu/minor/lsq.cc
++++ b/src/cpu/minor/lsq.cc
+@@ -58,10 +58,9 @@ namespace minor
+ {
+ 
+ LSQ::LSQRequest::LSQRequest(LSQ &port_, MinorDynInstPtr inst_, bool isLoad_,
+-        RegIndex zero_reg, PacketDataPtr data_, uint64_t *res_) :
++        PacketDataPtr data_, uint64_t *res_) :
+     SenderState(),
+     port(port_),
+-    zeroReg(zero_reg),
+     inst(inst_),
+     isLoad(isLoad_),
+     data(data_),
+@@ -81,7 +80,7 @@ LSQ::LSQRequest::tryToSuppressFault()
+ {
+     SimpleThread &thread = *port.cpu.threads[inst->id.threadId];
+     std::unique_ptr<PCStateBase> old_pc(thread.pcState().clone());
+-    ExecContext context(port.cpu, thread, port.execute, inst, zeroReg);
++    ExecContext context(port.cpu, thread, port.execute, inst);
+     [[maybe_unused]] Fault fault = inst->translationFault;
+ 
+     // Give the instruction a chance to suppress a translation fault
+@@ -104,7 +103,7 @@ LSQ::LSQRequest::completeDisabledMemAccess()
+     SimpleThread &thread = *port.cpu.threads[inst->id.threadId];
+     std::unique_ptr<PCStateBase> old_pc(thread.pcState().clone());
+ 
+-    ExecContext context(port.cpu, thread, port.execute, inst, zeroReg);
++    ExecContext context(port.cpu, thread, port.execute, inst);
+ 
+     context.setMemAccPredicate(false);
+     inst->staticInst->completeAcc(nullptr, &context, inst->traceData);
+@@ -393,7 +392,7 @@ LSQ::SplitDataRequest::finish(const Fault &fault_, const RequestPtr &request_,
+ 
+ LSQ::SplitDataRequest::SplitDataRequest(LSQ &port_, MinorDynInstPtr inst_,
+     bool isLoad_, PacketDataPtr data_, uint64_t *res_) :
+-    LSQRequest(port_, inst_, isLoad_, port_.zeroReg, data_, res_),
++    LSQRequest(port_, inst_, isLoad_, data_, res_),
+     translationEvent([this]{ sendNextFragmentToTranslation(); },
+                      "translationEvent"),
+     numFragments(0),
+@@ -1132,7 +1131,7 @@ LSQ::tryToSendToTransfers(LSQRequestPtr request)
+         SimpleThread &thread = *cpu.threads[request->inst->id.threadId];
+ 
+         std::unique_ptr<PCStateBase> old_pc(thread.pcState().clone());
+-        ExecContext context(cpu, thread, execute, request->inst, zeroReg);
++        ExecContext context(cpu, thread, execute, request->inst);
+ 
+         /* Handle LLSC requests and tests */
+         if (is_load) {
+@@ -1406,12 +1405,10 @@ LSQ::LSQ(std::string name_, std::string dcache_port_name_,
+     unsigned int in_memory_system_limit, unsigned int line_width,
+     unsigned int requests_queue_size, unsigned int transfers_queue_size,
+     unsigned int store_buffer_size,
+-    unsigned int store_buffer_cycle_store_limit,
+-    RegIndex zero_reg) :
++    unsigned int store_buffer_cycle_store_limit) :
+     Named(name_),
+     cpu(cpu_),
+     execute(execute_),
+-    zeroReg(zero_reg),
+     dcachePort(dcache_port_name_, *this, cpu_),
+     lastMemBarrier(cpu.numThreads, 0),
+     state(MemoryRunning),
+diff --git a/src/cpu/minor/lsq.hh b/src/cpu/minor/lsq.hh
+index 40e95e2..4a95bf7 100644
+--- a/src/cpu/minor/lsq.hh
++++ b/src/cpu/minor/lsq.hh
+@@ -72,8 +72,6 @@ class LSQ : public Named
+     MinorCPU &cpu;
+     Execute &execute;
+ 
+-    const RegIndex zeroReg;
+-
+   protected:
+     /** State of memory access for head access. */
+     enum MemoryState
+@@ -134,8 +132,6 @@ class LSQ : public Named
+         /** Owning port */
+         LSQ &port;
+ 
+-        const RegIndex zeroReg;
+-
+         /** Instruction which made this request */
+         MinorDynInstPtr inst;
+ 
+@@ -208,8 +204,7 @@ class LSQ : public Named
+ 
+       public:
+         LSQRequest(LSQ &port_, MinorDynInstPtr inst_, bool isLoad_,
+-                RegIndex zero_reg, PacketDataPtr data_ = NULL,
+-                uint64_t *res_ = NULL);
++                PacketDataPtr data_ = NULL, uint64_t *res_ = NULL);
+ 
+         virtual ~LSQRequest();
+ 
+@@ -319,7 +314,7 @@ class LSQ : public Named
+       public:
+         SpecialDataRequest(LSQ &port_, MinorDynInstPtr inst_) :
+             /* Say this is a load, not actually relevant */
+-            LSQRequest(port_, inst_, true, port_.zeroReg, NULL, 0)
++            LSQRequest(port_, inst_, true, NULL, 0)
+         { }
+     };
+ 
+@@ -386,7 +381,7 @@ class LSQ : public Named
+       public:
+         SingleDataRequest(LSQ &port_, MinorDynInstPtr inst_,
+             bool isLoad_, PacketDataPtr data_ = NULL, uint64_t *res_ = NULL) :
+-            LSQRequest(port_, inst_, isLoad_, port_.zeroReg, data_, res_),
++            LSQRequest(port_, inst_, isLoad_, data_, res_),
+             packetInFlight(false),
+             packetSent(false)
+         { }
+@@ -656,8 +651,7 @@ class LSQ : public Named
+         unsigned int max_accesses_in_memory_system, unsigned int line_width,
+         unsigned int requests_queue_size, unsigned int transfers_queue_size,
+         unsigned int store_buffer_size,
+-        unsigned int store_buffer_cycle_store_limit,
+-        RegIndex zero_reg);
++        unsigned int store_buffer_cycle_store_limit);
+ 
+     virtual ~LSQ();
+ 
+diff --git a/src/cpu/minor/scoreboard.cc b/src/cpu/minor/scoreboard.cc
+index 0e6ea75..926d01d 100644
+--- a/src/cpu/minor/scoreboard.cc
++++ b/src/cpu/minor/scoreboard.cc
+@@ -55,13 +55,8 @@ Scoreboard::findIndex(const RegId& reg, Index &scoreboard_index)
+ 
+     switch (reg.classValue()) {
+       case IntRegClass:
+-        if (reg.index() == zeroReg) {
+-            /* Don't bother with the zero register */
+-            ret = false;
+-        } else {
+-            scoreboard_index = reg.index();
+-            ret = true;
+-        }
++        scoreboard_index = reg.index();
++        ret = true;
+         break;
+       case FloatRegClass:
+         scoreboard_index = floatRegOffset + reg.index();
+diff --git a/src/cpu/minor/scoreboard.hh b/src/cpu/minor/scoreboard.hh
+index d091b44..973be47 100644
+--- a/src/cpu/minor/scoreboard.hh
++++ b/src/cpu/minor/scoreboard.hh
+@@ -82,8 +82,6 @@ class Scoreboard : public Named
+      *  [NumIntRegs+NumCCRegs, NumFloatRegs+NumIntRegs+NumCCRegs-1] */
+     const unsigned numRegs;
+ 
+-    const RegIndex zeroReg;
+-
+     /** Type to use when indexing numResults */
+     typedef unsigned short int Index;
+ 
+@@ -120,7 +118,6 @@ class Scoreboard : public Named
+         vecPredRegOffset(vecRegOffset +
+                 reg_classes.at(VecElemClass).numRegs()),
+         numRegs(vecPredRegOffset + reg_classes.at(VecPredRegClass).numRegs()),
+-        zeroReg(reg_classes.at(IntRegClass).zeroReg()),
+         numResults(numRegs, 0),
+         numUnpredictableResults(numRegs, 0),
+         fuIndices(numRegs, invalidFUIndex),
+diff --git a/src/cpu/o3/cpu.cc b/src/cpu/o3/cpu.cc
+index 43a8c55..301733c 100644
+--- a/src/cpu/o3/cpu.cc
++++ b/src/cpu/o3/cpu.cc
+@@ -98,8 +98,7 @@ CPU::CPU(const BaseO3CPUParams &params)
+ 
+       rob(this, params),
+ 
+-      scoreboard(name() + ".scoreboard", regFile.totalNumPhysRegs(),
+-              params.isa[0]->regClasses().at(IntRegClass).zeroReg()),
++      scoreboard(name() + ".scoreboard", regFile.totalNumPhysRegs()),
+ 
+       isa(numThreads, NULL),
+ 
+diff --git a/src/cpu/o3/probe/elastic_trace.cc b/src/cpu/o3/probe/elastic_trace.cc
+index e9e6d55..a56ef17 100644
+--- a/src/cpu/o3/probe/elastic_trace.cc
++++ b/src/cpu/o3/probe/elastic_trace.cc
+@@ -65,9 +65,6 @@ ElasticTrace::ElasticTrace(const ElasticTraceParams &params)
+        stats(this)
+ {
+     cpu = dynamic_cast<CPU *>(params.manager);
+-    const BaseISA::RegClasses &regClasses =
+-        cpu->getContext(0)->getIsaPtr()->regClasses();
+-    zeroReg = regClasses.at(IntRegClass).zeroReg();
+ 
+     fatal_if(!cpu, "Manager of %s is not of type O3CPU and thus does not "\
+                 "support dependency tracing.\n", name());
+@@ -251,9 +248,7 @@ ElasticTrace::updateRegDep(const DynInstConstPtr& dyn_inst)
+     for (int src_idx = 0; src_idx < max_regs; src_idx++) {
+ 
+         const RegId& src_reg = dyn_inst->srcRegIdx(src_idx);
+-        if (!src_reg.is(MiscRegClass) &&
+-                !((src_reg.is(IntRegClass) && src_reg.index() == zeroReg) ||
+-                    src_reg.is(InvalidRegClass))) {
++        if (!src_reg.is(MiscRegClass) && !src_reg.is(InvalidRegClass)) {
+             // Get the physical register index of the i'th source register.
+             PhysRegIdPtr phys_src_reg = dyn_inst->renamedSrcIdx(src_idx);
+             DPRINTFR(ElasticTrace, "[sn:%lli] Check map for src reg"
+@@ -284,9 +279,7 @@ ElasticTrace::updateRegDep(const DynInstConstPtr& dyn_inst)
+         // For data dependency tracking the register must be an int, float or
+         // CC register and not a Misc register.
+         const RegId& dest_reg = dyn_inst->destRegIdx(dest_idx);
+-        if (!dest_reg.is(MiscRegClass) &&
+-                !((dest_reg.is(IntRegClass) && dest_reg.index() == zeroReg) ||
+-                    dest_reg.is(InvalidRegClass))) {
++        if (!dest_reg.is(MiscRegClass) && !dest_reg.is(InvalidRegClass)) {
+             // Get the physical register index of the i'th destination
+             // register.
+             PhysRegIdPtr phys_dest_reg =
+diff --git a/src/cpu/o3/probe/elastic_trace.hh b/src/cpu/o3/probe/elastic_trace.hh
+index 53a6cbe..bf72f1d 100644
+--- a/src/cpu/o3/probe/elastic_trace.hh
++++ b/src/cpu/o3/probe/elastic_trace.hh
+@@ -190,8 +190,6 @@ class ElasticTrace : public ProbeListenerObject
+      */
+     bool firstWin;
+ 
+-    RegIndex zeroReg;
+-
+     /**
+      * @defgroup InstExecInfo Struct for storing information before an
+      * instruction reaches the commit stage, e.g. execute timestamp.
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index 3fc7035..0e5cc06 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -86,8 +86,6 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
+         intRegIds.emplace_back(IntRegClass, phys_reg, flat_reg_idx++);
+     }
+ 
+-    zeroReg = RegId(IntRegClass, reg_classes.at(IntRegClass).zeroReg());
+-
+     // The next batch of the registers are the floating-point physical
+     // registers; put them onto the floating-point free list.
+     for (phys_reg = 0; phys_reg < numPhysicalFloatRegs; phys_reg++) {
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index 62d2fa2..18d2d51 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -76,7 +76,6 @@ class PhysRegFile
+     /** Integer register file. */
+     RegFile intRegFile;
+     std::vector<PhysRegId> intRegIds;
+-    RegId zeroReg;
+ 
+     /** Floating point register file. */
+     RegFile floatRegFile;
+@@ -255,8 +254,7 @@ class PhysRegFile
+           case InvalidRegClass:
+             break;
+           case IntRegClass:
+-            if (phys_reg->index() != zeroReg.index())
+-                intRegFile.reg(idx) = val;
++            intRegFile.reg(idx) = val;
+             DPRINTF(IEW, "RegFile: Setting int register %i to %#x\n",
+                     idx, val);
+             break;
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index 447ec10..40e45f2 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -54,8 +54,7 @@ namespace gem5
+ namespace o3
+ {
+ 
+-SimpleRenameMap::SimpleRenameMap()
+-    : freeList(NULL), zeroReg(IntRegClass, 0)
++SimpleRenameMap::SimpleRenameMap() : freeList(NULL)
+ {
+ }
+ 
+@@ -68,7 +67,6 @@ SimpleRenameMap::init(const RegClass &reg_class, SimpleFreeList *_freeList)
+ 
+     map.resize(reg_class.numRegs());
+     freeList = _freeList;
+-    zeroReg = RegId(IntRegClass, reg_class.zeroReg());
+ }
+ 
+ SimpleRenameMap::RenameInfo
+@@ -79,10 +77,7 @@ SimpleRenameMap::rename(const RegId& arch_reg)
+     // requested architected register.
+     PhysRegIdPtr prev_reg = map[arch_reg.index()];
+ 
+-    if (arch_reg == zeroReg) {
+-        assert(prev_reg->index() == zeroReg.index());
+-        renamed_reg = prev_reg;
+-    } else if (arch_reg.is(InvalidRegClass)) {
++    if (arch_reg.is(InvalidRegClass)) {
+         assert(prev_reg->is(InvalidRegClass));
+         renamed_reg = prev_reg;
+     } else if (prev_reg->getNumPinnedWrites() > 0) {
+diff --git a/src/cpu/o3/rename_map.hh b/src/cpu/o3/rename_map.hh
+index 2e12635..640c2ac 100644
+--- a/src/cpu/o3/rename_map.hh
++++ b/src/cpu/o3/rename_map.hh
+@@ -85,15 +85,6 @@ class SimpleRenameMap
+      */
+     SimpleFreeList *freeList;
+ 
+-    /**
+-     * The architectural index of the zero register. This register is
+-     * mapped but read-only, so we ignore attempts to rename it via
+-     * the rename() method.  If there is no such register for this map
+-     * table, it should be set to an invalid index so that it never
+-     * matches.
+-     */
+-    RegId zeroReg;
+-
+   public:
+ 
+     SimpleRenameMap();
+diff --git a/src/cpu/o3/scoreboard.cc b/src/cpu/o3/scoreboard.cc
+index 5e9fc8b..c4c8bb2 100644
+--- a/src/cpu/o3/scoreboard.cc
++++ b/src/cpu/o3/scoreboard.cc
+@@ -35,9 +35,9 @@ namespace gem5
+ namespace o3
+ {
+ 
+-Scoreboard::Scoreboard(const std::string &_my_name, unsigned _numPhysicalRegs,
+-        RegIndex zero_reg) :
+-    _name(_my_name), zeroReg(zero_reg), regScoreBoard(_numPhysicalRegs, true),
++Scoreboard::Scoreboard(const std::string &_my_name,
++        unsigned _numPhysicalRegs) :
++    _name(_my_name), regScoreBoard(_numPhysicalRegs, true),
+     numPhysRegs(_numPhysicalRegs)
+ {}
+ 
+diff --git a/src/cpu/o3/scoreboard.hh b/src/cpu/o3/scoreboard.hh
+index f7c17bc..9cb719b 100644
+--- a/src/cpu/o3/scoreboard.hh
++++ b/src/cpu/o3/scoreboard.hh
+@@ -58,9 +58,6 @@ class Scoreboard
+      *  explicitly because Scoreboard is not a SimObject. */
+     const std::string _name;
+ 
+-    /** Index of the zero integer register. */
+-    const RegIndex zeroReg;
+-
+     /** Scoreboard of physical integer registers, saying whether or not they
+      *  are ready. */
+     std::vector<bool> regScoreBoard;
+@@ -73,8 +70,7 @@ class Scoreboard
+      *  @param _numPhysicalRegs Number of physical registers.
+      *  @param _numMiscRegs Number of miscellaneous registers.
+      */
+-    Scoreboard(const std::string &_my_name, unsigned _numPhysicalRegs,
+-               RegIndex _zero_reg);
++    Scoreboard(const std::string &_my_name, unsigned _numPhysicalRegs);
+ 
+     /** Destructor. */
+     ~Scoreboard() {}
+@@ -93,12 +89,7 @@ class Scoreboard
+ 
+         assert(phys_reg->flatIndex() < numPhysRegs);
+ 
+-        bool ready = regScoreBoard[phys_reg->flatIndex()];
+-
+-        if (phys_reg->is(IntRegClass) && phys_reg->index() == zeroReg)
+-            gem5_assert(ready);
+-
+-        return ready;
++        return regScoreBoard[phys_reg->flatIndex()];
+     }
+ 
+     /** Sets the register as ready. */
+@@ -131,10 +122,6 @@ class Scoreboard
+ 
+         assert(phys_reg->flatIndex() < numPhysRegs);
+ 
+-        // zero reg should never be marked unready
+-        if (phys_reg->is(IntRegClass) && phys_reg->index() == zeroReg)
+-            return;
+-
+         regScoreBoard[phys_reg->flatIndex()] = false;
+     }
+ 
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index e295530..a4b65d0 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -82,7 +82,6 @@ class RegClass
+ {
+   private:
+     size_t _numRegs;
+-    const RegIndex _zeroReg;
+     size_t _regBytes;
+     // This is how much to shift an index by to get an offset of a register in
+     // a register file from the register index, which would otherwise need to
+@@ -95,20 +94,18 @@ class RegClass
+ 
+   public:
+     RegClass(size_t num_regs, const debug::Flag &debug_flag,
+-            RegIndex new_zero=-1, size_t reg_bytes=sizeof(RegVal)) :
+-        _numRegs(num_regs), _zeroReg(new_zero), _regBytes(reg_bytes),
++            size_t reg_bytes=sizeof(RegVal)) :
++        _numRegs(num_regs), _regBytes(reg_bytes),
+         _regShift(ceilLog2(reg_bytes)), debugFlag(debug_flag)
+     {}
+     RegClass(size_t num_regs, RegClassOps &new_ops,
+-            const debug::Flag &debug_flag, RegIndex new_zero=-1,
+-            size_t reg_bytes=sizeof(RegVal)) :
+-        RegClass(num_regs, debug_flag, new_zero, reg_bytes)
++            const debug::Flag &debug_flag, size_t reg_bytes=sizeof(RegVal)) :
++        RegClass(num_regs, debug_flag, reg_bytes)
+     {
+         _ops = &new_ops;
+     }
+ 
+     size_t numRegs() const { return _numRegs; }
+-    RegIndex zeroReg() const { return _zeroReg; }
+     size_t regBytes() const { return _regBytes; }
+     size_t regShift() const { return _regShift; }
+     const debug::Flag &debug() const { return debugFlag; }
+diff --git a/src/cpu/simple/base.cc b/src/cpu/simple/base.cc
+index 6db8025..426aa44 100644
+--- a/src/cpu/simple/base.cc
++++ b/src/cpu/simple/base.cc
+@@ -85,7 +85,6 @@ BaseSimpleCPU::BaseSimpleCPU(const BaseSimpleCPUParams &p)
+     : BaseCPU(p),
+       curThread(0),
+       branchPred(p.branchPred),
+-      zeroReg(p.isa[0]->regClasses().at(IntRegClass).zeroReg()),
+       traceData(NULL),
+       _status(Idle)
+ {
+diff --git a/src/cpu/simple/base.hh b/src/cpu/simple/base.hh
+index 4a56c74..3fdd019 100644
+--- a/src/cpu/simple/base.hh
++++ b/src/cpu/simple/base.hh
+@@ -86,8 +86,6 @@ class BaseSimpleCPU : public BaseCPU
+     ThreadID curThread;
+     branch_prediction::BPredUnit *branchPred;
+ 
+-    const RegIndex zeroReg;
+-
+     void checkPcEventQueue();
+     void swapActiveThread();
+ 
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 81c8839..1de5b37 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -408,9 +408,6 @@ class SimpleThread : public ThreadState, public ThreadContext
+         auto &reg_file = regFiles[reg.classValue()];
+         const auto &reg_class = reg_file.regClass;
+ 
+-        if (reg.index() == reg_class.zeroReg())
+-            return;
+-
+         DPRINTFV(reg_class.debug(), "Setting %s register %s (%d) to %#x.\n",
+                 reg.className(), reg_class.regName(arch_reg), idx, val);
+         reg_file.reg(idx) = val;
+@@ -427,9 +424,6 @@ class SimpleThread : public ThreadState, public ThreadContext
+         auto &reg_file = regFiles[reg.classValue()];
+         const auto &reg_class = reg_file.regClass;
+ 
+-        if (reg.index() == reg_class.zeroReg())
+-            return;
+-
+         DPRINTFV(reg_class.debug(), "Setting %s register %d to %#x.\n",
+                 reg.className(), idx, val);
+         reg_file.reg(idx) = val;
+-- 
+1.8.3.1
+

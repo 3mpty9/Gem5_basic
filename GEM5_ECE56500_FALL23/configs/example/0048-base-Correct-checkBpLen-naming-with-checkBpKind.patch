@@ -1,0 +1,233 @@
+From 46957f4337589829c1b94c213c9574191b22515e Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Tue, 14 Dec 2021 11:17:41 +0800
+Subject: [PATCH 048/757] base: Correct checkBpLen naming with checkBpKind
+
+In gdb document*1, the second parameter of checkpoint command(Z0, Z1) is
+named after kind. Although underlying implementation probably considers
+it as length*2, it's still good to follow the name described in gdb
+document for avoiding any confusion.
+
+Refs:
+1. https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+2. https://github.com/bminor/binutils-gdb/blob/master/gdb/arch-utils.h#L41
+
+Change-Id: Ib4b585613b8018970b16355f96cdff2ce9d5bae6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54123
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/remote_gdb.cc   |  4 ++--
+ src/arch/arm/remote_gdb.hh   |  2 +-
+ src/arch/riscv/remote_gdb.hh |  2 +-
+ src/arch/x86/remote_gdb.hh   |  2 +-
+ src/base/remote_gdb.cc       | 50 ++++++++++++++++++++++----------------------
+ src/base/remote_gdb.hh       | 14 +++++++------
+ 6 files changed, 38 insertions(+), 36 deletions(-)
+
+diff --git a/src/arch/arm/remote_gdb.cc b/src/arch/arm/remote_gdb.cc
+index 2efa82f..215c532 100644
+--- a/src/arch/arm/remote_gdb.cc
++++ b/src/arch/arm/remote_gdb.cc
+@@ -362,10 +362,10 @@ RemoteGDB::gdbRegs()
+ }
+ 
+ bool
+-RemoteGDB::checkBpLen(size_t len)
++RemoteGDB::checkBpKind(size_t kind)
+ {
+     // 2 for Thumb ISA, 4 for ARM ISA.
+-    return len == 2 || len == 4;
++    return kind == 2 || kind == 4;
+ }
+ 
+ } // namespace gem5
+diff --git a/src/arch/arm/remote_gdb.hh b/src/arch/arm/remote_gdb.hh
+index cff6d4a..8e512a4 100644
+--- a/src/arch/arm/remote_gdb.hh
++++ b/src/arch/arm/remote_gdb.hh
+@@ -120,7 +120,7 @@ class RemoteGDB : public BaseRemoteGDB
+   public:
+     RemoteGDB(System *_system, int _port);
+     BaseGdbRegCache *gdbRegs() override;
+-    bool checkBpLen(size_t len) override;
++    bool checkBpKind(size_t kind) override;
+     std::vector<std::string>
+     availableFeatures() const override
+     {
+diff --git a/src/arch/riscv/remote_gdb.hh b/src/arch/riscv/remote_gdb.hh
+index 40fe821..753859f 100644
+--- a/src/arch/riscv/remote_gdb.hh
++++ b/src/arch/riscv/remote_gdb.hh
+@@ -56,7 +56,7 @@ class RemoteGDB : public BaseRemoteGDB
+ 
+     bool acc(Addr addr, size_t len) override;
+     // A breakpoint will be 2 bytes if it is compressed and 4 if not
+-    bool checkBpLen(size_t len) override { return len == 2 || len == 4; }
++    bool checkBpKind(size_t kind) override { return kind == 2 || kind == 4; }
+ 
+     class RiscvGdbRegCache : public BaseGdbRegCache
+     {
+diff --git a/src/arch/x86/remote_gdb.hh b/src/arch/x86/remote_gdb.hh
+index 62176a5..dfa9177 100644
+--- a/src/arch/x86/remote_gdb.hh
++++ b/src/arch/x86/remote_gdb.hh
+@@ -58,7 +58,7 @@ class RemoteGDB : public BaseRemoteGDB
+ {
+   protected:
+     bool acc(Addr addr, size_t len);
+-    bool checkBpLen(size_t len) { return len == 1; }
++    bool checkBpKind(size_t kind) { return kind == 1; }
+     class X86GdbRegCache : public BaseGdbRegCache
+     {
+       using BaseGdbRegCache::BaseGdbRegCache;
+diff --git a/src/base/remote_gdb.cc b/src/base/remote_gdb.cc
+index 1437b75..798d09f 100644
+--- a/src/base/remote_gdb.cc
++++ b/src/base/remote_gdb.cc
+@@ -784,28 +784,28 @@ BaseRemoteGDB::setSingleStep()
+ }
+ 
+ void
+-BaseRemoteGDB::insertSoftBreak(Addr addr, size_t len)
++BaseRemoteGDB::insertSoftBreak(Addr addr, size_t kind)
+ {
+-    if (!checkBpLen(len))
+-        throw BadClient("Invalid breakpoint length\n");
++    if (!checkBpKind(kind))
++        throw BadClient("Invalid breakpoint kind.\n");
+ 
+-    return insertHardBreak(addr, len);
++    return insertHardBreak(addr, kind);
+ }
+ 
+ void
+-BaseRemoteGDB::removeSoftBreak(Addr addr, size_t len)
++BaseRemoteGDB::removeSoftBreak(Addr addr, size_t kind)
+ {
+-    if (!checkBpLen(len))
+-        throw BadClient("Invalid breakpoint length.\n");
++    if (!checkBpKind(kind))
++        throw BadClient("Invalid breakpoint kind.\n");
+ 
+-    return removeHardBreak(addr, len);
++    return removeHardBreak(addr, kind);
+ }
+ 
+ void
+-BaseRemoteGDB::insertHardBreak(Addr addr, size_t len)
++BaseRemoteGDB::insertHardBreak(Addr addr, size_t kind)
+ {
+-    if (!checkBpLen(len))
+-        throw BadClient("Invalid breakpoint length\n");
++    if (!checkBpKind(kind))
++        throw BadClient("Invalid breakpoint kind.\n");
+ 
+     DPRINTF(GDBMisc, "Inserting hardware breakpoint at %#x\n", addr);
+ 
+@@ -817,10 +817,10 @@ BaseRemoteGDB::insertHardBreak(Addr addr, size_t len)
+ }
+ 
+ void
+-BaseRemoteGDB::removeHardBreak(Addr addr, size_t len)
++BaseRemoteGDB::removeHardBreak(Addr addr, size_t kind)
+ {
+-    if (!checkBpLen(len))
+-        throw BadClient("Invalid breakpoint length\n");
++    if (!checkBpKind(kind))
++        throw BadClient("Invalid breakpoint kind.\n");
+ 
+     DPRINTF(GDBMisc, "Removing hardware breakpoint at %#x\n", addr);
+ 
+@@ -917,7 +917,7 @@ std::map<char, BaseRemoteGDB::GdbCommand> BaseRemoteGDB::commandMap = {
+ };
+ 
+ bool
+-BaseRemoteGDB::checkBpLen(size_t len)
++BaseRemoteGDB::checkBpKind(size_t kind)
+ {
+     return true;
+ }
+@@ -1302,17 +1302,17 @@ BaseRemoteGDB::cmdClrHwBkpt(GdbCommand::Context &ctx)
+     Addr addr = hex2i(&p);
+     if (*p++ != ',')
+         throw CmdError("E0D");
+-    size_t len = hex2i(&p);
++    size_t kind = hex2i(&p);
+ 
+-    DPRINTF(GDBMisc, "clear %s, addr=%#x, len=%d\n",
+-            breakType(sub_cmd), addr, len);
++    DPRINTF(GDBMisc, "clear %s, addr=%#x, kind=%d\n",
++            breakType(sub_cmd), addr, kind);
+ 
+     switch (sub_cmd) {
+       case GdbSoftBp:
+-        removeSoftBreak(addr, len);
++        removeSoftBreak(addr, kind);
+         break;
+       case GdbHardBp:
+-        removeHardBreak(addr, len);
++        removeHardBreak(addr, kind);
+         break;
+       case GdbWriteWp:
+       case GdbReadWp:
+@@ -1335,17 +1335,17 @@ BaseRemoteGDB::cmdSetHwBkpt(GdbCommand::Context &ctx)
+     Addr addr = hex2i(&p);
+     if (*p++ != ',')
+         throw CmdError("E0D");
+-    size_t len = hex2i(&p);
++    size_t kind = hex2i(&p);
+ 
+-    DPRINTF(GDBMisc, "set %s, addr=%#x, len=%d\n",
+-            breakType(sub_cmd), addr, len);
++    DPRINTF(GDBMisc, "set %s, addr=%#x, kind=%d\n",
++            breakType(sub_cmd), addr, kind);
+ 
+     switch (sub_cmd) {
+       case GdbSoftBp:
+-        insertSoftBreak(addr, len);
++        insertSoftBreak(addr, kind);
+         break;
+       case GdbHardBp:
+-        insertHardBreak(addr, len);
++        insertHardBreak(addr, kind);
+         break;
+       case GdbWriteWp:
+       case GdbReadWp:
+diff --git a/src/base/remote_gdb.hh b/src/base/remote_gdb.hh
+index 59bccc5..b297e08 100644
+--- a/src/base/remote_gdb.hh
++++ b/src/base/remote_gdb.hh
+@@ -313,10 +313,10 @@ class BaseRemoteGDB
+     void descheduleInstCommitEvent(Event *ev);
+ 
+     // Breakpoints.
+-    void insertSoftBreak(Addr addr, size_t len);
+-    void removeSoftBreak(Addr addr, size_t len);
+-    void insertHardBreak(Addr addr, size_t len);
+-    void removeHardBreak(Addr addr, size_t len);
++    void insertSoftBreak(Addr addr, size_t kind);
++    void removeSoftBreak(Addr addr, size_t kind);
++    void insertHardBreak(Addr addr, size_t kind);
++    void removeHardBreak(Addr addr, size_t kind);
+ 
+     /*
+      * GDB commands.
+@@ -401,8 +401,10 @@ class BaseRemoteGDB
+     void encodeXferResponse(const std::string &unencoded,
+         std::string &encoded, size_t offset, size_t unencoded_length) const;
+ 
+-    // To be implemented by subclasses.
+-    virtual bool checkBpLen(size_t len);
++    // checkBpKind checks if a kind of breakpoint is legal. This function should
++    // be implemented by subclasses by arch. The "kind" is considered to be
++    // breakpoint size in some arch.
++    virtual bool checkBpKind(size_t kind);
+ 
+     virtual BaseGdbRegCache *gdbRegs() = 0;
+ 
+-- 
+1.8.3.1
+

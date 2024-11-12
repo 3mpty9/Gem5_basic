@@ -1,0 +1,3955 @@
+From 38d360a475f0b664a72618bcbdb6365a4450e498 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 5 Apr 2022 14:07:06 +0100
+Subject: [PATCH 636/757] configs, mem-ruby: Implement DVMOps in CHI
+
+1) Handling TLBI/TLBI_SYNC requests from the PE in the CHI Request Node
+(Generating DVMOps)
+
+2) Adding a new machine type for the Misc Node (MN) that handles DVMOps
+from the Request Node (RN), following the protocol specified within
+the Amba 5 CHI Architecture Specification [1]
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+[1]: https://developer.arm.com/documentation/ihi0050/latest
+
+Change-Id: I9ac00463ec3080c90bb81af721d88d44047123b6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57298
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/noc_config/2x4.py                  |   4 +
+ configs/ruby/CHI.py                                |   9 +
+ configs/ruby/CHI_config.py                         |  74 ++++
+ configs/topologies/CustomMesh.py                   |   8 +
+ src/mem/ruby/SConscript                            |  18 +-
+ src/mem/ruby/protocol/RubySlicc_Exports.sm         |   1 +
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm     | 318 ++++++++++++++++-
+ src/mem/ruby/protocol/chi/CHI-cache-funcs.sm       | 168 ++++++++-
+ src/mem/ruby/protocol/chi/CHI-cache-ports.sm       | 224 ++++++++----
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm | 194 ++++++++++
+ src/mem/ruby/protocol/chi/CHI-cache.sm             |  59 ++-
+ .../ruby/protocol/chi/CHI-dvm-misc-node-actions.sm | 394 +++++++++++++++++++++
+ .../ruby/protocol/chi/CHI-dvm-misc-node-funcs.sm   | 322 +++++++++++++++++
+ .../ruby/protocol/chi/CHI-dvm-misc-node-ports.sm   | 318 +++++++++++++++++
+ .../protocol/chi/CHI-dvm-misc-node-transitions.sm  | 184 ++++++++++
+ src/mem/ruby/protocol/chi/CHI-dvm-misc-node.sm     | 380 ++++++++++++++++++++
+ src/mem/ruby/protocol/chi/CHI-msg.sm               |  19 +-
+ src/mem/ruby/protocol/chi/CHI.slicc                |   1 +
+ src/mem/ruby/slicc_interface/RubySlicc_Util.hh     |   1 +
+ src/mem/ruby/structures/MN_TBEStorage.hh           | 270 ++++++++++++++
+ src/mem/ruby/structures/MN_TBETable.cc             | 149 ++++++++
+ src/mem/ruby/structures/MN_TBETable.hh             |  70 ++++
+ src/mem/ruby/structures/SConscript                 |  14 +
+ src/mem/ruby/structures/TBETable.hh                |   4 +-
+ 24 files changed, 3124 insertions(+), 79 deletions(-)
+ create mode 100644 src/mem/ruby/protocol/chi/CHI-dvm-misc-node-actions.sm
+ create mode 100644 src/mem/ruby/protocol/chi/CHI-dvm-misc-node-funcs.sm
+ create mode 100644 src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
+ create mode 100644 src/mem/ruby/protocol/chi/CHI-dvm-misc-node-transitions.sm
+ create mode 100644 src/mem/ruby/protocol/chi/CHI-dvm-misc-node.sm
+ create mode 100644 src/mem/ruby/structures/MN_TBEStorage.hh
+ create mode 100644 src/mem/ruby/structures/MN_TBETable.cc
+ create mode 100644 src/mem/ruby/structures/MN_TBETable.hh
+
+diff --git a/configs/example/noc_config/2x4.py b/configs/example/noc_config/2x4.py
+index fe2522b..2d10da6 100644
+--- a/configs/example/noc_config/2x4.py
++++ b/configs/example/noc_config/2x4.py
+@@ -60,6 +60,10 @@ class CHI_HNF(CHI_config.CHI_HNF):
+     class NoC_Params(CHI_config.CHI_HNF.NoC_Params):
+         router_list = [1, 2, 5, 6]
+ 
++class CHI_MN(CHI_config.CHI_MN):
++    class NoC_Params(CHI_config.CHI_MN.NoC_Params):
++        router_list = [4]
++
+ class CHI_SNF_MainMem(CHI_config.CHI_SNF_MainMem):
+     class NoC_Params(CHI_config.CHI_SNF_MainMem.NoC_Params):
+         router_list = [0, 4]
+diff --git a/configs/ruby/CHI.py b/configs/ruby/CHI.py
+index 3fe8b26..7cac5ed 100644
+--- a/configs/ruby/CHI.py
++++ b/configs/ruby/CHI.py
+@@ -79,6 +79,7 @@ def create_system(options, full_system, system, dma_ports, bootmem,
+     # Node types
+     CHI_RNF = chi_defs.CHI_RNF
+     CHI_HNF = chi_defs.CHI_HNF
++    CHI_MN = chi_defs.CHI_MN
+     CHI_SNF_MainMem = chi_defs.CHI_SNF_MainMem
+     CHI_SNF_BootMem = chi_defs.CHI_SNF_BootMem
+     CHI_RNI_DMA = chi_defs.CHI_RNI_DMA
+@@ -140,6 +141,14 @@ def create_system(options, full_system, system, dma_ports, bootmem,
+         network_nodes.append(rnf)
+         network_cntrls.extend(rnf.getNetworkSideControllers())
+ 
++    # Creates one Misc Node
++    ruby_system.mn = [ CHI_MN(ruby_system, [cpu.l1d for cpu in cpus]) ]
++    for mn in ruby_system.mn:
++        all_cntrls.extend(mn.getAllControllers())
++        network_nodes.append(mn)
++        network_cntrls.extend(mn.getNetworkSideControllers())
++        assert(mn.getAllControllers() == mn.getNetworkSideControllers())
++
+     # Look for other memories
+     other_memories = []
+     if bootmem:
+diff --git a/configs/ruby/CHI_config.py b/configs/ruby/CHI_config.py
+index b596efa..a4b01ca 100644
+--- a/configs/ruby/CHI_config.py
++++ b/configs/ruby/CHI_config.py
+@@ -230,6 +230,9 @@ class CHI_L1Controller(CHI_Cache_Controller):
+         self.number_of_TBEs = 16
+         self.number_of_repl_TBEs = 16
+         self.number_of_snoop_TBEs = 4
++        self.number_of_DVM_TBEs = 16
++        self.number_of_DVM_snoop_TBEs = 4
++
+         self.unify_repl_TBEs = False
+ 
+ class CHI_L2Controller(CHI_Cache_Controller):
+@@ -262,6 +265,8 @@ class CHI_L2Controller(CHI_Cache_Controller):
+         self.number_of_TBEs = 32
+         self.number_of_repl_TBEs = 32
+         self.number_of_snoop_TBEs = 16
++        self.number_of_DVM_TBEs = 1 # should not receive any dvm
++        self.number_of_DVM_snoop_TBEs = 1 # should not receive any dvm
+         self.unify_repl_TBEs = False
+ 
+ class CHI_HNFController(CHI_Cache_Controller):
+@@ -295,8 +300,41 @@ class CHI_HNFController(CHI_Cache_Controller):
+         self.number_of_TBEs = 32
+         self.number_of_repl_TBEs = 32
+         self.number_of_snoop_TBEs = 1 # should not receive any snoop
++        self.number_of_DVM_TBEs = 1 # should not receive any dvm
++        self.number_of_DVM_snoop_TBEs = 1 # should not receive any dvm
+         self.unify_repl_TBEs = False
+ 
++class CHI_MNController(MiscNode_Controller):
++    '''
++    Default parameters for a Misc Node
++    '''
++
++    def __init__(self, ruby_system, addr_range, l1d_caches,
++                 early_nonsync_comp):
++        super(CHI_MNController, self).__init__(
++            version = Versions.getVersion(MiscNode_Controller),
++            ruby_system = ruby_system,
++            mandatoryQueue = MessageBuffer(),
++            triggerQueue = TriggerMessageBuffer(),
++            retryTriggerQueue = TriggerMessageBuffer(),
++            schedRspTriggerQueue = TriggerMessageBuffer(),
++            reqRdy = TriggerMessageBuffer(),
++            snpRdy = TriggerMessageBuffer(),
++        )
++        # Set somewhat large number since we really a lot on internal
++        # triggers. To limit the controller performance, tweak other
++        # params such as: input port buffer size, cache banks, and output
++        # port latency
++        self.transitions_per_cycle = 1024
++        self.addr_ranges = [addr_range]
++        # 16 total transaction buffer entries, but 1 is reserved for DVMNonSync
++        self.number_of_DVM_TBEs = 16
++        self.number_of_non_sync_TBEs = 1
++        self.early_nonsync_comp = early_nonsync_comp
++
++        # "upstream_destinations" = targets for DVM snoops
++        self.upstream_destinations = l1d_caches
++
+ class CHI_DMAController(CHI_Cache_Controller):
+     '''
+     Default parameters for a DMA controller
+@@ -333,6 +371,8 @@ class CHI_DMAController(CHI_Cache_Controller):
+         self.number_of_TBEs = 16
+         self.number_of_repl_TBEs = 1
+         self.number_of_snoop_TBEs = 1 # should not receive any snoop
++        self.number_of_DVM_TBEs = 1 # should not receive any dvm
++        self.number_of_DVM_snoop_TBEs = 1 # should not receive any dvm
+         self.unify_repl_TBEs = False
+ 
+ class CPUSequencerWrapper:
+@@ -535,6 +575,40 @@ class CHI_HNF(CHI_Node):
+         return [self._cntrl]
+ 
+ 
++class CHI_MN(CHI_Node):
++    '''
++    Encapsulates a Misc Node controller.
++    '''
++
++    class NoC_Params(CHI_Node.NoC_Params):
++        '''HNFs may also define the 'pairing' parameter to allow pairing'''
++        pairing = None
++
++
++    # The CHI controller can be a child of this object or another if
++    # 'parent' if specified
++    def __init__(self, ruby_system, l1d_caches, early_nonsync_comp=False):
++        super(CHI_MN, self).__init__(ruby_system)
++
++        # MiscNode has internal address range starting at 0
++        addr_range = AddrRange(0, size = "1kB")
++
++        self._cntrl = CHI_MNController(ruby_system, addr_range, l1d_caches,
++                                       early_nonsync_comp)
++
++        self.cntrl = self._cntrl
++
++        self.connectController(self._cntrl)
++
++    def connectController(self, cntrl):
++        CHI_Node.connectController(self, cntrl)
++
++    def getAllControllers(self):
++        return [self._cntrl]
++
++    def getNetworkSideControllers(self):
++        return [self._cntrl]
++
+ class CHI_SNF_Base(CHI_Node):
+     '''
+     Creates CHI node controllers for the memory controllers
+diff --git a/configs/topologies/CustomMesh.py b/configs/topologies/CustomMesh.py
+index 70bf55d..2519bdd 100644
+--- a/configs/topologies/CustomMesh.py
++++ b/configs/topologies/CustomMesh.py
+@@ -239,6 +239,7 @@ class CustomMesh(SimpleTopology):
+         # classify nodes into different types
+         rnf_nodes = []
+         hnf_nodes = []
++        mn_nodes = []
+         mem_nodes = []
+         io_mem_nodes = []
+         rni_dma_nodes = []
+@@ -248,6 +249,7 @@ class CustomMesh(SimpleTopology):
+         # the same base type.
+         rnf_params = None
+         hnf_params = None
++        mn_params = None
+         mem_params = None
+         io_mem_params = None
+         rni_dma_params = None
+@@ -264,6 +266,9 @@ class CustomMesh(SimpleTopology):
+             elif isinstance(n, CHI.CHI_HNF):
+                 hnf_nodes.append(n)
+                 hnf_params = check_same(type(n).NoC_Params, hnf_params)
++            elif isinstance(n, CHI.CHI_MN):
++                mn_nodes.append(n)
++                mn_params = check_same(type(n).NoC_Params, mn_params)
+             elif isinstance(n, CHI.CHI_SNF_MainMem):
+                 mem_nodes.append(n)
+                 mem_params = check_same(type(n).NoC_Params, mem_params)
+@@ -298,6 +303,9 @@ class CustomMesh(SimpleTopology):
+         # Place CHI_HNF on the mesh
+         self.distributeNodes(hnf_params, hnf_nodes)
+ 
++        # Place CHI_MN on the mesh
++        self.distributeNodes(options, mn_params, mn_nodes)
++
+         # Place CHI_SNF_MainMem on the mesh
+         self.distributeNodes(mem_params, mem_nodes)
+ 
+diff --git a/src/mem/ruby/SConscript b/src/mem/ruby/SConscript
+index b8f5584..5062efd 100644
+--- a/src/mem/ruby/SConscript
++++ b/src/mem/ruby/SConscript
+@@ -1,5 +1,17 @@
+ # -*- mode:python -*-
+ 
++# Copyright (c) 2021 Arm Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright (c) 2009 The Hewlett-Packard Development Company
+ # All rights reserved.
+ #
+@@ -55,11 +67,12 @@ DebugFlag('RubySystem')
+ DebugFlag('RubyTester')
+ DebugFlag('RubyStats')
+ DebugFlag('RubyResourceStalls')
++DebugFlag('RubyProtocol')
+ 
+ CompoundFlag('Ruby', [ 'RubyQueue', 'RubyNetwork', 'RubyTester',
+     'RubyGenerated', 'RubySlicc', 'RubySystem', 'RubyCache',
+     'RubyDma', 'RubyPort', 'RubySequencer', 'RubyCacheTrace',
+-    'RubyPrefetcher'])
++    'RubyPrefetcher', 'RubyProtocol'])
+ 
+ #
+ # Link includes
+@@ -98,6 +111,9 @@ MakeInclude('structures/PerfectCacheMemory.hh')
+ MakeInclude('structures/PersistentTable.hh')
+ MakeInclude('structures/RubyPrefetcher.hh')
+ MakeInclude('structures/TBEStorage.hh')
++if env['PROTOCOL'] == 'CHI':
++    MakeInclude('structures/MN_TBEStorage.hh')
++    MakeInclude('structures/MN_TBETable.hh')
+ MakeInclude('structures/TBETable.hh')
+ MakeInclude('structures/TimerTable.hh')
+ MakeInclude('structures/WireBuffer.hh')
+diff --git a/src/mem/ruby/protocol/RubySlicc_Exports.sm b/src/mem/ruby/protocol/RubySlicc_Exports.sm
+index ef83e01..a32983a 100644
+--- a/src/mem/ruby/protocol/RubySlicc_Exports.sm
++++ b/src/mem/ruby/protocol/RubySlicc_Exports.sm
+@@ -272,6 +272,7 @@ enumeration(MachineType, desc="...", default="MachineType_NULL") {
+     RegionBuffer, desc="Region buffer for CPU and GPU";
+     Cache,       desc="Generic coherent cache controller";
+     Memory,      desc="Memory controller interface";
++    MiscNode,    desc="CHI protocol Misc Node";
+     NULL,        desc="null mach type";
+ }
+ 
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 93a97d4..65182ae 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -60,9 +60,10 @@ action(AllocateTBE_Request, desc="") {
+       assert(in_msg.allowRetry);
+       enqueue(retryTriggerOutPort, RetryTriggerMsg, 0) {
+         out_msg.addr := in_msg.addr;
++        out_msg.usesTxnId := false;
+         out_msg.event := Event:SendRetryAck;
+         out_msg.retryDest := in_msg.requestor;
+-        retryQueue.emplace(in_msg.addr,in_msg.requestor);
++        retryQueue.emplace(in_msg.addr,false,in_msg.requestor);
+       }
+     }
+   }
+@@ -106,6 +107,23 @@ action(AllocateTBE_Snoop, desc="") {
+   snpInPort.dequeue(clockEdge());
+ }
+ 
++action(AllocateTBE_DvmSnoop, desc="") {
++  // No retry for snoop requests; just create resource stall
++  check_allocate(storDvmSnpTBEs);
++
++  storDvmSnpTBEs.incrementReserved();
++
++  // Move request to rdy queue
++  peek(snpInPort, CHIRequestMsg) {
++    enqueue(snpRdyOutPort, CHIRequestMsg, allocation_latency) {
++      assert(in_msg.usesTxnId);
++      assert(in_msg.addr == address);
++      out_msg := in_msg;
++    }
++  }
++  snpInPort.dequeue(clockEdge());
++}
++
+ action(AllocateTBE_SeqRequest, desc="") {
+   // No retry for sequencer requests; just create resource stall
+   check_allocate(storTBEs);
+@@ -145,6 +163,49 @@ action(AllocateTBE_SeqRequest, desc="") {
+   seqInPort.dequeue(clockEdge());
+ }
+ 
++action(AllocateTBE_SeqDvmRequest, desc="") {
++  // No retry for sequencer requests; just create resource stall
++  check_allocate(storDvmTBEs);
++
++  // reserve a slot for this request
++  storDvmTBEs.incrementReserved();
++
++  // Move request to rdy queue
++  peek(seqInPort, RubyRequest) {
++    enqueue(reqRdyOutPort, CHIRequestMsg, allocation_latency) {
++      // DVM operations do not relate to memory addresses
++      // Use the DVM transaction ID instead
++      out_msg.usesTxnId := true;
++      out_msg.txnId := in_msg.tlbiTransactionUid;
++
++      // TODO - zero these out?
++      out_msg.addr := in_msg.tlbiTransactionUid;
++      out_msg.accAddr := in_msg.tlbiTransactionUid;
++      out_msg.accSize := blockSize;
++      assert(in_msg.Prefetch == PrefetchBit:No);
++      out_msg.is_local_pf := false;
++      out_msg.is_remote_pf := false;
++
++      out_msg.requestor := machineID;
++      out_msg.fwdRequestor := machineID;
++      out_msg.seqReq := in_msg.getRequestPtr();
++      out_msg.isSeqReqValid := true;
++
++
++      if (in_msg.Type == RubyRequestType:TLBI) {
++        out_msg.type := CHIRequestType:DvmTlbi_Initiate;
++      } else if (in_msg.Type == RubyRequestType:TLBI_SYNC) {
++        out_msg.type := CHIRequestType:DvmSync_Initiate;
++      } else if (in_msg.Type == RubyRequestType:TLBI_EXT_SYNC_COMP) {
++        out_msg.type := CHIRequestType:DvmSync_ExternCompleted;
++      } else {
++        error("Invalid RubyRequestType");
++      }
++    }
++  }
++  seqInPort.dequeue(clockEdge());
++}
++
+ action(AllocateTBE_PfRequest, desc="Allocate TBE for prefetch request") {
+   // No retry for prefetch requests; just create resource stall
+   check_allocate(storTBEs);
+@@ -211,6 +272,14 @@ action(Initiate_Request, desc="") {
+   incomingTransactionStart(address, curTransitionEvent(), initial, was_retried);
+ }
+ 
++action(Initiate_Request_DVM, desc="") {
++  peek(reqRdyPort, CHIRequestMsg) {
++    // "address" for DVM = transaction ID
++    TBE tbe := allocateDvmRequestTBE(address, in_msg);
++    set_tbe(tbe);
++  }
++}
++
+ action(Initiate_Request_Stale, desc="") {
+   State initial := getState(tbe, cache_entry, address);
+   bool was_retried := false;
+@@ -1566,6 +1635,12 @@ action(ExpectCompAck, desc="") {
+   tbe.expected_req_resp.addExpectedCount(1);
+ }
+ 
++action(ExpectComp, desc="") {
++  assert(is_valid(tbe));
++  tbe.expected_req_resp.addExpectedRespType(CHIResponseType:Comp);
++  tbe.expected_req_resp.addExpectedCount(1);
++}
++
+ action(Receive_ReqDataResp, desc="") {
+   assert(is_valid(tbe));
+   assert(tbe.expected_req_resp.hasExpected());
+@@ -2075,6 +2150,16 @@ action(Send_Retry, desc="") {
+   }
+ }
+ 
++action(Send_Retry_DVM, desc="") {
++  assert(tbe.pendReqAllowRetry);
++  assert(tbe.rcvdRetryCredit);
++  assert(tbe.rcvdRetryAck);
++  enqueue(reqOutPort, CHIRequestMsg, request_latency) {
++    prepareRequestRetryDVM(tbe, out_msg);
++  }
++  destsWaitingRetry.removeNetDest(tbe.pendReqDest);
++}
++
+ action(Receive_RetryAck_Hazard, desc="") {
+   TBE hazard_tbe := getHazardTBE(tbe);
+   assert(hazard_tbe.pendReqAllowRetry);
+@@ -2545,6 +2630,10 @@ action(Send_Comp_WU, desc="") {
+ action(Send_SnpRespI, desc="") {
+   enqueue(rspOutPort, CHIResponseMsg, response_latency) {
+     out_msg.addr := address;
++    if (tbe.is_dvm_tbe || tbe.is_dvm_snp_tbe) {
++      out_msg.usesTxnId := true;
++      out_msg.txnId := tbe.addr;
++    }
+     out_msg.type := CHIResponseType:SnpResp_I;
+     out_msg.responder := machineID;
+     out_msg.Destination.add(tbe.requestor);
+@@ -2555,6 +2644,7 @@ action(Send_RetryAck, desc="") {
+   peek(retryTriggerInPort, RetryTriggerMsg) {
+     enqueue(rspOutPort, CHIResponseMsg, response_latency) {
+       out_msg.addr := in_msg.addr;
++      out_msg.usesTxnId := in_msg.usesTxnId;
+       out_msg.type := CHIResponseType:RetryAck;
+       out_msg.responder := machineID;
+       out_msg.Destination.add(in_msg.retryDest);
+@@ -2566,6 +2656,7 @@ action(Send_PCrdGrant, desc="") {
+   peek(retryTriggerInPort, RetryTriggerMsg) {
+     enqueue(rspOutPort, CHIResponseMsg, response_latency) {
+       out_msg.addr := in_msg.addr;
++      out_msg.usesTxnId := in_msg.usesTxnId;
+       out_msg.type := CHIResponseType:PCrdGrant;
+       out_msg.responder := machineID;
+       out_msg.Destination.add(in_msg.retryDest);
+@@ -2760,6 +2851,37 @@ action(Finalize_DeallocateRequest, desc="") {
+   incomingTransactionEnd(address, curTransitionNextState());
+ }
+ 
++action(Finalize_DeallocateDvmRequest, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.actions.empty());
++  wakeupPendingReqs(tbe);
++  wakeupPendingSnps(tbe);
++  wakeupPendingTgrs(tbe);
++
++  // Don't call processRetryQueue() because DVM ops don't interact with the retry queue
++
++  assert(tbe.is_dvm_tbe);
++  deallocateDvmTBE(tbe);
++  unset_tbe();
++}
++
++action(Finalize_DeallocateDvmSnoop, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.actions.empty());
++  wakeupPendingReqs(tbe);
++  wakeupPendingSnps(tbe);
++  wakeupPendingTgrs(tbe);
++
++  // Don't call processRetryQueue() because DVM ops don't interact with the retry queue
++
++  assert(tbe.is_dvm_snp_tbe);
++  deallocateDvmSnoopTBE(tbe);
++  unset_tbe();
++
++  // Last argument = false, so it uses a "unique ID" rather than an address
++  incomingTransactionEnd(address, curTransitionNextState(), false);
++}
++
+ action(Pop_ReqRdyQueue, desc="") {
+   reqRdyPort.dequeue(clockEdge());
+ }
+@@ -2793,6 +2915,13 @@ action(Pop_RetryTriggerQueue, desc="") {
+   retryTriggerInPort.dequeue(clockEdge());
+ }
+ 
++action(Pop_SnpInPort, desc="") {
++  snpInPort.dequeue(clockEdge());
++}
++action(Pop_SeqInPort, desc="") {
++  seqInPort.dequeue(clockEdge());
++}
++
+ action(ProcessNextState, desc="") {
+   assert(is_valid(tbe));
+   processNextState(address, tbe, cache_entry);
+@@ -3075,3 +3204,190 @@ action(SnpOncePipe, desc="") {
+   assert(is_valid(tbe));
+   tbe.delayNextAction := curTick() + cyclesToTicks(snp_latency);
+ }
++
++//////////////////////////////////
++// DVM Actions
++
++action(Send_DvmTlbi, desc="") {
++  enqueue(reqOutPort, CHIRequestMsg, request_latency) {
++    prepareRequest(tbe, CHIRequestType:DvmOpNonSync, out_msg);
++    DPRINTF(RubyProtocol, "Sending DvmOpNonSync to %d\n", getMiscNodeMachine());
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.addr; // for DVM TBEs addr = txnId
++
++    out_msg.Destination.clear();
++    out_msg.Destination.add(getMiscNodeMachine());
++    out_msg.dataToFwdRequestor := false;
++
++    // Don't set message size, we don't use the data inside the messages
++
++    allowRequestRetry(tbe, out_msg);
++  }
++
++  // TLBIs can be ended early if the MN chooses to send CompDBIDResp.
++  // Otherwise, the MN sends a plain DBIDResp, and then sends a Comp later.
++  // => We add two possible response types, then add 1 to the count
++  // e.g. "expect exactly 1 (CompDBIDResp OR DBIDResp)"
++  clearExpectedReqResp(tbe);
++  tbe.expected_req_resp.addExpectedRespType(CHIResponseType:CompDBIDResp);
++  tbe.expected_req_resp.addExpectedRespType(CHIResponseType:DBIDResp);
++  tbe.expected_req_resp.addExpectedCount(1);
++  // If a plain DBIDResp is recieved, then Comp will be manually expected.
++  // (expect_sep_wu_comp also sort of handles this, but it's WU specific,
++  // and ProcessNextState doesn't respect it).
++
++  // Push a value to the list of pending NonSyncs
++  // The actual value doesn't matter, but we have to pick
++  // a type which already has function signatures
++  // e.g. TriggerQueue has push(Event) specified in SLICC but not push(addr)
++  DPRINTF(RubyProtocol, "Pushing pending nonsync to blocklist %16x\n", tbe.addr);
++  dvmPendingNonSyncsBlockingSync.push(Event:DvmTlbi_Initiate);
++}
++
++// Try to send a DVM Sync, but put it in the pending slot
++// if there are pending Non-Syncs blocking it.
++action(Try_Send_DvmSync, desc="") {
++  if (dvmPendingNonSyncsBlockingSync.empty()){
++    DPRINTF(RubyProtocol, "Nonsync queue is empty so %016x can proceed\n", tbe.addr);
++    tbe.actions.push(Event:DvmSync_Send);
++  } else {
++    assert(!dvmHasPendingSyncOp);
++    DPRINTF(RubyProtocol, "Nonsync queue is not empty so %016x is now pending\n", tbe.addr);
++    dvmHasPendingSyncOp := true;
++    dvmPendingSyncOp := address;
++  }
++}
++
++// Try to send a DVM sync that was put in the pending slot
++// due to pending Non-Syncs blocking it. Those Non-Syncs may not be
++// blocking it anymore.
++action(Try_Send_Pending_DvmSync, desc="") {
++  // Pop an element off the list of pending NonSyncs
++  // It won't necessarily be ours, but that doesn't matter.
++  assert(!dvmPendingNonSyncsBlockingSync.empty());
++  DPRINTF(RubyProtocol, "Popping nonsync from blocklist %16x\n", tbe.addr);
++  dvmPendingNonSyncsBlockingSync.pop();
++
++  if (dvmPendingNonSyncsBlockingSync.empty() && dvmHasPendingSyncOp) {
++    DPRINTF(RubyProtocol, "Blocklist now empty, pending op %16x can proceed\n", dvmPendingSyncOp);
++    TBE syncTBE := getDvmTBE(dvmPendingSyncOp);
++    assert(is_valid(syncTBE));
++    syncTBE.actions.push(Event:DvmSync_Send);
++
++    dvmHasPendingSyncOp := false;
++  }
++}
++
++action(Send_DvmSync, desc="") {
++  enqueue(reqOutPort, CHIRequestMsg, request_latency) {
++    prepareRequest(tbe, CHIRequestType:DvmOpSync, out_msg);
++    DPRINTF(RubyProtocol, "Sending DvmOpSync to %d\n", getMiscNodeMachine());
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.addr; // for DVM TBEs addr = txnId
++
++    out_msg.Destination.clear();
++    out_msg.Destination.add(getMiscNodeMachine());
++    out_msg.dataToFwdRequestor := false;
++
++    // Don't set message size, we don't use the data inside the messages
++
++    allowRequestRetry(tbe, out_msg);
++  }
++
++  clearExpectedReqResp(tbe);
++  tbe.expected_req_resp.addExpectedRespType(CHIResponseType:DBIDResp);
++  tbe.expected_req_resp.addExpectedCount(1);
++  // Comp will be expected later
++}
++
++action(Send_DvmTlbi_NCBWrData, desc="") {
++  enqueue(datOutPort, CHIDataMsg, data_latency) {
++    out_msg.addr := tbe.addr;
++    out_msg.type := CHIDataType:NCBWrData;
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.addr; // for DVM TBEs addr = txnId
++
++    // Set dataBlk to all 0 - we don't actually use the contents
++    out_msg.dataBlk.clear();
++    // Data should be 8 bytes - this function is (offset, range)
++    out_msg.bitMask.setMask(0, 8);
++
++    out_msg.responder := machineID;
++
++    out_msg.Destination.clear();
++    out_msg.Destination.add(getMiscNodeMachine());
++  }
++}
++
++action(Send_DvmSync_NCBWrData, desc="") {
++  enqueue(datOutPort, CHIDataMsg, data_latency) {
++    out_msg.addr := tbe.addr;
++    out_msg.type := CHIDataType:NCBWrData;
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.addr; // for DVM TBEs addr = txnId
++
++    // Set dataBlk to all 0 - we don't actually use the contents
++    out_msg.dataBlk.clear();
++    // Data should be 8 bytes - this function is (offset, range)
++    // I assume the range is in bytes...
++    out_msg.bitMask.setMask(0, 8);
++
++    out_msg.responder := machineID;
++
++    out_msg.Destination.clear();
++    out_msg.Destination.add(getMiscNodeMachine());
++  }
++}
++
++action(DvmTlbi_CompCallback, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.is_dvm_tbe);
++  assert(tbe.reqType == CHIRequestType:DvmTlbi_Initiate);
++  sequencer.unaddressedCallback(tbe.addr, RubyRequestType:TLBI);
++}
++
++action(DvmSync_CompCallback, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.is_dvm_tbe);
++  assert(tbe.reqType == CHIRequestType:DvmSync_Initiate);
++  sequencer.unaddressedCallback(tbe.addr, RubyRequestType:TLBI_SYNC);
++}
++
++//////////////////////////////////
++// DVM Snoop Actions
++
++action(Initiate_DvmSnoop, desc="") {
++  // DvmSnoop cannot be retried
++  bool was_retried := false;
++  peek(snpRdyPort, CHIRequestMsg) {
++    set_tbe(allocateDvmSnoopTBE(address, in_msg));
++  }
++  // Last argument = false, so it uses a "unique ID" rather than an address
++  // "Incoming" transactions for DVM = time between receiving a Snooped DVM op
++  // and sending the SnpResp_I
++  incomingTransactionStart(address, curTransitionEvent(), State:I, was_retried, false);
++}
++
++action(DvmExtTlbi_EnqueueSnpResp, desc=""){
++  tbe.delayNextAction := curTick() + cyclesToTicks(dvm_ext_tlbi_latency);
++  tbe.actions.push(Event:SendSnpIResp);
++}
++
++action(DvmExtSync_TriggerCallback, desc=""){
++  assert(is_valid(tbe));
++  assert(tbe.is_dvm_snp_tbe);
++  sequencer.unaddressedCallback(tbe.addr, RubyRequestType:TLBI_EXT_SYNC);
++}
++
++action(Profile_OutgoingStart_DVM, desc="") {
++  outgoingTransactionStart(address, curTransitionEvent(), false);
++}
++
++action(Profile_OutgoingEnd_DVM, desc="") {
++  assert(is_valid(tbe));
++  outgoingTransactionEnd(address, tbe.rcvdRetryAck, false);
++}
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-funcs.sm b/src/mem/ruby/protocol/chi/CHI-cache-funcs.sm
+index adf4e1c..1dbcbe6 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-funcs.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-funcs.sm
+@@ -52,11 +52,19 @@ void unset_cache_entry();
+ void set_tbe(TBE b);
+ void unset_tbe();
+ MachineID mapAddressToDownstreamMachine(Addr addr);
++MachineID mapAddressToMachine(Addr addr, MachineType mtype);
+ 
+ void incomingTransactionStart(Addr, Event, State, bool);
+ void incomingTransactionEnd(Addr, State);
+ void outgoingTransactionStart(Addr, Event);
+ void outgoingTransactionEnd(Addr, bool);
++// Overloads for transaction-measuring functions
++// final bool = isAddressed
++// if false, uses a "unaddressed" table with unique IDs
++void incomingTransactionStart(Addr, Event, State, bool, bool);
++void incomingTransactionEnd(Addr, State, bool);
++void outgoingTransactionStart(Addr, Event, bool);
++void outgoingTransactionEnd(Addr, bool, bool);
+ Event curTransitionEvent();
+ State curTransitionNextState();
+ 
+@@ -74,6 +82,10 @@ CacheEntry getCacheEntry(Addr addr), return_by_pointer="yes" {
+   return static_cast(CacheEntry, "pointer", cache.lookup(addr));
+ }
+ 
++CacheEntry nullCacheEntry(), return_by_pointer="yes" {
++  return OOD;
++}
++
+ DirEntry getDirEntry(Addr addr), return_by_pointer = "yes" {
+   if (directory.isTagPresent(addr)) {
+     return directory.lookup(addr);
+@@ -110,6 +122,22 @@ void setState(TBE tbe, CacheEntry cache_entry, Addr addr, State state) {
+   }
+ }
+ 
++TBE nullTBE(), return_by_pointer="yes" {
++  return OOD;
++}
++
++TBE getDvmTBE(Addr txnId), return_by_pointer="yes" {
++  TBE dvm_tbe := dvmTBEs[txnId];
++  if (is_valid(dvm_tbe)) {
++    return dvm_tbe;
++  }
++  TBE dvm_snp_tbe := dvmSnpTBEs[txnId];
++  if (is_valid(dvm_snp_tbe)) {
++    return dvm_snp_tbe;
++  }
++  return OOD;
++}
++
+ TBE getCurrentActiveTBE(Addr addr), return_by_pointer="yes" {
+   // snoops take precedence over wbs and reqs
+   // it's invalid to have a replacement and a req active at the same time
+@@ -373,6 +401,8 @@ TBE allocateRequestTBE(Addr addr, CHIRequestMsg in_msg), return_by_pointer="yes"
+ 
+   assert(tbe.is_snp_tbe == false);
+   assert(tbe.is_repl_tbe == false);
++  assert(tbe.is_dvm_tbe == false);
++  assert(tbe.is_dvm_snp_tbe == false);
+   tbe.is_req_tbe := true;
+ 
+   tbe.accAddr := in_msg.accAddr;
+@@ -393,6 +423,41 @@ TBE allocateRequestTBE(Addr addr, CHIRequestMsg in_msg), return_by_pointer="yes"
+   return tbe;
+ }
+ 
++TBE allocateDvmRequestTBE(Addr txnId, CHIRequestMsg in_msg), return_by_pointer="yes" {
++  // We must have reserved resources for this allocation
++  storDvmTBEs.decrementReserved();
++  assert(storDvmTBEs.areNSlotsAvailable(1));
++
++  dvmTBEs.allocate(txnId);
++  TBE tbe := dvmTBEs[txnId];
++
++  // Setting .addr = txnId
++  initializeTBE(tbe, txnId, storDvmTBEs.addEntryToNewSlot());
++
++  assert(tbe.is_snp_tbe == false);
++  assert(tbe.is_repl_tbe == false);
++  assert(tbe.is_req_tbe == false);
++  assert(tbe.is_dvm_snp_tbe == false);
++  tbe.is_dvm_tbe := true;
++
++  // TODO - zero these out?
++  tbe.accAddr := txnId;
++  tbe.accSize := blockSize;
++  tbe.requestor := in_msg.requestor;
++  tbe.reqType := in_msg.type;
++
++  tbe.isSeqReqValid := in_msg.isSeqReqValid;
++  tbe.seqReq := in_msg.seqReq;
++  tbe.is_local_pf := in_msg.is_local_pf;
++  tbe.is_remote_pf := in_msg.is_remote_pf;
++
++  tbe.use_DMT := false;
++  tbe.use_DCT := false;
++
++  tbe.hasUseTimeout := false;
++
++  return tbe;
++}
+ 
+ TBE allocateSnoopTBE(Addr addr, CHIRequestMsg in_msg), return_by_pointer="yes" {
+   // We must have reserved resources for this allocation
+@@ -405,6 +470,8 @@ TBE allocateSnoopTBE(Addr addr, CHIRequestMsg in_msg), return_by_pointer="yes" {
+ 
+   assert(tbe.is_req_tbe == false);
+   assert(tbe.is_repl_tbe == false);
++  assert(tbe.is_dvm_tbe == false);
++  assert(tbe.is_dvm_snp_tbe == false);
+   tbe.is_snp_tbe := true;
+ 
+   tbe.accAddr := addr;
+@@ -421,6 +488,35 @@ TBE allocateSnoopTBE(Addr addr, CHIRequestMsg in_msg), return_by_pointer="yes" {
+   return tbe;
+ }
+ 
++TBE allocateDvmSnoopTBE(Addr txnId, CHIRequestMsg in_msg), return_by_pointer="yes" {
++  // We must have reserved resources for this allocation
++  storDvmSnpTBEs.decrementReserved();
++  assert(storDvmSnpTBEs.areNSlotsAvailable(1));
++
++  dvmSnpTBEs.allocate(txnId);
++  TBE tbe := dvmSnpTBEs[txnId];
++  initializeTBE(tbe, txnId, storDvmSnpTBEs.addEntryToNewSlot());
++
++  assert(tbe.is_req_tbe == false);
++  assert(tbe.is_repl_tbe == false);
++  assert(tbe.is_dvm_tbe == false);
++  assert(tbe.is_snp_tbe == false);
++  tbe.is_dvm_snp_tbe := true;
++
++  // TODO - zero these out?
++  tbe.accAddr := txnId;
++  tbe.accSize := blockSize;
++  tbe.requestor := in_msg.requestor;
++  tbe.fwdRequestor := in_msg.fwdRequestor;
++  tbe.reqType := in_msg.type;
++
++  tbe.snpNeedsData := in_msg.retToSrc;
++
++  tbe.use_DMT := false;
++  tbe.use_DCT := false;
++
++  return tbe;
++}
+ 
+ TBE _allocateReplacementTBE(Addr addr, int storSlot), return_by_pointer="yes" {
+   TBE tbe := replTBEs[addr];
+@@ -428,6 +524,7 @@ TBE _allocateReplacementTBE(Addr addr, int storSlot), return_by_pointer="yes" {
+ 
+   assert(tbe.is_req_tbe == false);
+   assert(tbe.is_snp_tbe == false);
++  assert(tbe.is_dvm_tbe == false);
+   tbe.is_repl_tbe := true;
+ 
+   tbe.accAddr := addr;
+@@ -552,10 +649,33 @@ void prepareRequestRetry(TBE tbe, CHIRequestMsg & out_msg) {
+   out_msg.is_remote_pf := tbe.is_local_pf || tbe.is_remote_pf;
+ }
+ 
++void prepareRequestRetryDVM(TBE tbe, CHIRequestMsg & out_msg) {
++  assert(tbe.pendReqAllowRetry);
++  tbe.pendReqAllowRetry := false;
++  out_msg.allowRetry := false;
++
++  out_msg.addr := tbe.addr;
++  out_msg.usesTxnId := true;
++  out_msg.txnId := tbe.addr;
++  out_msg.requestor := machineID;
++  out_msg.fwdRequestor := tbe.requestor;
++  out_msg.accAddr := tbe.pendReqAccAddr;
++  out_msg.accSize := tbe.pendReqAccSize;
++  out_msg.type := tbe.pendReqType;
++  out_msg.Destination := tbe.pendReqDest;
++  out_msg.dataToFwdRequestor := tbe.pendReqD2OrigReq;
++  out_msg.retToSrc := tbe.pendReqRetToSrc;
++  out_msg.isSeqReqValid := tbe.isSeqReqValid;
++  out_msg.seqReq := tbe.seqReq;
++  out_msg.is_local_pf := false;
++  out_msg.is_remote_pf := tbe.is_local_pf || tbe.is_remote_pf;
++}
++
+ void enqueueDoRetry(TBE tbe) {
+   if (tbe.rcvdRetryAck && tbe.rcvdRetryCredit) {
+     enqueue(retryTriggerOutPort, RetryTriggerMsg, 0) {
+       out_msg.addr := tbe.addr;
++      out_msg.usesTxnId := tbe.is_dvm_tbe || tbe.is_dvm_snp_tbe;
+       out_msg.event := Event:DoRetry;
+     }
+     destsWaitingRetry.removeNetDest(tbe.pendReqDest);
+@@ -573,6 +693,7 @@ void processRetryQueue() {
+     retryQueue.pop();
+     enqueue(retryTriggerOutPort, RetryTriggerMsg, 0) {
+       out_msg.addr := e.addr;
++      out_msg.usesTxnId := e.usesTxnId;
+       out_msg.retryDest := e.retryDest;
+       out_msg.event := Event:SendPCrdGrant;
+     }
+@@ -583,15 +704,17 @@ void printResources() {
+   if (unify_repl_TBEs) {
+     assert(storReplTBEs.size() == 0);
+     assert(storReplTBEs.reserved() == 0);
+-    DPRINTF(RubySlicc, "Resources(used/rsvd/max): TBEs=%d/%d/%d snpTBEs=%d/%d/%d replTBEs=%d/%d/%d\n",
++    DPRINTF(RubySlicc, "Resources(used/rsvd/max): TBEs=%d/%d/%d snpTBEs=%d/%d/%d replTBEs=%d/%d/%d dvmTBEs=%d/%d/%d\n",
+                   storTBEs.size(), storTBEs.reserved(), storTBEs.capacity(),
+                   storSnpTBEs.size(), storSnpTBEs.reserved(), storSnpTBEs.capacity(),
+-                  storTBEs.size(), storTBEs.reserved(), storTBEs.capacity());
++                  storTBEs.size(), storTBEs.reserved(), storTBEs.capacity(),
++                  storDvmTBEs.size(), storDvmTBEs.reserved(), storDvmTBEs.capacity());
+   } else {
+-    DPRINTF(RubySlicc, "Resources(used/rsvd/max): TBEs=%d/%d/%d snpTBEs=%d/%d/%d replTBEs=%d/%d/%d\n",
++    DPRINTF(RubySlicc, "Resources(used/rsvd/max): TBEs=%d/%d/%d snpTBEs=%d/%d/%d replTBEs=%d/%d/%d dvmTBEs=%d/%d/%d\n",
+                   storTBEs.size(), storTBEs.reserved(), storTBEs.capacity(),
+                   storSnpTBEs.size(), storSnpTBEs.reserved(), storSnpTBEs.capacity(),
+-                  storReplTBEs.size(), storReplTBEs.reserved(), storReplTBEs.capacity());
++                  storReplTBEs.size(), storReplTBEs.reserved(), storReplTBEs.capacity(),
++                  storDvmTBEs.size(), storDvmTBEs.reserved(), storDvmTBEs.capacity());
+   }
+   DPRINTF(RubySlicc, "Resources(in/out size): req=%d/%d rsp=%d/%d dat=%d/%d snp=%d/%d trigger=%d\n",
+                 reqIn.getSize(curTick()), reqOut.getSize(curTick()),
+@@ -659,6 +782,17 @@ void printTBEState(TBE tbe) {
+   DPRINTF(RubySlicc, "dataBlkValid = %s\n", tbe.dataBlkValid);
+ }
+ 
++void printDvmTBEState(TBE tbe) {
++  DPRINTF(RubySlicc, "STATE: addr=%#x reqType=%d state=%d pendAction=%s isDvmTBE=%d isReplTBE=%d isReqTBE=%d isSnpTBE=%d\n",
++                      tbe.addr, tbe.reqType, tbe.state, tbe.pendAction,
++                      tbe.is_dvm_tbe, tbe.is_repl_tbe, tbe.is_req_tbe, tbe.is_snp_tbe);
++}
++
++MachineID getMiscNodeMachine() {
++  // return the MachineID of the misc node
++  return mapAddressToMachine(intToAddress(0), MachineType:MiscNode);
++}
++
+ void copyCacheAndDir(CacheEntry cache_entry, DirEntry dir_entry,
+                      TBE tbe, State initialState) {
+   assert(is_valid(tbe));
+@@ -785,6 +919,20 @@ void deallocateReplacementTBE(TBE tbe) {
+   replTBEs.deallocate(tbe.addr);
+ }
+ 
++void deallocateDvmTBE(TBE tbe) {
++  assert(is_valid(tbe));
++  assert(tbe.is_dvm_tbe);
++  storDvmTBEs.removeEntryFromSlot(tbe.storSlot);
++  dvmTBEs.deallocate(tbe.addr);
++}
++
++void deallocateDvmSnoopTBE(TBE tbe) {
++  assert(is_valid(tbe));
++  assert(tbe.is_dvm_snp_tbe);
++  storDvmSnpTBEs.removeEntryFromSlot(tbe.storSlot);
++  dvmSnpTBEs.deallocate(tbe.addr);
++}
++
+ void setDataToBeStates(TBE tbe) {
+   assert(is_valid(tbe));
+   if (tbe.dataToBeInvalid) {
+@@ -1037,6 +1185,10 @@ Event reqToEvent(CHIRequestType type, bool is_prefetch) {
+     } else {
+       return Event:WriteUnique; // all WriteUnique handled the same when ~PoC
+     }
++  } else if (type == CHIRequestType:DvmTlbi_Initiate) {
++    return Event:DvmTlbi_Initiate;
++  } else if (type == CHIRequestType:DvmSync_Initiate) {
++    return Event:DvmSync_Initiate;
+   } else {
+     error("Invalid CHIRequestType");
+   }
+@@ -1188,6 +1340,14 @@ Event snpToEvent (CHIRequestType type) {
+     return Event:SnpOnce;
+   } else if (type == CHIRequestType:SnpOnceFwd) {
+     return Event:SnpOnceFwd;
++  } else if (type == CHIRequestType:SnpDvmOpSync_P1) {
++    return Event:SnpDvmOpSync_P1;
++  } else if (type == CHIRequestType:SnpDvmOpSync_P2) {
++    return Event:SnpDvmOpSync_P2;
++  } else if (type == CHIRequestType:SnpDvmOpNonSync_P1) {
++    return Event:SnpDvmOpNonSync_P1;
++  } else if (type == CHIRequestType:SnpDvmOpNonSync_P2) {
++    return Event:SnpDvmOpNonSync_P2;
+   } else {
+     error("Invalid CHIRequestType");
+   }
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+index d9cb0f1..3c628ec 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-ports.sm
+@@ -78,9 +78,18 @@ in_port(rspInPort, CHIResponseMsg, rspIn, rank=10,
+   if (rspInPort.isReady(clockEdge())) {
+     printResources();
+     peek(rspInPort, CHIResponseMsg) {
+-      TBE tbe := getCurrentActiveTBE(in_msg.addr);
+-      trigger(respToEvent(in_msg.type, tbe), in_msg.addr,
+-              getCacheEntry(in_msg.addr), tbe);
++      if (in_msg.usesTxnId) {
++        // A ResponseMsg that uses transaction ID
++        // is separate from the memory system,
++        // uses a separate TBE table and doesn't have a cache entry
++        TBE tbe := getDvmTBE(in_msg.txnId);
++        trigger(respToEvent(in_msg.type, tbe), in_msg.txnId,
++                nullCacheEntry(), tbe);
++      } else {
++        TBE tbe := getCurrentActiveTBE(in_msg.addr);
++        trigger(respToEvent(in_msg.type, tbe), in_msg.addr,
++                getCacheEntry(in_msg.addr), tbe);
++      }
+     }
+   }
+ }
+@@ -96,8 +105,10 @@ in_port(datInPort, CHIDataMsg, datIn, rank=9,
+   if (datInPort.isReady(clockEdge())) {
+     printResources();
+     peek(datInPort, CHIDataMsg) {
+-      assert((in_msg.bitMask.count() <= data_channel_size)
+-              && (in_msg.bitMask.count() > 0));
++      // We don't have any transactions that use data requests
++      assert(!in_msg.usesTxnId);
++      int received := in_msg.bitMask.count();
++      assert((received <= data_channel_size) && (received > 0));
+       trigger(dataToEvent(in_msg.type), in_msg.addr,
+               getCacheEntry(in_msg.addr), getCurrentActiveTBE(in_msg.addr));
+     }
+@@ -116,16 +127,26 @@ in_port(snpRdyPort, CHIRequestMsg, snpRdy, rank=8,
+     printResources();
+     peek(snpRdyPort, CHIRequestMsg) {
+       assert(in_msg.allowRetry == false);
+-      TBE tbe := getCurrentActiveTBE(in_msg.addr);
+-      if (is_valid(tbe) && tbe.hasUseTimeout) {
+-        // we may be in the BUSY_INTR waiting for a cache block, but if
+-        // the timeout is set the snoop must still wait, so trigger the
+-        // stall form here to prevent creating other states
+-        trigger(Event:SnpStalled, in_msg.addr,
+-                getCacheEntry(in_msg.addr), tbe);
++      if (in_msg.usesTxnId) {
++        TBE tbe := getDvmTBE(in_msg.txnId);
++        if (is_valid(tbe)) {
++          assert(tbe.is_dvm_snp_tbe);
++        }
++        // TBE may be valid or invalid
++        trigger(snpToEvent(in_msg.type), in_msg.txnId,
++                nullCacheEntry(), tbe);
+       } else {
+-        trigger(snpToEvent(in_msg.type), in_msg.addr,
+-                getCacheEntry(in_msg.addr), tbe);
++        TBE tbe := getCurrentActiveTBE(in_msg.addr);
++        if (is_valid(tbe) && tbe.hasUseTimeout) {
++          // we may be in the BUSY_INTR waiting for a cache block, but if
++          // the timeout is set the snoop must still wait, so trigger the
++          // stall form here to prevent creating other states
++          trigger(Event:SnpStalled, in_msg.addr,
++                  getCacheEntry(in_msg.addr), tbe);
++        } else {
++          trigger(snpToEvent(in_msg.type), in_msg.addr,
++                  getCacheEntry(in_msg.addr), tbe);
++        }
+       }
+     }
+   }
+@@ -152,8 +173,21 @@ in_port(snpInPort, CHIRequestMsg, snpIn, rank=7) {
+     printResources();
+     peek(snpInPort, CHIRequestMsg) {
+       assert(in_msg.allowRetry == false);
+-      trigger(Event:AllocSnoop, in_msg.addr,
+-              getCacheEntry(in_msg.addr), getCurrentActiveTBE(in_msg.addr));
++      if (in_msg.usesTxnId) {
++        TBE preexistingTBE := getDvmTBE(in_msg.txnId);
++        // If this is just building on another transaction invoke the thing directly
++        if (is_valid(preexistingTBE)){
++          assert(preexistingTBE.is_dvm_snp_tbe);
++          trigger(snpToEvent(in_msg.type), in_msg.txnId,
++                  nullCacheEntry(), preexistingTBE);
++        } else {
++          trigger(Event:AllocDvmSnoop, in_msg.txnId,
++                  nullCacheEntry(), nullTBE());
++        }
++      } else {
++        trigger(Event:AllocSnoop, in_msg.addr,
++                getCacheEntry(in_msg.addr), getCurrentActiveTBE(in_msg.addr));
++      }
+     }
+   }
+ }
+@@ -169,16 +203,24 @@ in_port(retryTriggerInPort, RetryTriggerMsg, retryTriggerQueue, rank=6,
+     printResources();
+     peek(retryTriggerInPort, RetryTriggerMsg) {
+       Event ev := in_msg.event;
+-      TBE tbe := getCurrentActiveTBE(in_msg.addr);
+       assert((ev == Event:SendRetryAck) || (ev == Event:SendPCrdGrant) ||
+               (ev == Event:DoRetry));
+-      if (ev == Event:DoRetry) {
++      if (in_msg.usesTxnId) {
++        TBE tbe := getDvmTBE(in_msg.addr);
++        CacheEntry entry := nullCacheEntry();
+         assert(is_valid(tbe));
+-        if (tbe.is_req_hazard || tbe.is_repl_hazard) {
+-          ev := Event:DoRetry_Hazard;
++        trigger(ev, in_msg.addr, entry, tbe);
++      } else {
++        TBE tbe := getCurrentActiveTBE(in_msg.addr);
++        CacheEntry entry := getCacheEntry(in_msg.addr);
++        if (ev == Event:DoRetry) {
++          assert(is_valid(tbe));
++          if (tbe.is_req_hazard || tbe.is_repl_hazard) {
++            ev := Event:DoRetry_Hazard;
++          }
+         }
++        trigger(ev, in_msg.addr, entry, tbe);
+       }
+-      trigger(ev, in_msg.addr, getCacheEntry(in_msg.addr), tbe);
+     }
+   }
+ }
+@@ -195,18 +237,24 @@ in_port(triggerInPort, TriggerMsg, triggerQueue, rank=5,
+   if (triggerInPort.isReady(clockEdge())) {
+     printResources();
+     peek(triggerInPort, TriggerMsg) {
+-      TBE tbe := getCurrentActiveTBE(in_msg.addr);
+-      assert(is_valid(tbe));
+-      if (in_msg.from_hazard != (tbe.is_req_hazard || tbe.is_repl_hazard)) {
+-        // possible when handling a snoop hazard and an action from the
+-        // the initial transaction got woken up. Stall the action until the
+-        // hazard ends
+-        assert(in_msg.from_hazard == false);
+-        assert(tbe.is_req_hazard || tbe.is_repl_hazard);
+-        trigger(Event:ActionStalledOnHazard, in_msg.addr,
+-                getCacheEntry(in_msg.addr), tbe);
++      if (in_msg.usesTxnId) {
++        TBE tbe := getDvmTBE(in_msg.addr);
++        assert(is_valid(tbe));
++        trigger(tbe.pendAction, in_msg.addr, nullCacheEntry(), tbe);
+       } else {
+-        trigger(tbe.pendAction, in_msg.addr, getCacheEntry(in_msg.addr), tbe);
++        TBE tbe := getCurrentActiveTBE(in_msg.addr);
++        assert(is_valid(tbe));
++        if (in_msg.from_hazard != (tbe.is_req_hazard || tbe.is_repl_hazard)) {
++          // possible when handling a snoop hazard and an action from the
++          // the initial transaction got woken up. Stall the action until the
++          // hazard ends
++          assert(in_msg.from_hazard == false);
++          assert(tbe.is_req_hazard || tbe.is_repl_hazard);
++          trigger(Event:ActionStalledOnHazard, in_msg.addr,
++                  getCacheEntry(in_msg.addr), tbe);
++        } else {
++          trigger(tbe.pendAction, in_msg.addr, getCacheEntry(in_msg.addr), tbe);
++        }
+       }
+     }
+   }
+@@ -258,41 +306,53 @@ in_port(reqRdyPort, CHIRequestMsg, reqRdy, rank=3,
+   if (reqRdyPort.isReady(clockEdge())) {
+     printResources();
+     peek(reqRdyPort, CHIRequestMsg) {
+-      CacheEntry cache_entry := getCacheEntry(in_msg.addr);
+-      TBE tbe := getCurrentActiveTBE(in_msg.addr);
+-
+-      DirEntry dir_entry := getDirEntry(in_msg.addr);
+-
+-      // Special case for possibly stale writebacks or evicts
+-      if (in_msg.type == CHIRequestType:WriteBackFull) {
+-        if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
+-            (dir_entry.owner != in_msg.requestor)) {
+-          trigger(Event:WriteBackFull_Stale, in_msg.addr, cache_entry, tbe);
+-        }
+-      } else if (in_msg.type == CHIRequestType:WriteEvictFull) {
+-        if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
+-            (dir_entry.ownerIsExcl == false) || (dir_entry.owner != in_msg.requestor)) {
+-          trigger(Event:WriteEvictFull_Stale, in_msg.addr, cache_entry, tbe);
+-        }
+-      } else if (in_msg.type == CHIRequestType:WriteCleanFull) {
+-        if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
+-            (dir_entry.ownerIsExcl == false) || (dir_entry.owner != in_msg.requestor)) {
+-          trigger(Event:WriteCleanFull_Stale, in_msg.addr, cache_entry, tbe);
+-        }
+-      } else if (in_msg.type == CHIRequestType:Evict) {
+-        if (is_invalid(dir_entry) ||
+-            (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
+-          trigger(Event:Evict_Stale, in_msg.addr, cache_entry, tbe);
+-        }
+-      } else if (in_msg.type == CHIRequestType:CleanUnique) {
+-        if (is_invalid(dir_entry) ||
+-            (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
+-          trigger(Event:CleanUnique_Stale, in_msg.addr, cache_entry, tbe);
++      if (in_msg.usesTxnId) {
++        TBE preexistingTBE := getDvmTBE(in_msg.txnId);
++
++        // DVM transactions do not directly relate to the Cache,
++        // and do not have cache entries
++        trigger(
++          reqToEvent(in_msg.type, in_msg.is_local_pf),
++          in_msg.txnId,
++          nullCacheEntry(),
++          preexistingTBE);
++      } else {
++        CacheEntry cache_entry := getCacheEntry(in_msg.addr);
++        TBE tbe := getCurrentActiveTBE(in_msg.addr);
++
++        DirEntry dir_entry := getDirEntry(in_msg.addr);
++
++        // Special case for possibly stale writebacks or evicts
++        if (in_msg.type == CHIRequestType:WriteBackFull) {
++          if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
++              (dir_entry.owner != in_msg.requestor)) {
++            trigger(Event:WriteBackFull_Stale, in_msg.addr, cache_entry, tbe);
++          }
++        } else if (in_msg.type == CHIRequestType:WriteEvictFull) {
++          if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
++              (dir_entry.ownerIsExcl == false) || (dir_entry.owner != in_msg.requestor)) {
++            trigger(Event:WriteEvictFull_Stale, in_msg.addr, cache_entry, tbe);
++          }
++        } else if (in_msg.type == CHIRequestType:WriteCleanFull) {
++          if (is_invalid(dir_entry) || (dir_entry.ownerExists == false) ||
++              (dir_entry.ownerIsExcl == false) || (dir_entry.owner != in_msg.requestor)) {
++            trigger(Event:WriteCleanFull_Stale, in_msg.addr, cache_entry, tbe);
++          }
++        } else if (in_msg.type == CHIRequestType:Evict) {
++          if (is_invalid(dir_entry) ||
++              (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
++            trigger(Event:Evict_Stale, in_msg.addr, cache_entry, tbe);
++          }
++        } else if (in_msg.type == CHIRequestType:CleanUnique) {
++          if (is_invalid(dir_entry) ||
++              (dir_entry.sharers.isElement(in_msg.requestor) == false)) {
++            trigger(Event:CleanUnique_Stale, in_msg.addr, cache_entry, tbe);
++          }
+         }
+-      }
+ 
+-      // Normal request path
+-      trigger(reqToEvent(in_msg.type, in_msg.is_local_pf), in_msg.addr, cache_entry, tbe);
++        // Normal request path
++        trigger(reqToEvent(in_msg.type, in_msg.is_local_pf), in_msg.addr, cache_entry, tbe);
++      }
+     }
+   }
+ }
+@@ -316,6 +376,9 @@ in_port(reqInPort, CHIRequestMsg, reqIn, rank=2,
+   if (reqInPort.isReady(clockEdge())) {
+     printResources();
+     peek(reqInPort, CHIRequestMsg) {
++      // DVM Sync and TLBIs from external sources will use txnId requests,
++      // but they aren't implemented yet.
++      assert(!in_msg.usesTxnId);
+       if (in_msg.allowRetry) {
+         trigger(Event:AllocRequest, in_msg.addr,
+               getCacheEntry(in_msg.addr), getCurrentActiveTBE(in_msg.addr));
+@@ -337,9 +400,32 @@ in_port(seqInPort, RubyRequest, mandatoryQueue, rank=1) {
+   if (seqInPort.isReady(clockEdge())) {
+     printResources();
+     peek(seqInPort, RubyRequest) {
+-      trigger(Event:AllocSeqRequest, in_msg.LineAddress,
+-              getCacheEntry(in_msg.LineAddress),
+-              getCurrentActiveTBE(in_msg.LineAddress));
++      if (in_msg.isTlbi) {
++        TBE tbe := getDvmTBE(in_msg.tlbiTransactionUid);
++
++        if (in_msg.Type == RubyRequestType:TLBI_EXT_SYNC_COMP) {
++          assert(is_valid(tbe));
++          // Trigger the relevant event on the TBE for this ID
++          trigger(Event:DvmSync_ExternCompleted,
++            in_msg.tlbiTransactionUid,  // "Address" equivalent
++            nullCacheEntry(), // no cache entry
++            tbe, // TBE exists already, the event should be invoked on it
++          );
++        } else {
++          // There shouldn't be a transaction with the same ID
++          assert(!is_valid(tbe));
++          // Allocate a new TBE
++          trigger(Event:AllocSeqDvmRequest,
++            in_msg.tlbiTransactionUid,  // "Address" equivalent
++            nullCacheEntry(), // no cache entry
++            nullTBE(), // TBE isn't allocated yet
++          );
++        }
++      } else {
++        trigger(Event:AllocSeqRequest, in_msg.LineAddress,
++                getCacheEntry(in_msg.LineAddress),
++                getCurrentActiveTBE(in_msg.LineAddress));
++      }
+     }
+   }
+ }
+@@ -391,6 +477,8 @@ void processNextState(Addr address, TBE tbe, CacheEntry cache_entry) {
+     assert(tbe.pendAction != Event:null);
+     enqueue(triggerOutPort, TriggerMsg, trigger_latency) {
+       out_msg.addr := tbe.addr;
++      // TODO - put usesTxnId on the TBE?
++      out_msg.usesTxnId := tbe.is_dvm_tbe || tbe.is_dvm_snp_tbe;
+       out_msg.from_hazard := tbe.is_req_hazard || tbe.is_repl_hazard;
+     }
+   }
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index 0f1a7c6..a1e414f 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -67,10 +67,20 @@ transition({I,SC,UC,SD,UD,UD_T,RU,RSC,RSD,RUSD,SC_RSC,UC_RSC,SD_RSC,UD_RSC,UC_RU
+   AllocateTBE_Snoop;
+ }
+ 
++transition({I}, AllocDvmSnoop) {
++  AllocateTBE_DvmSnoop;
++}
++
+ transition({UD,UD_T,SD,UC,SC,I,BUSY_INTR,BUSY_BLKD}, AllocSeqRequest) {
+   AllocateTBE_SeqRequest;
+ }
+ 
++// You can't allocate a DVM request on the same TBE as another DVM request,
++// so we don't need a long "Transition-from" list and we can change the output state.
++transition({I}, AllocSeqDvmRequest) {
++  AllocateTBE_SeqDvmRequest;
++}
++
+ transition({I,SC,UC,SD,UD,UD_T,RU,RSC,RSD,RUSD,SC_RSC,SD_RSC,SD_RSD,UC_RSC,UC_RU,UD_RU,UD_RSD,UD_RSC,RUSC
+             BUSY_INTR,BUSY_BLKD}, AllocPfRequest) {
+   AllocateTBE_PfRequest;
+@@ -1241,3 +1251,187 @@ transition({BUSY_BLKD,BUSY_INTR}, Final, *) {
+   Finalize_UpdateDirectoryFromTBE;
+   Finalize_DeallocateRequest;
+ }
++
++////////////////////////////////////////////////////////
++// DVM transitions
++
++
++// I, DvmTlbi_Initiate, DvmTlbi_Unconfirmed
++// I, DvmSync_Initiate, DvmSync_Unconfirmed
++  // Sync should expect only DBIDResp,
++  // but Tlbi could expect both DBIDResp and CompDBIDResp.
++  // Other CompDBIDResp handlers call a "Receive" action twice - is that relevant?
++transition(I, DvmTlbi_Initiate, DvmTlbi_Unconfirmed) {
++  Initiate_Request_DVM;
++
++  Send_DvmTlbi;
++  Profile_OutgoingStart_DVM;
++
++  Pop_ReqRdyQueue;
++  ProcessNextState;
++}
++transition(I, DvmSync_Initiate, DvmSync_Unsent) {
++  Initiate_Request_DVM;
++
++  Try_Send_DvmSync;
++  Profile_OutgoingStart_DVM;
++
++  Pop_ReqRdyQueue;
++  ProcessNextState;
++}
++
++transition(DvmSync_Unsent, DvmSync_Send, DvmSync_Unconfirmed) {
++  Pop_TriggerQueue;
++
++  Send_DvmSync;
++
++  ProcessNextState_ClearPending;
++}
++
++// {DvmTlbi_Unconfirmed,DvmSync_Unconfirmed}, RetryAck
++// {DvmTlbi_Unconfirmed,DvmSync_Unconfirmed}, PCrdGrant
++  // See other RetryAck, PCrdGrants
++transition({DvmTlbi_Unconfirmed,DvmSync_Unconfirmed}, RetryAck) {
++  Receive_RetryAck;
++  Pop_RespInQueue;
++  ProcessNextState;
++}
++transition({DvmTlbi_Unconfirmed,DvmSync_Unconfirmed}, PCrdGrant) {
++  Receive_PCrdGrant;
++  Pop_RespInQueue;
++  ProcessNextState;
++}
++
++// Resend the request after RetryAck+PCrdGrant received
++transition({DvmTlbi_Unconfirmed,DvmSync_Unconfirmed}, DoRetry) {
++  Send_Retry_DVM;
++  Pop_RetryTriggerQueue;
++  ProcessNextState_ClearPending;
++}
++
++// DvmTlbi_Unconfirmed, DBIDResp, DvmTlbi_Waiting
++// DvmSync_Unconfirmed, DBIDResp, DvmSync_Waiting
++  // Should both send NCBWrData
++transition(DvmTlbi_Unconfirmed, DBIDResp, DvmTlbi_Waiting) {
++  Receive_ReqResp;
++  Pop_RespInQueue;
++
++  Send_DvmTlbi_NCBWrData;
++  ExpectComp;
++
++  ProcessNextState;
++}
++transition(DvmSync_Unconfirmed, DBIDResp, DvmSync_Waiting) {
++  Receive_ReqResp;
++  Pop_RespInQueue;
++
++  Send_DvmSync_NCBWrData;
++  ExpectComp;
++
++  ProcessNextState;
++}
++
++// DvmTlbi_Unconfirmed, CompDBIDResp, DvmOp_Finished
++  // should call ProcessNextState
++// {DvmTlbi_Waiting,DvmSync_Waiting}, Comp, DvmOp_Finished
++  // should call ProcessNextState
++transition(DvmTlbi_Unconfirmed, CompDBIDResp, DvmOp_Finished) {
++  Receive_ReqResp;
++  Pop_RespInQueue;
++
++  Send_DvmTlbi_NCBWrData;
++
++  // We got the comp as well, so send the callback
++  DvmTlbi_CompCallback;
++  Profile_OutgoingEnd_DVM;
++  Try_Send_Pending_DvmSync;
++  ProcessNextState;
++}
++transition(DvmTlbi_Waiting, Comp, DvmOp_Finished) {
++  Receive_ReqResp;
++  Pop_RespInQueue;
++
++  DvmTlbi_CompCallback;
++  Profile_OutgoingEnd_DVM;
++  Try_Send_Pending_DvmSync;
++  ProcessNextState;
++}
++transition(DvmSync_Waiting, Comp, DvmOp_Finished) {
++  Receive_ReqResp;
++  Pop_RespInQueue;
++
++  DvmSync_CompCallback;
++  Profile_OutgoingEnd_DVM;
++  ProcessNextState;
++}
++
++// DvmOp_Finished, Final, I
++  // Should deallocate DvmOp
++transition(DvmOp_Finished, Final, I) {
++  Pop_TriggerQueue; // "Final" is triggered from Trigger queue, so pop that
++  Finalize_DeallocateDvmRequest;
++}
++
++/////////////////////////////////////////////////
++// DVM snoops
++
++transition(I, {SnpDvmOpNonSync_P1,SnpDvmOpNonSync_P2}, DvmExtTlbi_Partial) {
++  // First message has arrived, could be P1 or P2 because either order is allowed
++  Initiate_DvmSnoop;
++  Pop_SnoopRdyQueue;
++}
++
++transition(I, {SnpDvmOpSync_P1,SnpDvmOpSync_P2}, DvmExtSync_Partial) {
++  // First message has arrived, could be P1 or P2 because either order is allowed
++  Initiate_DvmSnoop;
++  Pop_SnoopRdyQueue;
++}
++
++transition(DvmExtTlbi_Partial, {SnpDvmOpNonSync_P1,SnpDvmOpNonSync_P2}, DvmExtTlbi_Executing) {
++  // TODO - some check that we didn't receive a {P1,P1} or {P2,P2} pair?
++  // We receive this event directly from the SnpInPort, so pop it
++  Pop_SnpInPort;
++
++  // Triggers SnpResp_I from inside Ruby with a delay
++  DvmExtTlbi_EnqueueSnpResp;
++  ProcessNextState;
++}
++
++transition(DvmExtSync_Partial, {SnpDvmOpSync_P1,SnpDvmOpSync_P2}, DvmExtSync_Executing) {
++  // TODO - some check that we didn't receive a {P1,P1} or {P2,P2} pair?
++  // We receive this event directly from the SnpInPort, so pop it
++  Pop_SnpInPort;
++
++  // Tell the CPU model to perform a Sync
++  // e.g. flush load-store-queue
++  DvmExtSync_TriggerCallback;
++
++  // We just wait for the CPU to finish
++}
++
++transition(DvmExtTlbi_Executing, SendSnpIResp, DvmExtOp_Finished) {
++  // TLBI snoop response has been triggered after the delay
++  Pop_TriggerQueue;
++
++  // Send the snoop response to the MN
++  Send_SnpRespI;
++
++  // Should trigger Final state
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmExtSync_Executing, DvmSync_ExternCompleted, DvmExtOp_Finished) {
++  Pop_SeqInPort;
++
++  // The CPU model has declared that the Sync is complete
++  // => send the snoop response to the MN
++  Send_SnpRespI;
++
++  // Should trigger Final state
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmExtOp_Finished, Final, I) {
++  Pop_TriggerQueue;
++  Finalize_DeallocateDvmSnoop;
++}
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache.sm b/src/mem/ruby/protocol/chi/CHI-cache.sm
+index 5a12575..a69748e 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache.sm
+@@ -70,6 +70,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+   Cycles response_latency := 1;
+   Cycles snoop_latency := 1;
+   Cycles data_latency := 1;
++  Cycles dvm_ext_tlbi_latency := 6;
+ 
+   // When an SC fails, unique lines are locked to this controller for a period
+   // proportional to the number of consecutive failed SC requests. See
+@@ -87,10 +88,12 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+   // sequencer is not null and handled LL/SC request types.
+   bool send_evictions;
+ 
+-  // Number of entries in the snoop and replacement TBE tables
++  // Number of entries in the snoop, replacement, and DVM TBE tables
+   // notice the "number_of_TBEs" parameter is defined by AbstractController
+   int number_of_snoop_TBEs;
+   int number_of_repl_TBEs;
++  int number_of_DVM_TBEs;
++  int number_of_DVM_snoop_TBEs;
+ 
+   // replacements use the same TBE slot as the request that triggered it
+   // in this case the number_of_repl_TBEs parameter is ignored
+@@ -232,6 +235,20 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     UD_RSD, AccessPermission:Read_Write,   desc="UD + RSD";
+     UD_RSC, AccessPermission:Read_Write,   desc="UD + RSC";
+ 
++    // DVM states - use AccessPermission:Invalid because this prevents "functional reads"
++    DvmTlbi_Unconfirmed, AccessPermission:Invalid,  desc="DVM TLBI waiting for confirmation from MN";
++    DvmSync_Unsent, AccessPermission:Invalid,  desc="DVM Sync waiting for previous TLBIs to complete";
++    DvmSync_Unconfirmed, AccessPermission:Invalid,  desc="DVM Sync waiting for confirmation from MN";
++    DvmTlbi_Waiting, AccessPermission:Invalid,  desc="DVM TLBI confirmed by MN, waiting for completion";
++    DvmSync_Waiting, AccessPermission:Invalid,  desc="DVM Sync confirmed by MN, waiting for completion";
++    DvmOp_Finished, AccessPermission:Invalid,  desc="DVM operation that has completed, about to be deallocated";
++
++    DvmExtTlbi_Partial, AccessPermission:Invalid, desc="External DVM TLBI waiting for second packet from MN";
++    DvmExtTlbi_Executing, AccessPermission:Invalid, desc="External DVM TLBI being executed by this machine";
++    DvmExtSync_Partial, AccessPermission:Invalid, desc="External DVM Sync waiting for second packet from MN";
++    DvmExtSync_Executing, AccessPermission:Invalid, desc="External DVM Sync being executed by this machine";
++    DvmExtOp_Finished, AccessPermission:Invalid, desc="External DVM operation that has completed, about to be deallocated";
++
+     // Generic transient state
+     // There is only a transient "BUSY" state. The actions taken at this state
+     // and the final stable state are defined by information in the TBE.
+@@ -256,8 +273,10 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     AllocRequest,           desc="Allocates a TBE for a request. Triggers a retry if table is full";
+     AllocRequestWithCredit, desc="Allocates a TBE for a request. Always succeeds.";
+     AllocSeqRequest,        desc="Allocates a TBE for a sequencer request. Stalls requests if table is full";
++    AllocSeqDvmRequest,     desc="Allocates a TBE for a sequencer DVM request. Stalls requests if table is full";
+     AllocPfRequest,         desc="Allocates a TBE for a prefetch request. Stalls requests if table is full";
+     AllocSnoop,             desc="Allocates a TBE for a snoop. Stalls snoop if table is full";
++    AllocDvmSnoop,          desc="Allocated a TBE for a DVM snoop. Stalls snoop if table is full";
+ 
+     // Events triggered by sequencer requests or snoops in the rdy queue
+     // See CHIRequestType in CHi-msg.sm for descriptions
+@@ -288,6 +307,12 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     SnpOnceFwd,                  desc="";
+     SnpStalled, desc=""; // A snoop stall triggered from the inport
+ 
++    // DVM sequencer requests
++    DvmTlbi_Initiate, desc=""; // triggered when a CPU core wants to send a TLBI
++    // TLBIs are handled entirely within Ruby, so there's no ExternCompleted message
++    DvmSync_Initiate, desc=""; // triggered when a CPU core wants to send a sync
++    DvmSync_ExternCompleted, desc=""; // triggered when an externally requested Sync is completed
++
+     // Events triggered by incoming response messages
+     // See CHIResponseType in CHi-msg.sm for descriptions
+     CompAck,                 desc="";
+@@ -318,6 +343,12 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     PCrdGrant_Hazard,        desc="";
+     PCrdGrant_PoC_Hazard,    desc="";
+ 
++    // Events triggered by incoming DVM messages
++    SnpDvmOpSync_P1;
++    SnpDvmOpSync_P2;
++    SnpDvmOpNonSync_P1;
++    SnpDvmOpNonSync_P2;
++
+     // Events triggered by incoming data response messages
+     // See CHIDataType in CHi-msg.sm for descriptions
+     CompData_I,                    desc="";
+@@ -456,6 +487,9 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     SendSnpFwdedData,                 desc="Send SnpResp for a forwarding snoop";
+     SendSnpFwdedResp,                 desc="Send SnpRespData for a forwarding snoop";
+ 
++    // DVM sends
++    DvmSync_Send, desc="Send an unstarted DVM Sync";
++
+     // Retry handling
+     SendRetryAck,   desc="Send RetryAck";
+     SendPCrdGrant,  desc="Send PCrdGrant";
+@@ -525,6 +559,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+   // Tracks a pending retry
+   structure(RetryQueueEntry) {
+     Addr addr,           desc="Line address";
++    bool usesTxnId,      desc="Uses a transaction ID instead of a memory address";
+     MachineID retryDest, desc="Retry destination";
+   }
+ 
+@@ -543,7 +578,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     void pushFrontNB(Event);
+     void pop();
+     // For the retry queue
+-    void emplace(Addr,MachineID);
++    void emplace(Addr,bool,MachineID);
+     RetryQueueEntry next(); //SLICC won't allow to reuse front()
+   }
+ 
+@@ -553,6 +588,8 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     bool is_req_tbe, desc="Allocated in the request table";
+     bool is_snp_tbe, desc="Allocated in the snoop table";
+     bool is_repl_tbe, desc="Allocated in the replacements table";
++    bool is_dvm_tbe, desc="Allocated in the DVM table";
++    bool is_dvm_snp_tbe, desc="Allocated in the DVM snoop table";
+ 
+     int storSlot, desc="Slot in the storage tracker occupied by this entry";
+ 
+@@ -719,6 +756,22 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+   TBETable snpTBEs,      template="<Cache_TBE>", constructor="m_number_of_snoop_TBEs";
+   TBEStorage storSnpTBEs, constructor="this, m_number_of_snoop_TBEs";
+ 
++  // TBE table for outgoing DVM requests
++  TBETable dvmTBEs,      template="<Cache_TBE>", constructor="m_number_of_DVM_TBEs";
++  TBEStorage storDvmTBEs, constructor="this, m_number_of_DVM_TBEs";
++
++  // TBE table for incoming DVM snoops
++  TBETable dvmSnpTBEs,      template="<Cache_TBE>", constructor="m_number_of_DVM_snoop_TBEs";
++  TBEStorage storDvmSnpTBEs, constructor="this, m_number_of_DVM_snoop_TBEs";
++
++  // DVM data
++  // Queue of non-sync operations that haven't been Comp-d yet.
++  // Before a Sync operation can start, this queue must be emptied
++  TriggerQueue dvmPendingNonSyncsBlockingSync, template="<Cache_Event>";
++  // Used to record if a Sync op is pending
++  bool dvmHasPendingSyncOp, default="false";
++  Addr dvmPendingSyncOp, default="0";
++
+   // Retry handling
+ 
+   // Destinations that will be sent PCrdGrant when a TBE becomes available
+@@ -730,6 +783,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+     Addr addr;
+     Event event;
+     MachineID retryDest;
++    bool usesTxnId;
+ 
+     bool functionalRead(Packet *pkt) { return false; }
+     bool functionalRead(Packet *pkt, WriteMask &mask) { return false; }
+@@ -744,6 +798,7 @@ machine(MachineType:Cache, "Cache coherency protocol") :
+   // Pending transaction actions (generated by TBE:actions)
+   structure(TriggerMsg, interface="Message") {
+     Addr addr;
++    bool usesTxnId;
+     bool from_hazard; // this actions was generate during a snoop hazard
+     bool functionalRead(Packet *pkt) { return false; }
+     bool functionalRead(Packet *pkt, WriteMask &mask) { return false; }
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-actions.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-actions.sm
+new file mode 100644
+index 0000000..a104322
+--- /dev/null
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-actions.sm
+@@ -0,0 +1,394 @@
++/*
++ * Copyright (c) 2021-2022 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++
++////////////////////////////////////////////////////////////////////////////
++// CHI-dvm-misc-node actions definitions
++////////////////////////////////////////////////////////////////////////////
++
++action(AllocateTBE_Request, desc="") {
++  peek(reqInPort, CHIRequestMsg) {
++    assert(in_msg.usesTxnId);
++    assert(in_msg.txnId == address);
++    assert(in_msg.is_local_pf == false);
++    assert(in_msg.allowRetry);
++
++    bool isNonSync := (in_msg.type == CHIRequestType:DvmOpNonSync);
++
++    if (storDvmTBEs.areNSlotsAvailable(1, tbePartition(isNonSync))) {
++      // reserve a slot for this request
++      storDvmTBEs.incrementReserved(tbePartition(isNonSync));
++
++      // Move request to rdy queue
++      peek(reqInPort, CHIRequestMsg) {
++        enqueue(reqRdyOutPort, CHIRequestMsg, allocation_latency) {
++          out_msg := in_msg;
++        }
++      }
++
++    } else {
++      // we don't have resources to track this request; enqueue a retry
++      enqueue(retryTriggerOutPort, RetryTriggerMsg, retry_ack_latency) {
++        out_msg.txnId := in_msg.txnId;
++        out_msg.event := Event:SendRetryAck;
++        out_msg.retryDest := in_msg.requestor;
++
++        RetryQueueEntry en;
++        en.txnId := in_msg.txnId;
++        en.retryDest := in_msg.requestor;
++        en.isNonSync := isNonSync;
++        storDvmTBEs.emplaceRetryEntry(en);
++      }
++    }
++  }
++
++
++  reqInPort.dequeue(clockEdge());
++}
++
++action(AllocateTBE_Request_WithCredit, desc="") {
++  // TBE slot already reserved
++  // Move request to rdy queue
++  peek(reqInPort, CHIRequestMsg) {
++    assert(in_msg.allowRetry == false);
++    assert(in_msg.usesTxnId);
++    enqueue(reqRdyOutPort, CHIRequestMsg, allocation_latency) {
++      assert(in_msg.txnId == address);
++      out_msg := in_msg;
++    }
++  }
++  reqInPort.dequeue(clockEdge());
++}
++
++action(Initiate_Request_DVM, desc="") {
++  bool was_retried := false;
++  peek(reqRdyPort, CHIRequestMsg) {
++    // "address" for DVM = transaction ID
++    TBE tbe := allocateDvmRequestTBE(address, in_msg);
++    set_tbe(tbe);
++    // only a msg that was already retried doesn't allow a retry
++    was_retried := in_msg.allowRetry == false;
++  }
++
++  // Last argument = false, so it isn't treated as a memory request
++  incomingTransactionStart(address, curTransitionEvent(), State:Unallocated, was_retried, false);
++}
++
++action(Pop_ReqRdyQueue, desc="") {
++  reqRdyPort.dequeue(clockEdge());
++}
++
++
++action(Receive_ReqDataResp, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.expected_req_resp.hasExpected());
++  peek(datInPort, CHIDataMsg) {
++    // Decrement pending
++    if (tbe.expected_req_resp.receiveData(in_msg.type) == false) {
++      error("Received unexpected message");
++    }
++    assert(!tbe.expected_req_resp.hasExpected());
++
++    DPRINTF(RubyProtocol, "Misc Node has receieved NCBWrData\n");
++    // Clear the "expected types" list to prepare for the snooping
++    tbe.expected_snp_resp.clear(1);
++    assert(!tbe.expected_snp_resp.hasExpected());
++
++    // We don't actually use the data contents
++  }
++}
++
++action(Pop_DataInQueue, desc="") {
++  datInPort.dequeue(clockEdge());
++}
++
++action(Receive_SnpResp, desc="") {
++  assert(tbe.expected_snp_resp.hasExpected());
++  peek(rspInPort, CHIResponseMsg) {
++    // Decrement pending
++    if (tbe.expected_snp_resp.receiveResp(in_msg.type) == false) {
++      error("Received unexpected message");
++    }
++    assert(in_msg.stale == false);
++    // assert(in_msg.stale == tbe.is_stale);
++
++    DPRINTF(RubyProtocol, "Misc Node has receieved SnpResp_I\n");
++
++    assert(tbe.pendingTargets.isElement(in_msg.responder));
++    tbe.pendingTargets.remove(in_msg.responder);
++    tbe.receivedTargets.add(in_msg.responder);
++  }
++}
++action(Pop_RespInQueue, desc="") {
++  rspInPort.dequeue(clockEdge());
++}
++
++action(ProcessNextState, desc="") {
++  assert(is_valid(tbe));
++  processNextState(tbe);
++}
++
++// If ProcessNextState invokes a new action, it sets tbe.pendingAction.
++// If you call ProcessNextState again without clearing this variable,
++// nothing will happen. This Action clears the pending state, ensuring
++// a new state is processed.
++action(ProcessNextState_ClearPending, desc="") {
++  assert(is_valid(tbe));
++  clearPendingAction(tbe);
++  processNextState(tbe);
++}
++
++action(Send_Comp, desc="") {
++  assert(is_valid(tbe));
++  Cycles latency := response_latency;
++  CHIResponseType type := CHIResponseType:Comp;
++
++  enqueue(rspOutPort, CHIResponseMsg, latency) {
++    out_msg.addr := address;
++    out_msg.type := type;
++    out_msg.responder := machineID;
++    out_msg.txnId := address;
++    out_msg.usesTxnId := true;
++    out_msg.Destination.add(tbe.requestor);
++  }
++  DPRINTF(RubyProtocol, "Misc Node Sending Comp (for either)\n");
++}
++
++action(Send_Comp_NonSync, desc="") {
++  assert(is_valid(tbe));
++
++  // In the NonSync case, if early_nonsync_comp is set then
++  // we will have already sent a CompDBIDResp.
++  // Thus, only send Comp if !early_nonsync_comp
++
++  if (!early_nonsync_comp) {
++    Cycles latency := response_latency;
++    CHIResponseType type := CHIResponseType:Comp;
++    enqueue(rspOutPort, CHIResponseMsg, latency) {
++        out_msg.addr := address;
++        out_msg.type := type;
++        out_msg.responder := machineID;
++        out_msg.txnId := address;
++        out_msg.usesTxnId := true;
++        out_msg.Destination.add(tbe.requestor);
++    }
++    DPRINTF(RubyProtocol, "Misc Node Sending TLBI Comp\n");
++  }
++}
++
++// NOTICE a trigger event may wakeup another stalled trigger event so
++// this is always called first in the transitions so we don't pop the
++// wrong message
++action(Pop_TriggerQueue, desc="") {
++  triggerInPort.dequeue(clockEdge());
++}
++
++action(Pop_RetryTriggerQueue, desc="") {
++  retryTriggerInPort.dequeue(clockEdge());
++}
++
++action(Finalize_DeallocateRequest, desc="") {
++  assert(is_valid(tbe));
++  assert(tbe.actions.empty());
++  wakeupPendingReqs(tbe);
++  wakeupPendingTgrs(tbe);
++
++  DPRINTF(RubyProtocol, "Deallocating DVM request\n");
++  deallocateDvmTBE(tbe);
++  processRetryQueue();
++  unset_tbe();
++
++  // Last argument = false, so this isn't treated as a memory transaction
++  incomingTransactionEnd(address, curTransitionNextState(), false);
++}
++
++action(Send_DvmNonSyncDBIDResp, desc="") {
++  Cycles latency := response_latency;
++  CHIResponseType type := CHIResponseType:DBIDResp;
++  if (early_nonsync_comp) {
++    type := CHIResponseType:CompDBIDResp;
++  }
++  enqueue(rspOutPort, CHIResponseMsg, latency) {
++    out_msg.addr := address;
++    out_msg.type := type;
++    out_msg.responder := machineID;
++    out_msg.txnId := address;
++    out_msg.usesTxnId := true;
++    out_msg.Destination.add(tbe.requestor);
++  }
++  tbe.expected_req_resp.clear(1);
++  tbe.expected_req_resp.addExpectedDataType(CHIDataType:NCBWrData);
++  tbe.expected_req_resp.setExpectedCount(1);
++  DPRINTF(RubyProtocol, "Misc Node Sending TLBI DBIDResp\n");
++}
++
++action(Send_DvmSyncDBIDResp, desc="") {
++  Cycles latency := response_latency;
++  CHIResponseType type := CHIResponseType:DBIDResp;
++  enqueue(rspOutPort, CHIResponseMsg, latency) {
++    out_msg.addr := address;
++    out_msg.type := type;
++    out_msg.responder := machineID;
++    out_msg.txnId := address;
++    out_msg.usesTxnId := true;
++    out_msg.Destination.add(tbe.requestor);
++  }
++  tbe.expected_req_resp.clear(1);
++  tbe.expected_req_resp.addExpectedDataType(CHIDataType:NCBWrData);
++  tbe.expected_req_resp.setExpectedCount(1);
++  DPRINTF(RubyProtocol, "Misc Node Sending Sync DBIDResp\n");
++}
++
++action(Send_RetryAck, desc="") {
++  peek(retryTriggerInPort, RetryTriggerMsg) {
++    enqueue(rspOutPort, CHIResponseMsg, response_latency) {
++      out_msg.txnId := in_msg.txnId;
++      out_msg.usesTxnId := true;
++      out_msg.type := CHIResponseType:RetryAck;
++      out_msg.responder := machineID;
++      out_msg.Destination.add(in_msg.retryDest);
++    }
++    DPRINTF(RubyProtocol, "Misc Node Sending RetryAck (for either)\n");
++  }
++}
++
++action(Send_PCrdGrant, desc="") {
++  peek(retryTriggerInPort, RetryTriggerMsg) {
++    enqueue(rspOutPort, CHIResponseMsg, response_latency) {
++      out_msg.txnId := in_msg.txnId;
++      out_msg.usesTxnId := true;
++      out_msg.type := CHIResponseType:PCrdGrant;
++      out_msg.responder := machineID;
++      out_msg.Destination.add(in_msg.retryDest);
++    }
++    DPRINTF(RubyProtocol, "Misc Node Sending PCrdGrant (for either)\n");
++  }
++}
++
++action(Send_DvmSnoop_P1, desc="") {
++  Cycles latency := response_latency;
++
++  CHIRequestType type := CHIRequestType:SnpDvmOpSync_P1;
++  if (tbe.isNonSync) {
++    type := CHIRequestType:SnpDvmOpNonSync_P1;
++  }
++
++  assert(tbe.notSentTargets.count() > 0);
++  MachineID target := tbe.notSentTargets.smallestElement();
++
++  enqueue(snpOutPort, CHIRequestMsg, latency) {
++    prepareRequest(tbe, type, out_msg);
++    DPRINTF(RubyProtocol, "Misc Node Sending %d to %d\n", type, target);
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.txnId; // for DVM TBEs addr = txnId
++    out_msg.allowRetry := false;
++    out_msg.Destination.clear();
++    out_msg.Destination.add(target);
++
++    out_msg.dataToFwdRequestor := false;
++  }
++
++  tbe.actions.pushNB(Event:DvmSendNextMessage_P2);
++  tbe.delayNextAction := curTick() + cyclesToTicks(intToCycles(1));
++
++  // We are no longer waiting on other transaction activity
++  tbe.waiting_on_other_txns := false;
++}
++
++action(Send_DvmSnoop_P2, desc="") {
++  Cycles latency := response_latency;
++
++  CHIRequestType type := CHIRequestType:SnpDvmOpSync_P2;
++  if (tbe.isNonSync) {
++    type := CHIRequestType:SnpDvmOpNonSync_P2;
++  }
++
++  assert(tbe.notSentTargets.count() > 0);
++  MachineID target := tbe.notSentTargets.smallestElement();
++
++  enqueue(snpOutPort, CHIRequestMsg, latency) {
++    prepareRequest(tbe, type, out_msg);
++    DPRINTF(RubyProtocol, "Misc Node Sending %d to %d\n", type, target);
++
++    out_msg.usesTxnId := true;
++    out_msg.txnId := tbe.txnId; // for DVM TBEs addr = txnId
++    out_msg.allowRetry := false;
++    out_msg.Destination.clear();
++    out_msg.Destination.add(target);
++
++    out_msg.dataToFwdRequestor := false;
++  }
++
++  // Expect a SnpResp_I now we have sent both
++  tbe.expected_snp_resp.addExpectedRespType(CHIResponseType:SnpResp_I);
++  tbe.expected_snp_resp.addExpectedCount(1);
++
++  // Pop the target we just completed off the list
++  tbe.notSentTargets.remove(target);
++  tbe.pendingTargets.add(target);
++  // If we have more targets, enqueue another send
++  if (tbe.notSentTargets.count() > 0) {
++    tbe.actions.pushNB(Event:DvmSendNextMessage_P1);
++  } else {
++    // otherwise enqueue a DvmFinishDistributing, then a blocking DvmFinishWaiting
++    // DvmFinishDistributing will be called immediately,
++    // DvmFinishWaiting will be called once all responses are received
++    tbe.actions.pushNB(Event:DvmFinishDistributing);
++    tbe.actions.push(Event:DvmFinishWaiting);
++  }
++  tbe.delayNextAction := curTick() + cyclesToTicks(intToCycles(1));
++}
++
++action(Enqueue_UpdatePendingOps, desc="") {
++  // The next time updatePendingOps runs
++  // it will check this variable and decide
++  // to actually check for a new sender
++  DPRINTF(RubyProtocol, "Enqueue_UpdatePendingOps from %016x\n", address);
++  needsToCheckPendingOps := true;
++  // Schedule a generic event to make sure we wake up
++  // on the next tick
++  scheduleEvent(intToCycles(1));
++}
++
++action(Profile_OutgoingEnd_DVM, desc="") {
++  assert(is_valid(tbe));
++  // Outgoing transactions = time to send all snoops
++  // Is never rejected by recipient => never received retry ack
++  bool rcvdRetryAck := false;
++  outgoingTransactionEnd(address, rcvdRetryAck, false);
++}
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-funcs.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-funcs.sm
+new file mode 100644
+index 0000000..ce87d02
+--- /dev/null
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-funcs.sm
+@@ -0,0 +1,322 @@
++/*
++ * Copyright (c) 2021-2022 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++
++////////////////////////////////////////////////////////////////////////////
++// CHI-cache function definitions
++////////////////////////////////////////////////////////////////////////////
++
++////////////////////////////////////////////////////////////////////////////
++// External functions
++
++Tick clockEdge();
++Tick curTick();
++Tick cyclesToTicks(Cycles c);
++Cycles ticksToCycles(Tick t);
++void set_tbe(TBE b);
++void unset_tbe();
++MachineID mapAddressToDownstreamMachine(Addr addr);
++NetDest allUpstreamDest();
++
++void incomingTransactionStart(Addr, Event, State, bool);
++void incomingTransactionEnd(Addr, State);
++void outgoingTransactionStart(Addr, Event);
++void outgoingTransactionEnd(Addr, bool);
++// Overloads for transaction-measuring functions
++// final bool = isMemoryAccess
++// if false, uses a "global access" table
++void incomingTransactionStart(Addr, Event, State, bool, bool);
++void incomingTransactionEnd(Addr, State, bool);
++void outgoingTransactionStart(Addr, Event, bool);
++void outgoingTransactionEnd(Addr, bool, bool);
++Event curTransitionEvent();
++State curTransitionNextState();
++
++void notifyPfHit(RequestPtr req, bool is_read, DataBlock blk) { }
++void notifyPfMiss(RequestPtr req, bool is_read, DataBlock blk) { }
++void notifyPfFill(RequestPtr req, DataBlock blk, bool from_pf) { }
++void notifyPfEvict(Addr blkAddr, bool hwPrefetched) { }
++void notifyPfComplete(Addr addr) { }
++
++void scheduleEvent(Cycles);
++
++////////////////////////////////////////////////////////////////////////////
++// Interface functions required by SLICC
++
++int tbePartition(bool is_non_sync) {
++    if (is_non_sync) {
++        return 1;
++    } else {
++        return 0;
++    }
++}
++
++State getState(TBE tbe, Addr txnId) {
++  if (is_valid(tbe)) {
++      return tbe.state;
++  } else {
++    return State:Unallocated;
++  }
++}
++
++void setState(TBE tbe, Addr txnId, State state) {
++  if (is_valid(tbe)) {
++    tbe.state := state;
++  }
++}
++
++TBE nullTBE(), return_by_pointer="yes" {
++  return OOD;
++}
++
++TBE getCurrentActiveTBE(Addr txnId), return_by_pointer="yes" {
++  // Current Active TBE for an address
++  return dvmTBEs[txnId];
++}
++
++AccessPermission getAccessPermission(Addr txnId) {
++  // MN has no memory
++  return AccessPermission:NotPresent;
++}
++
++void setAccessPermission(Addr txnId, State state) {}
++
++void functionalRead(Addr txnId, Packet *pkt, WriteMask &mask) {
++  // We don't have any memory, so we can't functionalRead
++  // => we don't fill the `mask` argument
++}
++
++int functionalWrite(Addr txnId, Packet *pkt) {
++  // No memory => no functional writes
++  return 0;
++}
++
++Cycles mandatoryQueueLatency(RubyRequestType type) {
++  return intToCycles(1);
++}
++
++Cycles tagLatency(bool from_sequencer) {
++  return intToCycles(0);
++}
++
++Cycles dataLatency() {
++  return intToCycles(0);
++}
++
++bool inCache(Addr txnId) {
++  return false;
++}
++
++bool hasBeenPrefetched(Addr txnId) {
++  return false;
++}
++
++bool inMissQueue(Addr txnId) {
++  return false;
++}
++
++void notifyCoalesced(Addr txnId, RubyRequestType type, RequestPtr req,
++                     DataBlock data_blk, bool was_miss) {
++  DPRINTF(RubySlicc, "Unused notifyCoalesced(txnId=%#x, type=%s, was_miss=%d)\n",
++                      txnId, type, was_miss);
++}
++
++////////////////////////////////////////////////////////////////////////////
++// State->Event converters
++
++Event reqToEvent(CHIRequestType type) {
++  if (type == CHIRequestType:DvmOpNonSync) {
++    return Event:DvmTlbi_Initiate;
++  } else if (type == CHIRequestType:DvmOpSync) {
++    return Event:DvmSync_Initiate;
++  } else {
++    error("Invalid/unexpected CHIRequestType");
++  }
++}
++
++Event respToEvent (CHIResponseType type) {
++  if (type == CHIResponseType:SnpResp_I) {
++    return Event:SnpResp_I;
++  } else {
++    error("Invalid/unexpected CHIResponseType");
++  }
++}
++
++Event dataToEvent (CHIDataType type) {
++  if (type == CHIDataType:NCBWrData) {
++    return Event:NCBWrData;
++  } else {
++    error("Invalid/unexpected CHIDataType");
++  }
++}
++
++////////////////////////////////////////////////////////////////////////////
++// Allocation
++
++void clearExpectedReqResp(TBE tbe) {
++  assert(blockSize >= data_channel_size);
++  assert((blockSize % data_channel_size) == 0);
++  tbe.expected_req_resp.clear(blockSize / data_channel_size);
++}
++
++void clearExpectedSnpResp(TBE tbe) {
++  assert(blockSize >= data_channel_size);
++  assert((blockSize % data_channel_size) == 0);
++  tbe.expected_snp_resp.clear(blockSize / data_channel_size);
++}
++
++void initializeTBE(TBE tbe, Addr txnId, int storSlot) {
++  assert(is_valid(tbe));
++
++  tbe.timestamp := curTick();
++
++  tbe.wakeup_pending_req := false;
++  tbe.wakeup_pending_snp := false;
++  tbe.wakeup_pending_tgr := false;
++
++  tbe.txnId := txnId;
++
++  tbe.storSlot := storSlot;
++
++  clearExpectedReqResp(tbe);
++  clearExpectedSnpResp(tbe);
++  // Technically we don't *know* if we're waiting on other transactions,
++  // but we need to stop this transaction from errantly being *finished*.
++  tbe.waiting_on_other_txns := true;
++
++  tbe.sched_responses := 0;
++  tbe.block_on_sched_responses := false;
++
++
++  tbe.pendAction := Event:null;
++  tbe.finalState := State:null;
++  tbe.delayNextAction := intToTick(0);
++
++  // The MN uses the list of "upstream destinations"
++  // as targets for snoops
++  tbe.notSentTargets := allUpstreamDest();
++  tbe.pendingTargets.clear();
++  tbe.receivedTargets.clear();
++}
++
++TBE allocateDvmRequestTBE(Addr txnId, CHIRequestMsg in_msg), return_by_pointer="yes" {
++  DPRINTF(RubySlicc, "allocateDvmRequestTBE %x %016llx\n", in_msg.type, txnId);
++
++  bool isNonSync := in_msg.type == CHIRequestType:DvmOpNonSync;
++
++  int partition := tbePartition(isNonSync);
++  // We must have reserved resources for this allocation
++  storDvmTBEs.decrementReserved(partition);
++  assert(storDvmTBEs.areNSlotsAvailable(1, partition));
++
++  dvmTBEs.allocate(txnId);
++  TBE tbe := dvmTBEs[txnId];
++
++  // Setting .txnId = txnId
++  initializeTBE(tbe, txnId, storDvmTBEs.addEntryToNewSlot(partition));
++
++  tbe.isNonSync := isNonSync;
++
++  tbe.requestor := in_msg.requestor;
++  tbe.reqType := in_msg.type;
++
++  // We don't want to send a snoop request to
++  // the original requestor
++  tbe.notSentTargets.remove(in_msg.requestor);
++
++  return tbe;
++}
++
++void deallocateDvmTBE(TBE tbe) {
++  assert(is_valid(tbe));
++  storDvmTBEs.removeEntryFromSlot(tbe.storSlot, tbePartition(tbe.isNonSync));
++  dvmTBEs.deallocate(tbe.txnId);
++}
++
++void clearPendingAction(TBE tbe) {
++  tbe.pendAction := Event:null;
++}
++
++////////////////////////////////////////////////////////////////////////////
++// Retry-related
++
++void processRetryQueue() {
++  // send credit if requestor waiting for it and we have resources
++
++  // Ask the DVM storage if we have space to retry anything.
++  if (storDvmTBEs.hasPossibleRetry()) {
++    RetryQueueEntry toRetry := storDvmTBEs.popNextRetryEntry();
++    storDvmTBEs.incrementReserved(tbePartition(toRetry.isNonSync));
++    enqueue(retryTriggerOutPort, RetryTriggerMsg, crd_grant_latency) {
++      out_msg.txnId := toRetry.txnId;
++      out_msg.retryDest := toRetry.retryDest;
++      out_msg.event := Event:SendPCrdGrant;
++    }
++  }
++}
++
++////////////////////////////////////////////////////////////////////////////
++// Other
++
++void printResources() {
++  DPRINTF(RubySlicc, "Resources(used/rsvd/max): dvmTBEs=%d/%d/%d\n",
++                storDvmTBEs.size(), storDvmTBEs.reserved(), storDvmTBEs.capacity());
++  DPRINTF(RubySlicc, "Resources(in/out size): req=%d/%d rsp=%d/%d dat=%d/%d snp=%d/%d trigger=%d\n",
++                reqIn.getSize(curTick()), reqOut.getSize(curTick()),
++                rspIn.getSize(curTick()), rspOut.getSize(curTick()),
++                datIn.getSize(curTick()), datOut.getSize(curTick()),
++                snpIn.getSize(curTick()), snpOut.getSize(curTick()),
++                triggerQueue.getSize(curTick()));
++}
++
++void printTBEState(TBE tbe) {
++  DPRINTF(RubySlicc, "STATE: txnId=%#x reqType=%d state=%d pendAction=%s\n",
++                      tbe.txnId, tbe.reqType, tbe.state, tbe.pendAction);
++}
++
++void prepareRequest(TBE tbe, CHIRequestType type, CHIRequestMsg & out_msg) {
++  out_msg.addr := tbe.txnId;
++  out_msg.accAddr := tbe.txnId;
++  out_msg.accSize := blockSize;
++  out_msg.requestor := machineID;
++  out_msg.fwdRequestor := tbe.requestor;
++  out_msg.type := type;
++  out_msg.allowRetry := false;
++  out_msg.isSeqReqValid := false;
++  out_msg.is_local_pf := false;
++  out_msg.is_remote_pf := false;
++}
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
+new file mode 100644
+index 0000000..0520b39
+--- /dev/null
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-ports.sm
+@@ -0,0 +1,318 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++// ---- Outbound port definitions ----
++// Network interfaces
++out_port(reqOutPort, CHIRequestMsg, reqOut);
++out_port(snpOutPort, CHIRequestMsg, snpOut);
++out_port(rspOutPort, CHIResponseMsg, rspOut);
++out_port(datOutPort, CHIDataMsg, datOut);
++// Internal output ports
++out_port(triggerOutPort, TriggerMsg, triggerQueue);
++out_port(retryTriggerOutPort, RetryTriggerMsg, retryTriggerQueue);
++out_port(schedRspTriggerOutPort, CHIResponseMsg, schedRspTriggerQueue);
++out_port(reqRdyOutPort, CHIRequestMsg, reqRdy);
++out_port(snpRdyOutPort, CHIRequestMsg, snpRdy);
++
++
++// Include helper functions here. Some of them require the outports to be
++// already defined
++// Notice 'processNextState' and 'wakeupPending*' functions are defined after
++// the required input ports. Currently the SLICC compiler does not support
++// separate declaration and definition of functions in the .sm files.
++include "CHI-dvm-misc-node-funcs.sm";
++
++
++// Inbound port definitions and internal triggers queues
++// Notice we never stall input ports connected to the network
++// Incoming data and responses are always consumed.
++// Incoming requests/snoop are moved to the respective internal rdy queue
++// if a TBE can be allocated, or retried otherwise.
++
++// Response
++in_port(rspInPort, CHIResponseMsg, rspIn, rank=11,
++        rsc_stall_handler=rspInPort_rsc_stall_handler) {
++  if (rspInPort.isReady(clockEdge())) {
++    printResources();
++    peek(rspInPort, CHIResponseMsg) {
++      assert(in_msg.usesTxnId);
++      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
++      trigger(respToEvent(in_msg.type), in_msg.txnId, tbe);
++    }
++  }
++}
++bool rspInPort_rsc_stall_handler() {
++  error("rspInPort must never stall\n");
++  return false;
++}
++
++
++// Data
++in_port(datInPort, CHIDataMsg, datIn, rank=10,
++        rsc_stall_handler=datInPort_rsc_stall_handler) {
++  if (datInPort.isReady(clockEdge())) {
++    printResources();
++    peek(datInPort, CHIDataMsg) {
++      int received := in_msg.bitMask.count();
++      assert((received <= data_channel_size) && (received > 0));
++      assert(in_msg.usesTxnId);
++      trigger(dataToEvent(in_msg.type), in_msg.txnId, getCurrentActiveTBE(in_msg.txnId));
++    }
++  }
++}
++bool datInPort_rsc_stall_handler() {
++  error("datInPort must never stall\n");
++  return false;
++}
++
++// Incoming snoops - should never be used
++in_port(snpInPort, CHIRequestMsg, snpIn, rank=8) {
++  if (snpInPort.isReady(clockEdge())) {
++    printResources();
++    peek(snpInPort, CHIRequestMsg) {
++      error("MN should not receive snoops");
++    }
++  }
++}
++bool snpInPort_rsc_stall_handler() {
++  error("snpInPort must never stall\n");
++  return false;
++}
++
++// Incoming new requests
++in_port(reqInPort, CHIRequestMsg, reqIn, rank=2,
++        rsc_stall_handler=reqInPort_rsc_stall_handler) {
++  if (reqInPort.isReady(clockEdge())) {
++    printResources();
++    peek(reqInPort, CHIRequestMsg) {
++      assert(in_msg.usesTxnId);
++      // Make sure we aren't already processing this
++      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
++      assert(!is_valid(tbe));
++      if (in_msg.allowRetry) {
++        trigger(Event:AllocRequest, in_msg.txnId, nullTBE());
++      } else {
++        trigger(Event:AllocRequestWithCredit, in_msg.txnId, nullTBE());
++      }
++    }
++  }
++}
++bool reqInPort_rsc_stall_handler() {
++  error("reqInPort must never stall\n");
++  return false;
++}
++
++
++// Incoming new sequencer requests
++in_port(seqInPort, RubyRequest, mandatoryQueue, rank=1) {
++  if (seqInPort.isReady(clockEdge())) {
++    printResources();
++    peek(seqInPort, RubyRequest) {
++      error("MN should not have sequencer");
++    }
++  }
++}
++
++
++// Action triggers
++in_port(triggerInPort, TriggerMsg, triggerQueue, rank=5,
++        rsc_stall_handler=triggerInPort_rsc_stall_handler) {
++  if (triggerInPort.isReady(clockEdge())) {
++    printResources();
++    peek(triggerInPort, TriggerMsg) {
++      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
++      assert(is_valid(tbe));
++      assert(!in_msg.from_hazard);
++      trigger(tbe.pendAction, in_msg.txnId, tbe);
++    }
++  }
++}
++bool triggerInPort_rsc_stall_handler() {
++  DPRINTF(RubySlicc, "Trigger queue resource stall\n");
++  triggerInPort.recycle(clockEdge(), cyclesToTicks(stall_recycle_lat));
++  return true;
++}
++void wakeupPendingTgrs(TBE tbe) {
++  if (tbe.wakeup_pending_tgr) {
++    Addr txnId := tbe.txnId;
++    wakeup_port(triggerInPort, txnId);
++    tbe.wakeup_pending_tgr := false;
++  }
++}
++
++// Requests with an allocated TBE
++in_port(reqRdyPort, CHIRequestMsg, reqRdy, rank=3,
++        rsc_stall_handler=reqRdyPort_rsc_stall_handler) {
++  if (reqRdyPort.isReady(clockEdge())) {
++    printResources();
++    peek(reqRdyPort, CHIRequestMsg) {
++      assert(in_msg.usesTxnId);
++      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
++      assert(!in_msg.is_local_pf);
++      // Normal request path
++      trigger(reqToEvent(in_msg.type), in_msg.txnId, tbe);
++    }
++  }
++}
++bool reqRdyPort_rsc_stall_handler() {
++  DPRINTF(RubySlicc, "ReqRdy queue resource stall\n");
++  reqRdyPort.recycle(clockEdge(), cyclesToTicks(stall_recycle_lat));
++  return true;
++}
++void wakeupPendingReqs(TBE tbe) {
++  if (tbe.wakeup_pending_req) {
++    Addr txnId := tbe.txnId;
++    wakeup_port(reqRdyPort, txnId);
++    tbe.wakeup_pending_req := false;
++  }
++}
++
++
++// Retry action triggers
++// These are handled separately from other triggers since these events are
++// not tied to a TBE
++in_port(retryTriggerInPort, RetryTriggerMsg, retryTriggerQueue, rank=7) {
++  if (retryTriggerInPort.isReady(clockEdge())) {
++    printResources();
++    peek(retryTriggerInPort, RetryTriggerMsg) {
++      Event ev := in_msg.event;
++      TBE tbe := getCurrentActiveTBE(in_msg.txnId);
++      assert((ev == Event:SendRetryAck) || (ev == Event:SendPCrdGrant));
++      trigger(ev, in_msg.txnId, tbe);
++    }
++  }
++}
++
++// Trigger queue for scheduled responses so transactions don't need to
++// block on a response when the rspOutPort is busy
++in_port(schedRspTriggerInPort, CHIResponseMsg, schedRspTriggerQueue, rank=6) {
++  if (schedRspTriggerInPort.isReady(clockEdge())) {
++    printResources();
++    peek(schedRspTriggerInPort, CHIResponseMsg) {
++      error("Misc Node shouldn't have schedResp");
++    }
++  }
++}
++
++// Enqueues next event depending on the pending actions and the event queue
++void processNextState(TBE tbe) {
++  assert(is_valid(tbe));
++  DPRINTF(RubyProtocol, "GoToNextState state=%d expected_req_resp=%d expected_snp_resp=%d sched_rsp=%d(block=%d) pendAction: %d\n",
++                      tbe.state,
++                      tbe.expected_req_resp.expected(),
++                      tbe.expected_snp_resp.expected(),
++                      tbe.sched_responses, tbe.block_on_sched_responses,
++                      tbe.pendAction);
++
++  // if no pending trigger and not expecting to receive anything, enqueue
++  // next
++  bool has_nb_trigger := (tbe.actions.empty() == false) &&
++                          tbe.actions.frontNB();
++  int expected_msgs := tbe.expected_req_resp.expected() +
++                        tbe.expected_snp_resp.expected();
++  if (tbe.block_on_sched_responses) {
++    expected_msgs := expected_msgs + tbe.sched_responses;
++    tbe.block_on_sched_responses := tbe.sched_responses > 0;
++  }
++
++  // If we are waiting on other transactions to finish, we shouldn't enqueue Final
++  bool would_enqueue_final := tbe.actions.empty();
++  bool allowed_to_enqueue_final := !tbe.waiting_on_other_txns;
++  // if (would_enqueue_final && !allowed) then DON'T enqueue anything
++  // => if (!would_enqueue_final || allowed_to_enqueue_final) then DO
++  bool allowed_to_enqueue_action := !would_enqueue_final || allowed_to_enqueue_final;
++
++  if ((tbe.pendAction == Event:null) &&
++      ((expected_msgs == 0) || has_nb_trigger) &&
++      allowed_to_enqueue_action) {
++    Cycles trigger_latency := intToCycles(0);
++    if (tbe.delayNextAction > curTick()) {
++      trigger_latency := ticksToCycles(tbe.delayNextAction) -
++                          ticksToCycles(curTick());
++      tbe.delayNextAction := intToTick(0);
++    }
++
++    tbe.pendAction := Event:null;
++    if (tbe.actions.empty()) {
++      // time to go to the final state
++      tbe.pendAction := Event:Final;
++    } else {
++      tbe.pendAction := tbe.actions.front();
++      tbe.actions.pop();
++    }
++    assert(tbe.pendAction != Event:null);
++    enqueue(triggerOutPort, TriggerMsg, trigger_latency) {
++      out_msg.txnId := tbe.txnId;
++      out_msg.from_hazard := false;
++    }
++  }
++
++  printTBEState(tbe);
++}
++
++// Runs at the end of every cycle that takes input, checks `needsToCheckPendingOps`.
++// if true, will call updatePendingOps() to check if a new snoop-sender should start.
++// We could return bools if we want to be sure we run on the next cycle,
++// but we have no reason to do that
++void updatePendingOps(), run_on_input_cycle_end="yes" {
++  if (needsToCheckPendingOps) {
++    needsToCheckPendingOps := false;
++    DPRINTF(RubyProtocol, "Misc Node updating pending ops\n");
++    TBE newDistributor := dvmTBEs.chooseNewDistributor();
++    DPRINTF(RubyProtocol, "Misc Node selected %p\n", newDistributor);
++    if (is_valid(newDistributor)) {
++      // can return the current distributor, check for that
++      if (!hasCurrentDistributor || newDistributor.txnId != currentDistributor) {
++        currentDistributor := newDistributor.txnId;
++        hasCurrentDistributor := true;
++
++        // make the new distributor start distributing
++        // by simply telling it to send the next message
++        newDistributor.actions.pushNB(Event:DvmSendNextMessage_P1);
++        processNextState(newDistributor);
++
++        // TODO could move into Profile_OutgoingStart_DVM
++        // Use a useful event name for profiling
++        Event usefulEvent := Event:DvmSync_Initiate;
++        if (newDistributor.isNonSync) {
++          usefulEvent := Event:DvmTlbi_Initiate;
++        }
++        outgoingTransactionStart(newDistributor.txnId, usefulEvent, false);
++      }
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-transitions.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-transitions.sm
+new file mode 100644
+index 0000000..24d524b
+--- /dev/null
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node-transitions.sm
+@@ -0,0 +1,184 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++////////////////////////////////////////////////////////////////////////////
++// CHI-dvm-misc-node transition definition
++////////////////////////////////////////////////////////////////////////////
++
++// Allocate resources and move to the ready queue
++transition(Unallocated, AllocRequest) {
++  AllocateTBE_Request;
++}
++
++transition(Unallocated, AllocRequestWithCredit) {
++  AllocateTBE_Request_WithCredit;
++}
++
++transition(Unallocated, SendRetryAck) {
++  Send_RetryAck;
++  Pop_RetryTriggerQueue;
++}
++
++transition(Unallocated, SendPCrdGrant) {
++  Send_PCrdGrant;
++  Pop_RetryTriggerQueue;
++}
++
++transition(Unallocated, DvmTlbi_Initiate, DvmNonSync_Partial) {
++  Initiate_Request_DVM;
++  Pop_ReqRdyQueue;
++
++  Send_DvmNonSyncDBIDResp;
++}
++
++transition(Unallocated, DvmSync_Initiate, DvmSync_Partial) {
++  Initiate_Request_DVM;
++  Pop_ReqRdyQueue;
++
++  Send_DvmSyncDBIDResp;
++}
++
++transition(DvmSync_Partial, NCBWrData, DvmSync_ReadyToDist) {
++  Receive_ReqDataResp; // Uses data from top of queue
++  Pop_DataInQueue;     // Pops data from top of queue
++
++  // Update the "Pending Operations" set
++  // This looks at all current DVM operations and updates which operation is distributing.
++  // We may not start snooping immediately.
++  Enqueue_UpdatePendingOps;
++  ProcessNextState;
++}
++
++transition(DvmNonSync_Partial, NCBWrData, DvmNonSync_ReadyToDist) {
++  Receive_ReqDataResp; // Uses data from top of queue
++  Pop_DataInQueue;     // Pops data from top of queue
++
++  // Update the "Pending Operations" set
++  // This looks at all current DVM operations and updates which operation is distributing.
++  // We may not start snooping immediately.
++  Enqueue_UpdatePendingOps;
++  ProcessNextState;
++}
++
++transition({DvmSync_ReadyToDist,DvmSync_Distributing}, DvmSendNextMessage_P1, DvmSync_Distributing) {
++  Pop_TriggerQueue;
++  // Enqueues SendNextMessage_P2
++  Send_DvmSnoop_P1;
++  // Process the enqueued event immediately
++  ProcessNextState_ClearPending;
++}
++transition(DvmSync_Distributing, DvmSendNextMessage_P2) {
++  Pop_TriggerQueue;
++  // This may enqueue a SendNextMessage event, or it could enqueue a FinishSending if there are no elements left.
++  Send_DvmSnoop_P2;
++  // Process the enqueued event immediately
++  ProcessNextState_ClearPending;
++}
++
++transition({DvmNonSync_ReadyToDist,DvmNonSync_Distributing}, DvmSendNextMessage_P1, DvmNonSync_Distributing) {
++  Pop_TriggerQueue;
++  // Enqueues SendNextMessage_P2
++  Send_DvmSnoop_P1;
++  // Process the enqueued event immediately
++  ProcessNextState_ClearPending;
++}
++transition(DvmNonSync_Distributing, DvmSendNextMessage_P2) {
++  Pop_TriggerQueue;
++  // This may enqueue a SendNextMessage event, or it could enqueue a FinishSending if there are no elements left.
++  Send_DvmSnoop_P2;
++  // Process the enqueued event immediately
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmSync_Distributing, DvmFinishDistributing, DvmSync_Waiting) {
++  Pop_TriggerQueue;
++
++  // Now that we're done distributing, pick someone else to start distributing
++  Enqueue_UpdatePendingOps;
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmNonSync_Distributing, DvmFinishDistributing, DvmNonSync_Waiting) {
++  Pop_TriggerQueue;
++
++  // Now that we're done distributing, pick someone else to start distributing
++  Enqueue_UpdatePendingOps;
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmSync_Waiting, DvmFinishWaiting, DvmOp_Complete) {
++//   would enqueue a Comp send
++//   ProcessNextState (which should send a Final event?)
++  Pop_TriggerQueue;
++  Send_Comp;
++  Profile_OutgoingEnd_DVM;
++  // Now that we're done waiting, someone else might be able to start
++  // e.g. because only one Sync can be in progress at once,
++  // our finishing could free up space for the next Sync to start.
++  Enqueue_UpdatePendingOps;
++
++  ProcessNextState_ClearPending;
++}
++
++transition(DvmNonSync_Waiting, DvmFinishWaiting, DvmOp_Complete) {
++//   would enqueue a Comp send
++//   ProcessNextState (which should send a Final event?)
++  Pop_TriggerQueue;
++  // NonSync can Comp early, so this action checks if a Comp would already have been sent
++  Send_Comp_NonSync;
++  Profile_OutgoingEnd_DVM;
++
++  // Now that we're done waiting, someone else might be able to start
++  //(not sure if this applied to NonSyncs, but re-calling this function doesn't hurt)
++  Enqueue_UpdatePendingOps;
++
++  ProcessNextState_ClearPending;
++}
++
++// On receiving a SnpResp
++transition({DvmSync_Distributing,DvmNonSync_Distributing,DvmSync_Waiting,DvmNonSync_Waiting}, SnpResp_I) {
++  Receive_SnpResp; // Uses data from top of resp queue
++  Pop_RespInQueue; // Pops data from top of resp queue
++
++  ProcessNextState;
++}
++
++transition(DvmOp_Complete, Final, Unallocated) {
++  Pop_TriggerQueue; // "Final" event is applied from the trigger queue
++
++  Finalize_DeallocateRequest; // Deallocate the DVM TBE
++}
+\ No newline at end of file
+diff --git a/src/mem/ruby/protocol/chi/CHI-dvm-misc-node.sm b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node.sm
+new file mode 100644
+index 0000000..ba38c65
+--- /dev/null
++++ b/src/mem/ruby/protocol/chi/CHI-dvm-misc-node.sm
+@@ -0,0 +1,380 @@
++/*
++ * Copyright (c) 2021-2022 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++
++machine(MachineType:MiscNode, "CHI Misc Node for handling and distrbuting DVM operations") :
++
++  // Additional pipeline latency modeling for the different request types
++  // When defined, these are applied after the initial tag array read and
++  // sending necessary snoops.
++  Cycles snp_latency := 0; // Applied before handling any snoop
++  Cycles snp_inv_latency := 0; // Additional latency for invalidating snoops
++
++  // Request TBE allocation latency
++  Cycles allocation_latency := 0;
++
++  // Enqueue latencies for outgoing messages
++  // NOTE: should remove this and only use parameters above?
++  Cycles request_latency := 1;
++  Cycles response_latency := 1;
++  Cycles sched_response_latency := 1;
++  Cycles snoop_latency := 1;
++  Cycles data_latency := 1;
++
++  // Recycle latency on resource stalls
++  Cycles stall_recycle_lat := 1;
++
++  // Number of entries in the TBE tables
++  int number_of_DVM_TBEs;
++  int number_of_non_sync_TBEs;
++
++  // wait for the final tag update to complete before deallocating TBE and
++  // going to final stable state
++  bool dealloc_wait_for_tag := "False";
++
++  // Width of the data channel. Data transfer are split in multiple messages
++  // at the protocol level when this is less than the cache line size.
++  int data_channel_size;
++
++  // Combine Comp+DBIDResp responses for DvmOp(Non-sync)
++  // CHI-D and later only!
++  bool early_nonsync_comp;
++
++  // additional latency for the WU Comp response
++  Cycles comp_wu_latency := 0;
++
++  // Additional latency for sending RetryAck
++  Cycles retry_ack_latency := 0;
++
++  // Additional latency for sending PCrdGrant
++  Cycles crd_grant_latency := 0;
++
++  // Additional latency for retrying a request
++  Cycles retry_req_latency := 0;
++
++  // stall new requests to destinations with a pending retry
++  bool throttle_req_on_retry := "True";
++
++  // Message Queues
++
++  // Interface to the network
++  // Note vnet_type is used by Garnet only. "response" type is assumed to
++  // have data, so use it for data channels and "none" for the rest.
++  // network="To" for outbound queue; network="From" for inbound
++  // virtual networks: 0=request, 1=snoop, 2=response, 3=data
++
++  MessageBuffer * reqOut,   network="To", virtual_network="0", vnet_type="none";
++  MessageBuffer * snpOut,   network="To", virtual_network="1", vnet_type="none";
++  MessageBuffer * rspOut,   network="To", virtual_network="2", vnet_type="none";
++  MessageBuffer * datOut,   network="To", virtual_network="3", vnet_type="response";
++
++  MessageBuffer * reqIn,   network="From", virtual_network="0", vnet_type="none";
++  MessageBuffer * snpIn,   network="From", virtual_network="1", vnet_type="none";
++  MessageBuffer * rspIn,   network="From", virtual_network="2", vnet_type="none";
++  MessageBuffer * datIn,   network="From", virtual_network="3", vnet_type="response";
++
++  // Mandatory queue for receiving requests from the sequencer
++  MessageBuffer * mandatoryQueue;
++
++  // Internal queue for trigger events
++  MessageBuffer * triggerQueue;
++
++  // Internal queue for retry trigger events
++  MessageBuffer * retryTriggerQueue;
++
++  // Internal queue for scheduled response messages
++  MessageBuffer * schedRspTriggerQueue;
++
++  // Internal queue for accepted requests
++  MessageBuffer * reqRdy;
++
++  // Internal queue for accepted snoops
++  MessageBuffer * snpRdy;
++
++{
++
++  ////////////////////////////////////////////////////////////////////////////
++  // States
++  ////////////////////////////////////////////////////////////////////////////
++
++  // Should only involve states relevant to TLBI or Sync operations
++  state_declaration(State, default="MiscNode_State_null") {
++    Unallocated, AccessPermission:Invalid, desc="TBE is not associated with a DVM op";
++
++    DvmSync_Partial, AccessPermission:Invalid, desc="DvmSync which is waiting for extra data";
++    DvmSync_ReadyToDist, AccessPermission:Invalid, desc="DvmSync which has all data, ready to distribute to other cores";
++    DvmSync_Distributing, AccessPermission:Invalid, desc="DvmSync which is distributing snoops to the rest of the cores";
++    DvmSync_Waiting, AccessPermission:Invalid, desc="DvmSync which is waiting for snoop responses to come back";
++
++    DvmNonSync_Partial, AccessPermission:Invalid, desc="DVM non-sync waiting for extra data from initiator";
++    DvmNonSync_ReadyToDist, AccessPermission:Invalid, desc="DVM non-sync with all data, ready to distribute to other cores";
++    DvmNonSync_Distributing, AccessPermission:Invalid, desc="DVM non-sync distributing snoops to the rest of the cores";
++    DvmNonSync_Waiting, AccessPermission:Invalid, desc="DVM non-sync waiting for snoop responses to come back";
++
++    DvmOp_Complete, AccessPermission:Invalid, desc="A completed DVM op";
++
++    // Null state for debugging
++    null, AccessPermission:Invalid, desc="Null state";
++  }
++
++
++  ////////////////////////////////////////////////////////////////////////////
++  // Events
++  ////////////////////////////////////////////////////////////////////////////
++
++  enumeration(Event) {
++    // Events triggered by incoming requests. Allocate TBE and move
++    // request or snoop to the ready queue
++    AllocRequest,           desc="Allocates a TBE for a request. Triggers a retry if table is full";
++    AllocRequestWithCredit, desc="Allocates a TBE for a request. Always succeeds. Used when a client is retrying after being denied.";
++
++    SnpResp_I;
++    NCBWrData;
++
++    // Retry handling
++    SendRetryAck,   desc="Send RetryAck";
++    SendPCrdGrant,  desc="Send PCrdGrant";
++    DoRetry,        desc="Resend the current pending request";
++
++    DvmTlbi_Initiate, desc="Initiate a DVM TLBI on the provided TBE";
++    DvmSync_Initiate, desc="Initiate a DVM Sync on the provided TBE";
++    DvmSendNextMessage_P1, desc="Trigger a SnpDvmOp_P1 message based on the TBE type";
++    DvmSendNextMessage_P2, desc="Trigger a SnpDvmOp_P2 message based on the TBE type";
++    DvmFinishDistributing, desc="Move the TBE out of the Distributing state into Waiting";
++    DvmFinishWaiting, desc="Move the TBE out of the Waiting state and complete it";
++    DvmUpdatePendingOps, desc="Update which operation is currently distributing";
++
++    // This is triggered once a transaction doesn't have
++    // any queued action and is not expecting responses/data. The transaction
++    // is finalized and the next stable state is stored in the cache/directory
++    // See the processNextState and makeFinalState functions
++    Final;
++
++    null;
++  }
++
++  ////////////////////////////////////////////////////////////////////////////
++  // Data structures
++  ////////////////////////////////////////////////////////////////////////////
++
++  // Cache block size
++  int blockSize, default="RubySystem::getBlockSizeBytes()";
++
++  // Helper class for tracking expected response and data messages
++  structure(ExpectedMap, external ="yes") {
++    void clear(int dataChunks);
++    void addExpectedRespType(CHIResponseType);
++    void addExpectedDataType(CHIDataType);
++    void setExpectedCount(int val);
++    void addExpectedCount(int val);
++    bool hasExpected();
++    bool hasReceivedResp();
++    bool hasReceivedData();
++    int expected();
++    int received();
++    bool receiveResp(CHIResponseType);
++    bool receiveData(CHIDataType);
++    bool receivedDataType(CHIDataType);
++    bool receivedRespType(CHIResponseType);
++  }
++
++  // Tracks a pending retry
++  structure(RetryQueueEntry) {
++    Addr txnId,           desc="Transaction ID";
++    MachineID retryDest, desc="Retry destination";
++    bool isNonSync, desc="Is a NonSync operation";
++  }
++
++  // Queue for event triggers. Used to specify a list of actions that need
++  // to be performed across multiple transitions.
++  // This class is also used to track pending retries
++  structure(TriggerQueue, external ="yes") {
++    Event front();
++    Event back();
++    bool frontNB();
++    bool backNB();
++    bool empty();
++    void push(Event);
++    void pushNB(Event);
++    void pushFront(Event);
++    void pushFrontNB(Event);
++    void pop();
++  }
++
++  // TBE fields
++  structure(TBE, desc="Transaction buffer entry definition") {
++    Tick timestamp, desc="Time this entry was allocated. Affects order of trigger events";
++
++    int storSlot, desc="Slot in the storage tracker occupied by this entry";
++
++    // Transaction info mostly extracted from the request message
++    Addr txnId, desc="Unique Transaction ID";
++    CHIRequestType reqType, desc="Request type that initiated this transaction";
++    bool isNonSync, desc="Is a non-sync DVM operation";
++    MachineID requestor,    desc="Requestor ID";
++
++    // Transaction state information
++    State state,    desc="SLICC line state";
++
++    NetDest notSentTargets, desc="Set of MachineIDs we haven't snooped yet";
++    NetDest pendingTargets, desc="Set of MachineIDs that were snooped, but haven't responded";
++    NetDest receivedTargets, desc="Set of MachineIDs that have responded to snoops";
++
++    // Helper structures to track expected events and additional transient
++    // state info
++
++    // List of actions to be performed while on a transient state
++    // See the processNextState function for details
++    TriggerQueue actions, template="<MiscNode_Event>", desc="List of actions";
++    Event pendAction,         desc="Current pending action";
++    Tick delayNextAction,     desc="Delay next action until given tick";
++    State finalState,         desc="Final state; set when pendAction==Final";
++
++    // List of expected responses and data. Checks the type of data against the
++    // expected ones for debugging purposes
++    // See the processNextState function for details
++    ExpectedMap expected_req_resp, template="<CHIResponseType,CHIDataType>";
++    ExpectedMap expected_snp_resp, template="<CHIResponseType,CHIDataType>";
++    bool waiting_on_other_txns, desc="Is waiting for other transactions to update before finishing.";
++    CHIResponseType slicchack1; // fix compiler not including headers
++    CHIDataType slicchack2; // fix compiler not including headers
++
++    // Tracks pending scheduled responses
++    int sched_responses;
++    bool block_on_sched_responses;
++
++    // This TBE stalled a message and thus we need to call wakeUpBuffers
++    // at some point
++    bool wakeup_pending_req;
++    bool wakeup_pending_snp;
++    bool wakeup_pending_tgr;
++  }
++
++  // TBE table definition
++  structure(MN_TBETable, external ="yes") {
++    TBE lookup(Addr);
++    void allocate(Addr);
++    void deallocate(Addr);
++    bool isPresent(Addr);
++
++    TBE chooseNewDistributor();
++  }
++
++  structure(TBEStorage, external ="yes") {
++    int size();
++    int capacity();
++    int reserved();
++    int slotsAvailable();
++    bool areNSlotsAvailable(int n);
++    void incrementReserved();
++    void decrementReserved();
++    int addEntryToNewSlot();
++    void removeEntryFromSlot(int slot);
++  }
++
++  structure(MN_TBEStorage, external ="yes") {
++    int size();
++    int capacity();
++    int reserved();
++    int slotsAvailable(int partition);
++    bool areNSlotsAvailable(int n, int partition);
++    void incrementReserved(int partition);
++    void decrementReserved(int partition);
++    int addEntryToNewSlot(int partition);
++    void removeEntryFromSlot(int slot, int partition);
++
++    // Which operation to retry depends on the current available storage.
++    // If there's a NonSync op waiting for PCrdGrant and the Nonsync reserved space is free,
++    // the NonSync takes priority.
++    // => Make the MN_TBEStorage responsible for calculating this.
++    void emplaceRetryEntry(RetryQueueEntry ret);
++    bool hasPossibleRetry();
++    RetryQueueEntry popNextRetryEntry();
++  }
++
++  // Definitions of the TBE tables
++
++  // TBE table for DVM requests
++  MN_TBETable dvmTBEs, constructor="m_number_of_DVM_TBEs";
++  TBEStorage nonSyncTBEs, constructor="this, m_number_of_non_sync_TBEs";
++  TBEStorage genericTBEs, constructor="this, (m_number_of_DVM_TBEs - m_number_of_non_sync_TBEs)";
++  MN_TBEStorage storDvmTBEs, template="<MiscNode_RetryQueueEntry>", constructor="this, {m_genericTBEs_ptr, m_nonSyncTBEs_ptr}";
++
++  // txnId of the current TBE which is distributing snoops
++  // NOTE - this is a safety measure for making sure we don't
++  // tell the same person to start snooping twice.
++  // Don't rely on it, if someone stops distributing and no-one starts
++  // this variable will not be updated.
++  Addr currentDistributor, default="0";
++  bool hasCurrentDistributor, default="false";
++  bool needsToCheckPendingOps, default="false";
++
++  // Pending RetryAck/PCrdGrant
++  structure(RetryTriggerMsg, interface="Message") {
++    Addr txnId;
++    Event event;
++    MachineID retryDest;
++
++    bool functionalRead(Packet *pkt) { return false; }
++    bool functionalRead(Packet *pkt, WriteMask &mask) { return false; }
++    bool functionalWrite(Packet *pkt) { return false; }
++  }
++
++  // Pending transaction actions (generated by TBE:actions)
++  structure(TriggerMsg, interface="Message") {
++    Addr txnId;
++    bool from_hazard; // this actions was generate during a snoop hazard
++    bool functionalRead(Packet *pkt) { return false; }
++    bool functionalRead(Packet *pkt, WriteMask &mask) { return false; }
++    bool functionalWrite(Packet *pkt) { return false; }
++  }
++
++
++  ////////////////////////////////////////////////////////////////////////////
++  // Input/output port definitions
++  ////////////////////////////////////////////////////////////////////////////
++
++  include "CHI-dvm-misc-node-ports.sm";
++  // CHI-dvm-misc-node-ports.sm also includes CHI-dvm-misc-node-funcs.sm
++
++  ////////////////////////////////////////////////////////////////////////////
++  // Actions and transitions
++  ////////////////////////////////////////////////////////////////////////////
++
++  include "CHI-dvm-misc-node-actions.sm";
++  include "CHI-dvm-misc-node-transitions.sm";
++}
+diff --git a/src/mem/ruby/protocol/chi/CHI-msg.sm b/src/mem/ruby/protocol/chi/CHI-msg.sm
+index 19cf343..0437982 100644
+--- a/src/mem/ruby/protocol/chi/CHI-msg.sm
++++ b/src/mem/ruby/protocol/chi/CHI-msg.sm
+@@ -46,6 +46,10 @@ enumeration(CHIRequestType, desc="") {
+   Load;
+   Store;
+   StoreLine;
++  // Incoming DVM-related requests generated by the sequencer
++  DvmTlbi_Initiate;
++  DvmSync_Initiate;
++  DvmSync_ExternCompleted;
+ 
+   // CHI request types
+   ReadShared;
+@@ -70,12 +74,19 @@ enumeration(CHIRequestType, desc="") {
+   SnpShared;
+   SnpUnique;
+   SnpCleanInvalid;
++  SnpDvmOpSync_P1;
++  SnpDvmOpSync_P2;
++  SnpDvmOpNonSync_P1;
++  SnpDvmOpNonSync_P2;
+ 
+   WriteNoSnpPtl;
+   WriteNoSnp;
+   ReadNoSnp;
+   ReadNoSnpSep;
+ 
++  DvmOpNonSync;
++  DvmOpSync;
++
+   null;
+ }
+ 
+@@ -97,6 +108,9 @@ structure(CHIRequestMsg, desc="", interface="Message") {
+   bool is_local_pf,         desc="Request generated by a local prefetcher";
+   bool is_remote_pf,        desc="Request generated a prefetcher in another cache";
+ 
++  bool usesTxnId,       desc="True if using a Transaction ID", default="false";
++  Addr txnId,           desc="Transaction ID", default="0";
++
+   MessageSizeType MessageSize, default="MessageSizeType_Control";
+ 
+   // No data for functional access
+@@ -140,6 +154,8 @@ structure(CHIResponseMsg, desc="", interface="Message") {
+   MachineID responder,  desc="Responder ID";
+   NetDest Destination,  desc="Response destination";
+   bool stale,           desc="Response to a stale request";
++  bool usesTxnId,       desc="True if using a Transaction ID", default="false";
++  Addr txnId,           desc="Transaction ID", default="0";
+   //NOTE: not in CHI and for debuging only
+ 
+   MessageSizeType MessageSize, default="MessageSizeType_Control";
+@@ -187,7 +203,8 @@ structure(CHIDataMsg, desc="", interface="Message") {
+   NetDest Destination,  desc="Response destination";
+   DataBlock dataBlk,    desc="Line data";
+   WriteMask bitMask,    desc="Which bytes in the data block are valid";
+-
++  bool usesTxnId,       desc="True if using a Transaction ID", default="false";
++  Addr txnId,           desc="Transaction ID", default="0";
+ 
+   MessageSizeType MessageSize, default="MessageSizeType_Data";
+ 
+diff --git a/src/mem/ruby/protocol/chi/CHI.slicc b/src/mem/ruby/protocol/chi/CHI.slicc
+index 27724bb..49c9288 100644
+--- a/src/mem/ruby/protocol/chi/CHI.slicc
++++ b/src/mem/ruby/protocol/chi/CHI.slicc
+@@ -4,3 +4,4 @@ include "RubySlicc_interfaces.slicc";
+ include "CHI-msg.sm";
+ include "CHI-cache.sm";
+ include "CHI-mem.sm";
++include "CHI-dvm-misc-node.sm";
+\ No newline at end of file
+diff --git a/src/mem/ruby/slicc_interface/RubySlicc_Util.hh b/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
+index 79efe1c..edfbe4e 100644
+--- a/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
++++ b/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
+@@ -49,6 +49,7 @@
+ #include <cassert>
+ #include <climits>
+ 
++#include "debug/RubyProtocol.hh"
+ #include "debug/RubySlicc.hh"
+ #include "mem/packet.hh"
+ #include "mem/ruby/common/Address.hh"
+diff --git a/src/mem/ruby/structures/MN_TBEStorage.hh b/src/mem/ruby/structures/MN_TBEStorage.hh
+new file mode 100644
+index 0000000..e314e1f
+--- /dev/null
++++ b/src/mem/ruby/structures/MN_TBEStorage.hh
+@@ -0,0 +1,270 @@
++/*
++ * Copyright (c) 2021-2022 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_RUBY_STRUCTURES_MN_TBESTORAGE_HH__
++#define __MEM_RUBY_STRUCTURES_MN_TBESTORAGE_HH__
++
++#include <cassert>
++#include <unordered_map>
++#include <vector>
++
++#include <base/statistics.hh>
++
++#include "mem/ruby/common/MachineID.hh"
++#include "mem/ruby/structures/TBEStorage.hh"
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++// MN_TBEStorage is composed of multiple TBEStorage
++// partitions that could be used for specific types of TBEs.
++// Partition number 0 is the generic partition and will
++// store any kind of TBEs.
++// Space for specific TBEs will be looked first into the matching
++// partition, and when no space is available the generic one will
++// be used
++template <class RetryEntry>
++class MN_TBEStorage
++{
++  public:
++    MN_TBEStorage(Stats::Group *parent,
++                  std::initializer_list<TBEStorage *> _partitions)
++      : m_stats(parent),
++        partitions(_partitions)
++    {}
++
++    // Returns the current number of slots allocated
++    int
++    size() const
++    {
++        int total = 0;
++        for (auto part : partitions) {
++            total += part->size();
++        }
++        return total;
++    }
++
++    // Returns the total capacity of this TBEStorage table
++    int
++    capacity() const
++    {
++        int total = 0;
++        for (auto part : partitions) {
++            total += part->capacity();
++        }
++        return total;
++    }
++
++    // Returns number of slots currently reserved
++    int
++    reserved() const
++    {
++        int total = 0;
++        for (auto part : partitions) {
++            total += part->reserved();
++        }
++        return total;
++    }
++
++    // Returns the number of slots available for objects of a certain type;
++    int
++    slotsAvailable(int partition) const
++    {
++        auto generic_slots = partitions[0]->slotsAvailable();
++        if (partition) {
++            return partitions[partition]->slotsAvailable() +
++                generic_slots;
++        } else {
++            return generic_slots;
++        }
++    }
++
++    // Returns the TBEStorage utilization
++    float utilization() const { return size() / (float)capacity(); }
++
++    // Returns true if slotsAvailable(partition) >= n;
++    //     current_time is always ignored
++    // This allows this class to be used with check_allocate in SLICC to
++    // trigger resource stalls when there are no slots available
++    bool
++    areNSlotsAvailable(int n, int partition,
++                       Tick current_time = 0) const
++    {
++        return slotsAvailable(partition) >= n;
++    }
++
++    // Increase/decrease the number of reserved slots. Having reserved slots
++    // reduces the number of slots available for allocation
++    void
++    incrementReserved(int partition)
++    {
++        if (partition &&
++            partitions[partition]->areNSlotsAvailable(1)) {
++            partitions[partition]->incrementReserved();
++        } else {
++            partitions[0]->incrementReserved();
++        }
++        m_stats.avg_reserved = reserved();
++    }
++
++    void
++    decrementReserved(int partition)
++    {
++        if (partition && (partitions[partition]->reserved() > 0)) {
++            partitions[partition]->decrementReserved();
++        } else {
++            partitions[0]->decrementReserved();
++        }
++        m_stats.avg_reserved = reserved();
++    }
++
++    // Assign a TBETable entry to a free slot and returns the slot number.
++    // Notice we don't need any info from TBETable and just track the number
++    // of entries assigned to each slot.
++    // This funcion requires slotsAvailable() > 0
++    int
++    addEntryToNewSlot(int partition)
++    {
++        if (partition && partitions[partition]->areNSlotsAvailable(1)) {
++            int part_slot = partitions[partition]->addEntryToNewSlot();
++
++            m_stats.avg_size = size();
++            m_stats.avg_util = utilization();
++
++            return part_slot;
++        } else {
++            int generic_slot = partitions[0]->addEntryToNewSlot();
++
++            m_stats.avg_size = size();
++            m_stats.avg_util = utilization();
++
++            return partitions[partition]->capacity() + generic_slot;
++        }
++    }
++
++    // addEntryToSlot(int) is not supported.
++
++    // Remove an entry from an existing non-empty slot. The slot becomes
++    // available again when the number of assigned entries == 0
++    void
++    removeEntryFromSlot(int slot, int partition)
++    {
++        auto part_capacity = partitions[partition]->capacity();
++        if (slot < part_capacity) {
++            partitions[partition]->removeEntryFromSlot(slot);
++        } else {
++            partitions[0]->removeEntryFromSlot(
++                slot - part_capacity);
++        }
++
++        m_stats.avg_size = size();
++        m_stats.avg_util = utilization();
++    }
++
++    // Insert a "retry entry" into the queue
++    void
++    emplaceRetryEntry(RetryEntry entry)
++    {
++        m_retryEntries.push_back(entry);
++    }
++
++    // Check if a retry is possible
++    bool
++    hasPossibleRetry()
++    {
++        auto retry_iter = getNextRetryEntryIter();
++        return retry_iter != m_retryEntries.end();
++    }
++
++    // Peek what the next thing to retry should be
++    // Should only be called if hasPossibleRetry() returns true
++    RetryEntry
++    popNextRetryEntry()
++    {
++        auto retry_iter = getNextRetryEntryIter();
++        assert(retry_iter != m_retryEntries.end());
++
++        auto entry = *retry_iter;
++
++        m_retryEntries.erase(retry_iter);
++
++        return entry;
++    }
++
++  private:
++    struct MN_TBEStorageStats : public Stats::Group
++    {
++        MN_TBEStorageStats(Stats::Group *parent)
++          : Stats::Group(parent),
++            ADD_STAT(avg_size, "Avg. number of slots allocated"),
++            ADD_STAT(avg_util, "Avg. utilization"),
++            ADD_STAT(avg_reserved, "Avg. number of slots reserved")
++        {}
++
++        // Statistical variables
++        Stats::Average avg_size;
++        Stats::Average avg_util;
++        Stats::Average avg_reserved;
++    } m_stats;
++
++    std::vector<TBEStorage *> partitions;
++
++    std::list<RetryEntry> m_retryEntries;
++
++    typename std::list<RetryEntry>::iterator
++    getNextRetryEntryIter()
++    {
++        auto begin_it = m_retryEntries.begin();
++        auto end_it = m_retryEntries.end();
++
++        for (auto it = begin_it; it != end_it; it++) {
++            if (areNSlotsAvailable(1, it->getisNonSync()))
++                return it;
++        }
++
++        return end_it;
++    }
++};
++
++} // namespace ruby
++
++} // namespace gem5
++
++#endif
+diff --git a/src/mem/ruby/structures/MN_TBETable.cc b/src/mem/ruby/structures/MN_TBETable.cc
+new file mode 100644
+index 0000000..43a2dab
+--- /dev/null
++++ b/src/mem/ruby/structures/MN_TBETable.cc
+@@ -0,0 +1,149 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include <mem/ruby/structures/MN_TBETable.hh>
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++// Based on the current set of TBEs, choose a new "distributor"
++// Can return null -> no distributor
++MiscNode_TBE*
++MN_TBETable::chooseNewDistributor()
++{
++    // Run over the current TBEs, gather information
++    std::vector<MiscNode_TBE*> ready_sync_tbes;
++    std::vector<MiscNode_TBE*> ready_nonsync_tbes;
++    std::vector<MiscNode_TBE*> potential_sync_dependency_tbes;
++    bool has_waiting_sync = false;
++    int waiting_count = 0;
++    for (auto& keyValuePair : m_map) {
++        MiscNode_TBE& tbe = keyValuePair.second;
++
++        switch (tbe.getstate()) {
++            case MiscNode_State_DvmSync_Distributing:
++            case MiscNode_State_DvmNonSync_Distributing:
++                // If something is still distributing, just return it
++                return &tbe;
++            case MiscNode_State_DvmSync_ReadyToDist:
++                ready_sync_tbes.push_back(&tbe);
++                break;
++            case MiscNode_State_DvmNonSync_ReadyToDist:
++                ready_nonsync_tbes.push_back(&tbe);
++                // Sync ops can potentially depend on not-executed NonSync ops
++                potential_sync_dependency_tbes.push_back(&tbe);
++                break;
++            case MiscNode_State_DvmSync_Waiting:
++                has_waiting_sync = true;
++                waiting_count++;
++                break;
++            case MiscNode_State_DvmNonSync_Waiting:
++                waiting_count++;
++                // Sync ops can potentially depend on not-finished NonSync ops
++                potential_sync_dependency_tbes.push_back(&tbe);
++                break;
++            default:
++                break;
++        }
++    }
++
++    // At most ~4 pending snoops at the RN-F
++    // => for safety we only allow 4 ops waiting + distributing at a time
++    // => if 4 are waiting currently, don't start distributing another one
++    assert(waiting_count <= 4);
++    if (waiting_count == 4) {
++        return nullptr;
++    }
++
++    // If there's a waiting Sync op, don't allow other Sync ops to start.
++    if (has_waiting_sync) {
++        ready_sync_tbes.clear();
++    }
++
++    // We need to handle NonSync -> Sync dependencies
++    // If we send CompDBIDResp for a Non-Sync that hasn't started,
++    // the RN-F can send a dependent Sync immediately afterwards.
++    // The Non-Sync must receive all responses before the Sync starts.
++    // => ignore Syncs which arrive after unfinished NonSyncs
++    auto hasNonSyncDependency = [&](const MiscNode_TBE* sync_tbe) {
++        for (const auto* potential_dep : potential_sync_dependency_tbes) {
++            if (sync_tbe->gettimestamp() > potential_dep->gettimestamp() &&
++                sync_tbe->getrequestor() == potential_dep->getrequestor()) {
++                // A NonSync from the same machine arrived before us
++                // => we have a dependency
++                return true;
++            }
++        }
++        return false;
++    };
++    // Erase-remove idiom to remove elements at arbitrary indices
++    // https://en.wikipedia.org/wiki/Erase%E2%80%93remove_idiom
++    // This calls an O(n) function n times = O(n^2) worst case.
++    // TODO this should be improved if n grows > 16
++    ready_sync_tbes.erase(
++        std::remove_if(ready_sync_tbes.begin(), ready_sync_tbes.end(),
++                       hasNonSyncDependency),
++        ready_sync_tbes.end()
++    );
++
++    // TODO shouldn't use age?
++
++    // Extend ready_nonsync_tbes with the contents of ready_sync_tbes
++    ready_nonsync_tbes.insert(ready_nonsync_tbes.end(),
++                              ready_sync_tbes.begin(), ready_sync_tbes.end());
++
++    // Check if no candidates
++    if (ready_nonsync_tbes.empty())
++        return nullptr;
++
++    // Otherwise select the minimum timestamp = oldest element
++    auto it = std::min_element(
++        ready_nonsync_tbes.begin(), ready_nonsync_tbes.end(),
++        [](const MiscNode_TBE* a, const MiscNode_TBE* b) {
++            return a->gettimestamp() - b->gettimestamp();
++        }
++    );
++    assert(it != ready_nonsync_tbes.end());
++    return *it;
++}
++
++} // namespace ruby
++
++} // namespace gem5
+diff --git a/src/mem/ruby/structures/MN_TBETable.hh b/src/mem/ruby/structures/MN_TBETable.hh
+new file mode 100644
+index 0000000..7cb92ab
+--- /dev/null
++++ b/src/mem/ruby/structures/MN_TBETable.hh
+@@ -0,0 +1,70 @@
++/*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __MEM_RUBY_STRUCTURES_MN_TBETABLE_HH__
++#define __MEM_RUBY_STRUCTURES_MN_TBETABLE_HH__
++
++#include <algorithm>
++#include <vector>
++
++#include "mem/ruby/protocol/MiscNode_TBE.hh"
++#include "mem/ruby/structures/TBETable.hh"
++
++namespace gem5
++{
++
++namespace ruby
++{
++
++// Custom class only used for the CHI protocol Misc Node
++// Includes the definition of the MiscNode_TBE, because it
++// includes functions that rely on fields in the structure
++class MN_TBETable : public TBETable<MiscNode_TBE>
++{
++  public:
++    MN_TBETable(int number_of_TBEs)
++      : TBETable(number_of_TBEs)
++    {}
++
++    MiscNode_TBE* chooseNewDistributor();
++};
++
++} // namespace ruby
++
++} // namespace gem5
++
++#endif
+diff --git a/src/mem/ruby/structures/SConscript b/src/mem/ruby/structures/SConscript
+index 0e99b3e..cae0390 100644
+--- a/src/mem/ruby/structures/SConscript
++++ b/src/mem/ruby/structures/SConscript
+@@ -1,5 +1,17 @@
+ # -*- mode:python -*-
+ 
++# Copyright (c) 2021 ARM Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright (c) 2012 Mark D. Hill and David A. Wood
+ # All rights reserved.
+ #
+@@ -44,3 +56,5 @@ Source('RubyPrefetcher.cc')
+ Source('TimerTable.cc')
+ Source('BankedArray.cc')
+ Source('TBEStorage.cc')
++if env['PROTOCOL'] == 'CHI':
++    Source('MN_TBETable.cc')
+diff --git a/src/mem/ruby/structures/TBETable.hh b/src/mem/ruby/structures/TBETable.hh
+index 5bbf16d..9030d52 100644
+--- a/src/mem/ruby/structures/TBETable.hh
++++ b/src/mem/ruby/structures/TBETable.hh
+@@ -76,8 +76,8 @@ class TBETable
+     // Print cache contents
+     void print(std::ostream& out) const;
+ 
+-  private:
+-    // Private copy constructor and assignment operator
++  protected:
++    // Protected copy constructor and assignment operator
+     TBETable(const TBETable& obj);
+     TBETable& operator=(const TBETable& obj);
+ 
+-- 
+1.8.3.1
+

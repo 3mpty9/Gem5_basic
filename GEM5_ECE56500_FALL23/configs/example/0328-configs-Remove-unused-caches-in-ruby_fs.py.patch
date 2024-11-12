@@ -1,0 +1,75 @@
+From 9e8d397411c65084759871862286834bd6132bcf Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 2 Mar 2022 17:05:44 +0000
+Subject: [PATCH 328/757] configs: Remove unused caches in ruby_fs.py
+
+The script is using the ruby memory subsystem, therefore the instantiated
+classic cache models are left unbound
+
+Change-Id: Ic083ef20a3fff63238a64f1478f25fe501e6d8e8
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57272
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/arm/ruby_fs.py | 21 +++++++--------------
+ 1 file changed, 7 insertions(+), 14 deletions(-)
+
+diff --git a/configs/example/arm/ruby_fs.py b/configs/example/arm/ruby_fs.py
+index d820f86..c2fc226 100644
+--- a/configs/example/arm/ruby_fs.py
++++ b/configs/example/arm/ruby_fs.py
+@@ -1,4 +1,4 @@
+-# Copyright (c) 2016-2017, 2020-2021 Arm Limited
++# Copyright (c) 2016-2017, 2020-2022 Arm Limited
+ # All rights reserved.
+ #
+ # The license below extends only to copyright in the software and shall
+@@ -57,18 +57,11 @@ default_disk = 'linaro-minimal-aarch64.img'
+ default_root_device = '/dev/vda1'
+ 
+ 
+-# Pre-defined CPU configurations. Each tuple must be ordered as : (cpu_class,
+-# l1_icache_class, l1_dcache_class, walk_cache_class, l2_Cache_class). Any of
+-# the cache class may be 'None' if the particular cache is not present.
++# Pre-defined CPU configurations.
+ cpu_types = {
+-
+-    "noncaching" : ( NonCachingSimpleCPU, None, None, None),
+-    "minor" : (MinorCPU,
+-               devices.L1I, devices.L1D,
+-               devices.L2),
+-    "hpi" : ( HPI.HPI,
+-              HPI.HPI_ICache, HPI.HPI_DCache,
+-              HPI.HPI_L2)
++    "noncaching" : NonCachingSimpleCPU,
++    "minor" : MinorCPU,
++    "hpi" : HPI.HPI,
+ }
+ 
+ def create_cow_image(name):
+@@ -100,7 +93,7 @@ def create(args):
+         print("Error: Bootscript %s does not exist" % args.script)
+         sys.exit(1)
+ 
+-    cpu_class = cpu_types[args.cpu][0]
++    cpu_class = cpu_types[args.cpu]
+     mem_mode = cpu_class.memory_mode()
+ 
+     system = devices.ArmRubySystem(args.mem_size,
+@@ -115,7 +108,7 @@ def create(args):
+         devices.CpuCluster(system,
+                            args.num_cpus,
+                            args.cpu_freq, "1.0V",
+-                           *cpu_types[args.cpu]),
++                           cpu_class, None, None, None),
+     ]
+ 
+     # Add the PCI devices we need for this system. The base system
+-- 
+1.8.3.1
+

@@ -1,0 +1,148 @@
+From 74942dc08ec0fa6dbc007b78b9d260bc19738594 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 27 May 2022 14:19:52 -0700
+Subject: [PATCH 713/757] tests: Add tests for
+ 'gem5.runtime.get_supported_isas'
+
+Change-Id: I4224cca9384af48c1e090d9b34627cae8ce00715
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60094
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/configs/supported_isa_check.py | 68 +++++++++++++++++++++++++++++++
+ tests/gem5/multi_isa/test_multi_isa.py    | 43 ++++++++++++++++++-
+ 2 files changed, 110 insertions(+), 1 deletion(-)
+ create mode 100644 tests/gem5/configs/supported_isa_check.py
+
+diff --git a/tests/gem5/configs/supported_isa_check.py b/tests/gem5/configs/supported_isa_check.py
+new file mode 100644
+index 0000000..5f535e7
+--- /dev/null
++++ b/tests/gem5/configs/supported_isa_check.py
+@@ -0,0 +1,68 @@
++# Copyright (c) 2022 The Regents of the University of California
++# All rights reserved.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++"""
++This is a very simple script to test the output given by
++`gem5.runtime.get_supported_isas`
++"""
++
++from gem5.runtime import get_supported_isas
++from gem5.isas import get_isas_str_set, get_isa_from_str
++
++import os
++import argparse
++
++parser = argparse.ArgumentParser(
++    description="A simple script used to check the output of "
++    "`gem5.runtime.get_supported_isas`"
++)
++
++parser.add_argument(
++    "-e",
++    "--expected-isa",
++    type=str,
++    choices=get_isas_str_set(),
++    required=True,
++    help="An ISA expected to be included in the binary. If not returned by "
++    "`get_supported_isas`, a non-zero exit code will be returned by the "
++    "script",
++)
++
++args = parser.parse_args()
++supported_isas = get_supported_isas()
++expected_isa = get_isa_from_str(args.expected_isa)
++
++if expected_isa in supported_isas:
++    exit(0)
++
++print(f"ISA expected: {args.expected_isa}")
++
++supported_isas_str = ""
++for isa in supported_isas:
++    supported_isas += f"{os.linesep}{isa.value}"
++print(f"get_supported_isas() returned:{supported_isas}")
++
++exit(1)
+diff --git a/tests/gem5/multi_isa/test_multi_isa.py b/tests/gem5/multi_isa/test_multi_isa.py
+index 9f48724..2f1f67c 100644
+--- a/tests/gem5/multi_isa/test_multi_isa.py
++++ b/tests/gem5/multi_isa/test_multi_isa.py
+@@ -62,4 +62,45 @@ for isa in isa_map.keys():
+         valid_isas=(isa_map[isa],),
+         valid_hosts=constants.supported_hosts,
+         length=length_map[isa],
+-    )
+\ No newline at end of file
++    )
++
++    gem5_verify_config(
++        name=f"supported-isas-check_{isa}-compiled-alone",
++        verifiers=(),
++        fixtures=(),
++        config=joinpath(
++            config.base_dir,
++            "tests",
++            "gem5",
++            "configs",
++            "supported_isa_check.py",
++        ),
++        config_args=["-e", isa],
++        valid_isas=(isa_map[isa],),
++        valid_hosts=constants.supported_hosts,
++        length=length_map[isa],
++    )
++
++    # Remove this when the muli-isa work is incorporated. `build/ALL/gem5.opt`
++    # must be compilable.
++    continue
++
++    if isa != "null":
++        # The null isa is not "supported" in a case where other ISAs are
++        # present.
++        gem5_verify_config(
++            name=f"supported-isas-check_{isa}-all-compiled",
++            verifiers=(),
++            fixtures=(),
++            config=joinpath(
++                config.base_dir,
++                "tests",
++                "gem5",
++                "configs",
++                "supported_isa_check.py",
++            ),
++            config_args=["-e", isa],
++            valid_isas=(constants.all_compiled_tag,),
++            valid_hosts=constants.supported_hosts,
++            length=constants.long_tag,
++        )
+-- 
+1.8.3.1
+

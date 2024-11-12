@@ -1,0 +1,39 @@
+From 97bc68e6f45188a16e9c656d64c0cf3eb28cba8c Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 20 Jan 2022 22:14:02 -0800
+Subject: [PATCH 299/757] arch-x86: Fix how flags registers are handled in
+ IRET_REAL.
+
+There was a problem in how the data size worked, which could let data
+leak through from the old value of a microcode register and affect the
+new value of RFLAGS.
+
+Change-Id: I2325bc3583b3c796c586c2ea4f6ba3cc56725077
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55691
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../general_purpose/control_transfer/interrupts_and_exceptions.py    | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+index 2e7a2d1..525279c 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+@@ -56,9 +56,10 @@ def macroop IRET_REAL {
+ 
+     # Update RFLAGS
+     # Get the current RFLAGS
+-    rflags t4
++    rflags t4, dataSize=8
+     # Flip flag bits if they should change.
+-    xor t5, t4, t3
++    mov t5, t4, t3
++    xor t5, t5, t4, dataSize=8
+     # Don't change VIF, VIP, or VM
+     limm t6, "~(VIFBit | VIPBit | VMBit)", dataSize=8
+     and t5, t5, t6, dataSize=8
+-- 
+1.8.3.1
+

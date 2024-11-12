@@ -1,0 +1,12 @@
+diff --git a/src/cpu/minor/SConscript b/src/cpu/minor/SConscript
+index cd1b8e3..e1f9b34 100644
+--- a/src/cpu/minor/SConscript
++++ b/src/cpu/minor/SConscript
+@@ -50,6 +50,7 @@ if env['CONF']['TARGET_ISA'] != 'null':
+     Source('cpu.cc')
+     Source('decode.cc')
+     Source('dyn_inst.cc')
++    Source('dummyexecute.cc')
+     Source('execute.cc')
+     Source('fetch1.cc')
+     Source('fetch2.cc')

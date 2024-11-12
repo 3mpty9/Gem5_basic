@@ -1,0 +1,71 @@
+From d64a2ba541ff35bb11cb60f081fa9484c6f47027 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:36:14 +0000
+Subject: [PATCH 399/757] mem: Add external TLBI flags to the Request object
+
+* TLBI_EXT_SYNC: This flag tells the CPU model that a
+remote TLBI Sync has been requested
+
+* TLBI_EXT_SYNC_COMP: This flag tells the interconnect that a
+remote TLBI Sync request has completed
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I459d22f112038cc1427e24999904ba74c1c08cfb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57289
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 867cbb0..85a9bed 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -243,6 +243,14 @@ class Request
+         /** The Request is a TLB shootdown sync */
+         TLBI_SYNC                   = 0x0000200000000000,
+ 
++        /** The Request tells the CPU model that a
++            remote TLB Sync has been requested */
++        TLBI_EXT_SYNC               = 0x0000400000000000,
++
++        /** The Request tells the interconnect that a
++            remote TLB Sync request has completed */
++        TLBI_EXT_SYNC_COMP          = 0x0000800000000000,
++
+         /**
+          * These flags are *not* cleared when a Request object is
+          * reused (assigned a new address).
+@@ -255,7 +263,8 @@ class Request
+     static const FlagsType HTM_CMD = HTM_START | HTM_COMMIT |
+         HTM_CANCEL | HTM_ABORT;
+ 
+-    static const FlagsType TLBI_CMD = TLBI | TLBI_SYNC;
++    static const FlagsType TLBI_CMD = TLBI | TLBI_SYNC |
++        TLBI_EXT_SYNC | TLBI_EXT_SYNC_COMP;
+ 
+     /** Requestor Ids that are statically allocated
+      * @{*/
+@@ -985,7 +994,14 @@ class Request
+ 
+     bool isTlbi() const { return _flags.isSet(TLBI); }
+     bool isTlbiSync() const { return _flags.isSet(TLBI_SYNC); }
+-    bool isTlbiCmd() const { return isTlbi() || isTlbiSync(); }
++    bool isTlbiExtSync() const { return _flags.isSet(TLBI_EXT_SYNC); }
++    bool isTlbiExtSyncComp() const { return _flags.isSet(TLBI_EXT_SYNC_COMP); }
++    bool
++    isTlbiCmd() const
++    {
++        return (isTlbi() || isTlbiSync() ||
++                isTlbiExtSync() || isTlbiExtSyncComp());
++    }
+ 
+     bool
+     isAtomic() const
+-- 
+1.8.3.1
+

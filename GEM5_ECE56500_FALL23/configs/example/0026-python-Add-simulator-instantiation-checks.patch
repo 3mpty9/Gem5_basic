@@ -1,0 +1,59 @@
+From d287d8e050e468a260e1dbebaa88e92d6af707aa Mon Sep 17 00:00:00 2001
+From: Andreas Sandberg <andreas.sandberg@arm.com>
+Date: Fri, 10 Dec 2021 12:22:12 +0000
+Subject: [PATCH 026/757] python: Add simulator instantiation checks
+
+Check that m5.instantiate() has been called before m5.simulate() and
+that m5.instantiate() is only called once.
+
+Change-Id: Iced129cfd3d09564e2ef619eba829fd294c8a6ac
+Signed-off-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53923
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/m5/simulate.py | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/src/python/m5/simulate.py b/src/python/m5/simulate.py
+index b5b8c78..0e222cf 100644
+--- a/src/python/m5/simulate.py
++++ b/src/python/m5/simulate.py
+@@ -62,11 +62,19 @@ MaxTick = 2**64 - 1
+ 
+ _drain_manager = _m5.drain.DrainManager.instance()
+ 
+-# The final hook to generate .ini files.  Called from the user script
+-# once the config is built.
++_instantiated = False # Has m5.instantiate() been called?
++
++# The final call to instantiate the SimObject graph and initialize the
++# system.
+ def instantiate(ckpt_dir=None):
++    global _instantiated
+     from m5 import options
+ 
++    if _instantiated:
++        fatal("m5.instantiate() called twice.")
++
++    _instantiated = True
++
+     root = objects.Root.getInstance()
+ 
+     if not root:
+@@ -148,6 +156,10 @@ def instantiate(ckpt_dir=None):
+ need_startup = True
+ def simulate(*args, **kwargs):
+     global need_startup
++    global _instantiated
++
++    if not _instantiated:
++        fatal("m5.instantiate() must be called before m5.simulate().")
+ 
+     if need_startup:
+         root = objects.Root.getInstance()
+-- 
+1.8.3.1
+

@@ -1,0 +1,40 @@
+From 2fed34d099326b143816ac4bcb15a155adfb0737 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 14 Jan 2022 13:35:05 +0800
+Subject: [PATCH 147/757] fastmodel: Set simulation pause when breakpoint hit
+
+The 7th parameter of breakpoint_set_code is dontStop. It seems the
+fastmodel would prefetch something or do some evaluation ahead with the
+flag set. This behavior prevents the instruction stepping feature of
+gdb. The implementation of the feature is creating a breakpoint on the
+next instruction and contining the simulation. Without stopping on the
+breakpoint, it wouldn't invoke the breakpoint callback, since it may
+evaulate the code we just want it to stop already. We should set the
+dontStop to false to fix this issue.
+
+Change-Id: Iaf8acd3235fa9625c1423ef34606e1fa5d0c531a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55484
+Reviewed-by: Earl Ou <shunhsingou@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/iris/thread_context.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.cc b/src/arch/arm/fastmodel/iris/thread_context.cc
+index 16c8250..4a9c2db 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.cc
++++ b/src/arch/arm/fastmodel/iris/thread_context.cc
+@@ -181,7 +181,7 @@ ThreadContext::installBp(BpInfoIt it)
+     const auto &space_ids = getBpSpaceIds();
+     for (auto sid: space_ids) {
+         BpId id;
+-        call().breakpoint_set_code(_instId, id, pc, sid, 0, true);
++        call().breakpoint_set_code(_instId, id, pc, sid, 0);
+         it->second->ids.push_back(id);
+     }
+ }
+-- 
+1.8.3.1
+

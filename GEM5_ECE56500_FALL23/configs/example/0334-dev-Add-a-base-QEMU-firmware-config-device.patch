@@ -1,0 +1,819 @@
+From f161c0b6bce28646d3f2e7a191ad9998bdbf2c9e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 18 Jan 2022 21:12:03 -0800
+Subject: [PATCH 334/757] dev: Add a base QEMU firmware config device.
+
+This artificial device is provided by QEMU inside their emulated
+machines to feed extra configuration information to the system firmware,
+or even to the operating system if it chose to use it. The behavior of
+this device is explained in the docs/specs/fw_cfg.txt file in the QEMU
+source.
+
+This implementation currently supports the traditional interface, and
+does not support the DMA based interface, although it probably wouldn't
+be that hard to expand it to in the future.
+
+The interface exposes individual entries which can optionally (and
+usually) have paths associated with them that you can look up in a
+directory type entry which has a fixed index. There are some entries
+which are built into the device itself, which are the ID, signature and
+directory entries, but the rest can be set up in the config scripts.
+
+To make it easier to add new entries which are not from config scripts,
+aka the ones that are hard coded in C++ and built into the device, the
+actual entries themselves are not SimObjects, but it's easy to create a
+SimObject wrapper which will spit them out for the device to consume.
+Other items can be added to the device manually without generating them
+with SimObjects.
+
+Entries can have fixed or automatically generated indices. All entries
+have a "path" in the sense that they have a name, but as a minor
+deviation from what the QEMU documentation says, a "path" which begins
+with a "." is not exported in the directory. This is purposefully
+reminiscent of the unix style hidden file mechanism, where files or
+directories who's names begin with "." are not normally shown by ls.
+
+There are two different styles of this device, one which is IO port
+based, and one which is MMIO based. Which to use depends on the
+architecture, where x86 currently uses the IO scheme and ARM uses the
+MMIO scheme. The documentation doesn't say what other ISAs use, if any
+other ones support this interface, but I'd assume the MMIO version.
+These are split out because the rules for how they work are subtly
+different, but they share a lot of common machinery under the hood.
+
+In most cases where somebody tries to talk to the device in an unusual
+way, for instance accessing a register with an incomplete width or at an
+offset, the device will just report all zeroes. The behavior in those
+cases isn't specified, in many cases doesn't make sense based on the
+design of the device, and doesn't seem to be depended on in the limited
+use case I looked at.
+
+Change-Id: Ib81ace406f877b298b9b98883d417e7d673916b5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55627
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/qemu/QemuFwCfg.py |  87 ++++++++++++
+ src/dev/qemu/SConscript   |  34 +++++
+ src/dev/qemu/fw_cfg.cc    | 352 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/dev/qemu/fw_cfg.hh    | 253 +++++++++++++++++++++++++++++++++
+ 4 files changed, 726 insertions(+)
+ create mode 100644 src/dev/qemu/QemuFwCfg.py
+ create mode 100644 src/dev/qemu/SConscript
+ create mode 100644 src/dev/qemu/fw_cfg.cc
+ create mode 100644 src/dev/qemu/fw_cfg.hh
+
+diff --git a/src/dev/qemu/QemuFwCfg.py b/src/dev/qemu/QemuFwCfg.py
+new file mode 100644
+index 0000000..3a21063
+--- /dev/null
++++ b/src/dev/qemu/QemuFwCfg.py
+@@ -0,0 +1,87 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.objects.SimObject import SimObject
++from m5.objects.Device import PioDevice
++
++class QemuFwCfgItem(SimObject):
++    type = 'QemuFwCfgItem'
++    cxx_class = 'gem5::qemu::FwCfgItemFactoryBase'
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++    abstract = True
++
++    # The path this item will be listed under in the firmware config directory.
++    arch_specific = Param.Bool(False, 'if this item is archiecture specific')
++    index = Param.Unsigned(0, 'Fixed index, or 0 for automatic')
++    path = Param.String('Path to item in the firmware config directory')
++
++class QemuFwCfgItemFile(QemuFwCfgItem):
++    type = 'QemuFwCfgItemFile'
++    cxx_class = 'gem5::qemu::FwCfgItemFactory<gem5::qemu::FwCfgItemFile>'
++    cxx_template_params = ['class ItemType']
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++
++    # The path to the file that will be used to populate this item.
++    file = Param.String('Path to file to export')
++
++class QemuFwCfgItemString(QemuFwCfgItem):
++    type = 'QemuFwCfgItemString'
++    cxx_class = 'gem5::qemu::FwCfgItemFactory<gem5::qemu::FwCfgItemString>'
++    cxx_template_params = ['class ItemType']
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++
++    # The string which directly populates this item.
++    string = Param.String('String to export')
++
++class QemuFwCfg(PioDevice):
++    type = 'QemuFwCfg'
++    cxx_class = 'gem5::qemu::FwCfg'
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++    abstract = True
++
++    items = VectorParam.QemuFwCfgItem([],
++            'Items exported by the firmware config device')
++
++class QemuFwCfgIo(QemuFwCfg):
++    type = 'QemuFwCfgIo'
++    cxx_class = 'gem5::qemu::FwCfgIo'
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++
++    # The selector register is 16 bits wide, and little endian. The data
++    # register must be one port ahead of the selector.
++    selector_addr = Param.Addr('IO port for the selector register')
++
++class QemuFwCfgMmio(QemuFwCfg):
++    type = 'QemuFwCfgMmio'
++    cxx_class = 'gem5::qemu::FwCfgMmio'
++    cxx_header = 'dev/qemu/fw_cfg.hh'
++
++    # The selector register is 16 bits wide, and big endian.
++    selector_addr = Param.Addr('Memory address for the selector register')
++
++    # The data register is 8, 16, 32 or 64 bits wide.
++    data_addr_range = \
++            Param.AddrRange('Memory address range for the data register')
+diff --git a/src/dev/qemu/SConscript b/src/dev/qemu/SConscript
+new file mode 100644
+index 0000000..a2fff02
+--- /dev/null
++++ b/src/dev/qemu/SConscript
+@@ -0,0 +1,34 @@
++# Copyright 2022 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++Import('*')
++
++SimObject('QemuFwCfg.py', sim_objects=[
++    'QemuFwCfgItem', 'QemuFwCfgItemFile', 'QemuFwCfgItemString',
++    'QemuFwCfg', 'QemuFwCfgIo', 'QemuFwCfgMmio'])
++Source('fw_cfg.cc')
++
++DebugFlag('QemuFwCfg')
++DebugFlag('QemuFwCfgVerbose')
+diff --git a/src/dev/qemu/fw_cfg.cc b/src/dev/qemu/fw_cfg.cc
+new file mode 100644
+index 0000000..15a442b
+--- /dev/null
++++ b/src/dev/qemu/fw_cfg.cc
+@@ -0,0 +1,352 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/qemu/fw_cfg.hh"
++
++#include <cstring>
++#include <sstream>
++#include <string>
++
++#include "base/compiler.hh"
++#include "base/cprintf.hh"
++#include "base/logging.hh"
++#include "base/trace.hh"
++#include "debug/QemuFwCfg.hh"
++#include "debug/QemuFwCfgVerbose.hh"
++#include "mem/packet_access.hh"
++#include "sim/byteswap.hh"
++
++namespace gem5
++{
++
++namespace qemu
++{
++
++void
++FwCfgItemFixed::read(void *buf, uint64_t offset, uint32_t to_read)
++{
++    // Get access to the data we need to fill this buffer.
++    const void *data = bytes();
++    const uint64_t total_length = length();
++
++    if (offset > total_length) {
++        // We're completely off the end, so return only zeroes.
++        std::memset(buf, 0, to_read);
++        return;
++    }
++
++    if (offset + to_read > total_length) {
++        // We're partially off the end, truncate this read and zero fill.
++
++        // Figure out how far past the end we're attempting to read.
++        uint64_t overflow = offset + to_read - total_length;
++
++        // Reduce the requested read size to what we can actually fill.
++        to_read -= overflow;
++
++        // Zero out the part we won't read data into.
++        std::memset((uint8_t *)buf + to_read, 0, overflow);
++    }
++
++    // Do the read.
++    std::memcpy(buf, (uint8_t *)data + offset, to_read);
++}
++
++FwCfg::FwCfg(const Params &p, const AddrRangeList &addr_ranges) :
++    PioDevice(p),
++    signature(".[FW_CFG_SIGNATURE]", false, "QEMU CFG", 0),
++    // The ID says we support the traditional interface but not DMA. To enable
++    // DMA, this should be equal to 3.
++    id(".[FW_CFG_ID]", false, "\x1", 1),
++    addrRanges(addr_ranges)
++{
++    // Add the unnamed, fixed items.
++    addItem(&signature);
++    addItem(&id);
++
++    for (auto factory: p.items) {
++        // Process named items and add them to the index.
++        auto &item = factory->item();
++
++        uint32_t &next_index =
++            item.archSpecific() ? nextArchIndex : nextGenericIndex;
++        const uint32_t &max_index =
++            item.archSpecific() ? MaxArchIndex : MaxGenericIndex;
++
++        // Automatically assign an ID if a fixed one wasn't specified.
++        if (!item.index())
++            item.index(next_index++);
++
++        panic_if(item.index() >= max_index,
++                "Firmware config device out of %s indexes.",
++                item.archSpecific() ? "arch" : "generic");
++
++        addItem(&item);
++    }
++
++    directory.update(names, numbers);
++    addItem(&directory);
++};
++
++void
++FwCfg::addItem(FwCfgItem *item)
++{
++    const auto [kit, ksuccess] =
++        numbers.insert(std::make_pair(item->index(), item));
++
++    panic_if(!ksuccess, "Duplicate firmware config item key %#x, "
++            "paths %s and %s.",
++            item->index(), item->path(), kit->second->path());
++
++    const std::string &path = item->path();
++    if (path.empty() || path[0] != '.') {
++        const auto [pit, psuccess] =
++            names.insert(std::make_pair(item->path(), item->index()));
++
++        panic_if(!psuccess, "Duplicate firmware config item path %s.",
++                item->path());
++    }
++}
++
++void
++FwCfg::select(uint16_t key)
++{
++    DPRINTF(QemuFwCfg, "Selecting item with key %#x.\n", key);
++
++    // Clear any previous selection.
++    offset = 0;
++    current = nullptr;
++
++    auto iter = numbers.find(key);
++    if (iter == numbers.end()) {
++        warn("Firmware config failed to select item with key %#x.", key);
++        return;
++    }
++
++    auto [index, item] = *iter;
++
++    current = item;
++    if (current)
++        DPRINTF(QemuFwCfg, "Selected item with path %s.\n", item->path());
++    else
++        DPRINTF(QemuFwCfg, "No item is currently selected.\n");
++}
++
++void
++FwCfg::readItem(void *buf, uint32_t length)
++{
++    if (!current) {
++        DPRINTF(QemuFwCfgVerbose,
++                "Tried to read while nothing was selected.\n");
++        std::memset(buf, 0, length);
++        return;
++    }
++
++    current->read(buf, offset, length);
++
++    if (gem5::debug::QemuFwCfgVerbose) {
++        std::stringstream data_str;
++        for (int idx = 0; idx < length; idx++)
++            ccprintf(data_str, " %02x", ((uint8_t *)buf)[idx]);
++
++        DPRINTF(QemuFwCfgVerbose, "Read [%#x-%#x) =>%s.\n",
++                offset, offset + length, data_str.str());
++    }
++
++    offset += length;
++}
++
++FwCfg::Directory::Directory() :
++    FwCfgItemFixed(".[FW_CFG_FILE_DIR]", false, 0x19)
++{}
++
++void
++FwCfg::Directory::update(
++        const std::map<std::string, uint16_t> &names,
++        const std::map<uint16_t, FwCfgItem *> &numbers)
++{
++    uint32_t count = names.size();
++
++    struct GEM5_PACKED File
++    {
++        uint32_t size;
++        uint16_t select;
++        uint16_t reserved;
++        char name[56];
++    };
++
++    uint64_t bytes = sizeof(count) + sizeof(File) * count;
++    data.resize(bytes);
++
++    uint8_t *ptr = data.data();
++
++    uint32_t be_count = htobe(count);
++    std::memcpy(ptr, &be_count, sizeof(be_count));
++    ptr += sizeof(be_count);
++
++    for (auto &[name, index]: names) {
++        // Fill in the entry.
++        File file{(uint32_t)numbers.at(index)->length(), index, 0, {}};
++        std::memset(file.name, 0, sizeof(file.name));
++        std::strncpy(file.name, name.c_str(), sizeof(file.name) - 1);
++
++        // Fix endianness.
++        file.size = htobe(file.size);
++        file.select = htobe(file.select);
++
++        // Copy it to the buffer and update ptr.
++        std::memcpy(ptr, &file, sizeof(file));
++        ptr += sizeof(file);
++    }
++}
++
++FwCfgIo::FwCfgIo(const Params &p) : FwCfg(p, {
++        // This covers both the 16 bit selector, and the 8 bit data reg which
++        // overlaps it.
++        {p.selector_addr, p.selector_addr + 2}}),
++    selectorAddr(p.selector_addr), dataAddr(p.selector_addr + 1)
++{}
++
++Tick
++FwCfgIo::read(PacketPtr pkt)
++{
++    const Addr addr = pkt->getAddr();
++    const auto size = pkt->getSize();
++
++    pkt->makeResponse();
++    // The default response is all zeroes.
++    std::memset(pkt->getPtr<uint8_t>(), 0, size);
++
++    if (addr == selectorAddr) {
++        warn("Read from firmware config selector register not supported.");
++    } else if (addr == dataAddr) {
++        if (size == 1) {
++            readItem(pkt->getPtr<void>(), size);
++        } else {
++            warn("Read from firmware config data register with width %d not "
++                    "supported.", size);
++        }
++    } else {
++        panic("Unregognized firmware config read [%#x-%#x).",
++                addr, addr + size);
++    }
++
++    return 0;
++}
++
++Tick
++FwCfgIo::write(PacketPtr pkt)
++{
++    const Addr addr = pkt->getAddr();
++    const auto size = pkt->getSize();
++
++    pkt->makeResponse();
++
++    if (addr == selectorAddr) {
++        if (size != 2) {
++            warn("Write to firmware config selector register with width %d "
++                    "not supported.", size);
++        } else {
++            auto key = pkt->getLE<uint16_t>();
++            select(key);
++        }
++    } else if (addr == dataAddr) {
++        // Writes to the firmware config data can only be done through the
++        // DMA interface.
++        warn("Write to firmware config data register not supported.");
++    } else {
++        panic("Unrecognized firmware config write [%#x-%#x).",
++                addr, addr + size);
++    }
++
++    return 0;
++}
++
++FwCfgMmio::FwCfgMmio(const Params &p) : FwCfg(p, {
++        {p.selector_addr, p.selector_addr + 2},
++        {p.data_addr_range}}),
++    selectorAddr(p.selector_addr),
++    dataAddr(p.data_addr_range.start()), dataSize(p.data_addr_range.size())
++{}
++
++Tick
++FwCfgMmio::read(PacketPtr pkt)
++{
++    const Addr addr = pkt->getAddr();
++    const auto size = pkt->getSize();
++
++    pkt->makeResponse();
++    // The default response is all zeroes.
++    std::memset(pkt->getPtr<uint8_t>(), 0, size);
++
++    if (addr == selectorAddr) {
++        warn("Read from firmware config selector register not supported.");
++    } else if (addr == dataAddr) {
++        if (size == dataSize) {
++            readItem(pkt->getPtr<void>(), size);
++        } else {
++            warn("Read from firmware config data register with width %d not "
++                    "supported.", size);
++        }
++    } else {
++        panic("Unregognized firmware config read [%#x-%#x).",
++                addr, addr + size);
++    }
++
++    return 0;
++}
++
++Tick
++FwCfgMmio::write(PacketPtr pkt)
++{
++    const Addr addr = pkt->getAddr();
++    const auto size = pkt->getSize();
++
++    pkt->makeResponse();
++
++    if (addr == selectorAddr) {
++        if (size != 2) {
++            warn("Write to firmware config selector register with width %d "
++                    "not supported.", size);
++        } else {
++            auto key = pkt->getBE<uint16_t>();
++            select(key);
++        }
++    } else if (addr == dataAddr) {
++        // Writes to the firmware config data can only be done through the
++        // DMA interface.
++        warn("Write to firmware config data register not supported.");
++    } else {
++        panic("Unrecognized firmware config write [%#x-%#x).",
++                addr, addr + size);
++    }
++
++    return 0;
++}
++
++} // namespace qemu
++} // namespace gem5
+diff --git a/src/dev/qemu/fw_cfg.hh b/src/dev/qemu/fw_cfg.hh
+new file mode 100644
+index 0000000..4c780b3
+--- /dev/null
++++ b/src/dev/qemu/fw_cfg.hh
+@@ -0,0 +1,253 @@
++/*
++ * Copyright 2022 Google, Inc.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_QEMU_FW_CFG_HH__
++#define __DEV_QEMU_FW_CFG_HH__
++
++#include <cstdint>
++#include <map>
++#include <string>
++#include <type_traits>
++#include <vector>
++
++#include "base/loader/image_file_data.hh"
++#include "base/types.hh"
++#include "dev/io_device.hh"
++#include "params/QemuFwCfg.hh"
++#include "params/QemuFwCfgIo.hh"
++#include "params/QemuFwCfgItem.hh"
++#include "params/QemuFwCfgItemFile.hh"
++#include "params/QemuFwCfgItemString.hh"
++#include "params/QemuFwCfgMmio.hh"
++
++namespace gem5
++{
++
++namespace qemu
++{
++
++/*
++ * Items which can be reported by the firmware config device.
++ */
++
++class FwCfgItem
++{
++  protected:
++    uint16_t _index;
++    const std::string _path;
++    bool _archSpecific;
++
++    FwCfgItem(const std::string &new_path, bool arch_specific,
++            uint16_t new_index=0) :
++        _index(new_index), _path(new_path), _archSpecific(arch_specific)
++    {}
++
++  public:
++    uint16_t index() const { return _index; }
++    void index(uint16_t new_index) { _index = new_index; }
++
++    const std::string &path() const { return _path; }
++    bool archSpecific() const { return _archSpecific; }
++
++    virtual uint64_t length() const = 0;
++
++    virtual void read(void *buf, uint64_t offset, uint32_t to_read) = 0;
++};
++
++// Read only items with precomputed data.
++class FwCfgItemFixed : public FwCfgItem
++{
++  protected:
++    virtual const void *bytes() const = 0;
++
++  public:
++    using FwCfgItem::FwCfgItem;
++
++    void read(void *buf, uint64_t offset, uint32_t to_read) override;
++};
++
++// An item who's value comes from a file.
++class FwCfgItemFile : public FwCfgItemFixed
++{
++  private:
++    const gem5::loader::ImageFileData data;
++
++  public:
++    FwCfgItemFile(const std::string &new_path, bool arch_specific,
++            const std::string path, uint16_t new_index=0) :
++        FwCfgItemFixed(new_path, arch_specific, new_index), data(path)
++    {}
++
++    FwCfgItemFile(const QemuFwCfgItemFileParams &p) :
++        FwCfgItemFile(p.path, p.arch_specific, p.file, p.index)
++    {}
++
++    const void *bytes() const override { return data.data(); }
++    uint64_t length() const override { return data.len(); }
++};
++
++// An item who's value comes from a string.
++class FwCfgItemString : public FwCfgItemFixed
++{
++  private:
++    std::string str;
++
++  public:
++    FwCfgItemString(const std::string &new_path, bool arch_specific,
++            const std::string _str, uint16_t new_index=0) :
++        FwCfgItemFixed(new_path, arch_specific, new_index), str(_str)
++    {}
++
++    FwCfgItemString(const QemuFwCfgItemStringParams &p) :
++        FwCfgItemString(p.path, p.arch_specific, p.string, p.index)
++    {}
++
++    const void *bytes() const override { return (void *)str.data(); }
++    uint64_t
++    length() const override
++    {
++        return sizeof(std::string::value_type) * str.length();
++    }
++};
++
++/*
++ * Base and template classes for creating SimObject wrappers for item types.
++ */
++
++class FwCfgItemFactoryBase : public SimObject
++{
++  public:
++    PARAMS(QemuFwCfgItem);
++    FwCfgItemFactoryBase(const Params &p) : SimObject(p) {}
++
++    virtual FwCfgItem &item() = 0;
++};
++
++template <class ItemType>
++class FwCfgItemFactory : public FwCfgItemFactoryBase
++{
++  private:
++    ItemType _item;
++
++  public:
++    template <class PType, class = typename std::enable_if_t<
++        std::is_base_of_v<SimObjectParams, PType>>>
++    FwCfgItemFactory(const PType &p) : FwCfgItemFactoryBase(p), _item(p) {}
++
++    FwCfgItem &item() override { return _item; }
++};
++
++/*
++ * The actual firmware config device itself.
++ */
++
++// The base class.
++class FwCfg : public PioDevice
++{
++  private:
++    std::map<std::string, uint16_t> names;
++    std::map<uint16_t, FwCfgItem *> numbers;
++
++    uint32_t nextGenericIndex = 0x20;
++    static inline const uint32_t MaxGenericIndex = 0x3fff;
++
++    uint32_t nextArchIndex = 0x8020;
++    static inline const uint32_t MaxArchIndex = 0xbfff;
++
++    uint64_t offset = 0;
++    FwCfgItem *current = nullptr;
++
++    class Directory : public FwCfgItemFixed
++    {
++      private:
++        std::vector<uint8_t> data;
++
++      public:
++        Directory();
++
++        void update(const std::map<std::string, uint16_t> &names,
++                const std::map<uint16_t, FwCfgItem *> &numbers);
++
++        const void *bytes() const override { return (void *)data.data(); }
++        uint64_t length() const override { return data.size(); }
++    };
++
++    FwCfgItemString signature;
++    FwCfgItemString id;
++    Directory directory;
++
++    void addItem(FwCfgItem *item);
++
++  protected:
++    const AddrRangeList addrRanges;
++
++    void select(uint16_t key);
++
++  public:
++    PARAMS(QemuFwCfg);
++    FwCfg(const Params &p, const AddrRangeList &addr_ranges);
++
++    AddrRangeList getAddrRanges() const override { return addrRanges; }
++
++    void readItem(void *buf, uint32_t length);
++};
++
++// A version which uses IO ports.
++class FwCfgIo : public FwCfg
++{
++  private:
++    const Addr selectorAddr;
++    const Addr dataAddr;
++
++  public:
++    PARAMS(QemuFwCfgIo);
++    FwCfgIo(const Params &p);
++
++    Tick read(PacketPtr pkt) override;
++    Tick write(PacketPtr pkt) override;
++};
++
++// A version which uses memory mapped IO.
++class FwCfgMmio : public FwCfg
++{
++  private:
++    const Addr selectorAddr;
++    const Addr dataAddr;
++    const Addr dataSize;
++
++  public:
++    PARAMS(QemuFwCfgMmio);
++    FwCfgMmio(const Params &p);
++
++    Tick read(PacketPtr pkt) override;
++    Tick write(PacketPtr pkt) override;
++};
++
++} // namespace qemu
++} // namespace gem5
++
++#endif //__DEV_QEMU_FW_CFG_HH__
+-- 
+1.8.3.1
+

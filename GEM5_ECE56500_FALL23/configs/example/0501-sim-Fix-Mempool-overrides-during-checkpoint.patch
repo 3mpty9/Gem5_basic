@@ -1,0 +1,104 @@
+From 8d218b41b7c66a0c77235b340245b90bc9fe20dc Mon Sep 17 00:00:00 2001
+From: Jordi Vaquero <jordi.vaquero@metempsy.com>
+Date: Fri, 18 Feb 2022 12:40:11 +0100
+Subject: [PATCH 501/757] sim: Fix Mempool overrides during checkpoint
+
+This patch fixes the problem during checkpoing where the mempool is not
+restored, but using only the one specified in the config file as a new
+execution.
+In order to fix that this changes modifyies the serialize/unserialize
+functions for mempools and create new funcionts on se_workload to make
+sure mempools ends up in the m5.cpt.
+We change as well the unserialize mempool function to update
+according the checkpoint file so the execution starts with the same
+free pages and free pointers.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1191
+
+Change-Id: I289bf91eb4f01d9c01a31a39b968e30f8b8d2bdc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56969
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/sim/mem_pool.cc    |  5 +++++
+ src/sim/process.cc     |  1 +
+ src/sim/se_workload.cc | 12 ++++++++++++
+ src/sim/se_workload.hh |  3 +++
+ 4 files changed, 21 insertions(+)
+
+diff --git a/src/sim/mem_pool.cc b/src/sim/mem_pool.cc
+index 20b6eda..d58399d 100644
+--- a/src/sim/mem_pool.cc
++++ b/src/sim/mem_pool.cc
+@@ -169,6 +169,7 @@ MemPools::freeMemSize(int pool_id) const
+ void
+ MemPools::serialize(CheckpointOut &cp) const
+ {
++    ScopedCheckpointSection sec(cp, "mempools");
+     int num_pools = pools.size();
+     SERIALIZE_SCALAR(num_pools);
+ 
+@@ -179,6 +180,10 @@ MemPools::serialize(CheckpointOut &cp) const
+ void
+ MemPools::unserialize(CheckpointIn &cp)
+ {
++    // Delete previous mem_pools
++    pools.clear();
++
++    ScopedCheckpointSection sec(cp, "mempools");
+     int num_pools = 0;
+     UNSERIALIZE_SCALAR(num_pools);
+ 
+diff --git a/src/sim/process.cc b/src/sim/process.cc
+index 3a631a5..97130bd 100644
+--- a/src/sim/process.cc
++++ b/src/sim/process.cc
+@@ -388,6 +388,7 @@ Process::unserialize(CheckpointIn &cp)
+     memState->unserialize(cp);
+     pTable->unserialize(cp);
+     fds->unserialize(cp);
++
+     /**
+      * Checkpoints for pipes, device drivers or sockets currently
+      * do not work. Need to come back and fix them at a later date.
+diff --git a/src/sim/se_workload.cc b/src/sim/se_workload.cc
+index d3c8570..4d2bd54 100644
+--- a/src/sim/se_workload.cc
++++ b/src/sim/se_workload.cc
+@@ -54,6 +54,18 @@ SEWorkload::setSystem(System *sys)
+ }
+ 
+ void
++SEWorkload::serialize(CheckpointOut &cp) const
++{
++    memPools.serialize(cp);
++}
++
++void
++SEWorkload::unserialize(CheckpointIn &cp)
++{
++    memPools.unserialize(cp);
++}
++
++void
+ SEWorkload::syscall(ThreadContext *tc)
+ {
+     tc->getProcessPtr()->syscall(tc);
+diff --git a/src/sim/se_workload.hh b/src/sim/se_workload.hh
+index 5bc597f..e212ad6 100644
+--- a/src/sim/se_workload.hh
++++ b/src/sim/se_workload.hh
+@@ -81,6 +81,9 @@ class SEWorkload : public Workload
+         panic("No workload symbol table for syscall emulation mode.");
+     }
+ 
++    void serialize(CheckpointOut &cp) const override;
++    void unserialize(CheckpointIn &cp) override;
++
+     void syscall(ThreadContext *tc) override;
+ 
+     // For now, assume the only type of events are system calls.
+-- 
+1.8.3.1
+

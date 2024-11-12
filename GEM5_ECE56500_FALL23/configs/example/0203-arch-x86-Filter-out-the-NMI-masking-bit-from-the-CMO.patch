@@ -1,0 +1,83 @@
+From c419207b82cb1a931279afe9124744966dcf117e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 8 Jan 2022 23:46:54 -0800
+Subject: [PATCH 203/757] arch-x86: Filter out the NMI masking bit from the
+ CMOS offset.
+
+A (another) weird/terrible quirk of the architecture of the PC is that
+the the highest order bit of the value which selects a register to read
+from the CMOS NVRAM/RTC is stolen and repurposed to enable/disable NMIs
+since the 286, if the internet is to be believed.
+
+Fortunately We don't currently attempt to generate an NMI anywhere, and so
+this bit won't do anything in gem5 currently.
+
+Unfortunately if we treat this value as the real offset without masking
+off this bit, if software attempts to disable NMIs with it, it will
+trigger an out of bounds assert in the CMOS device.
+
+This change makes the CMOS device slightly smarter and has it maintain
+but ignore the NMI disabling bit.
+
+Change-Id: I8d7d0f1b0aadcca2060bf6a27931035859d66ca7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55244
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/cmos.cc | 5 +++--
+ src/dev/x86/cmos.hh | 8 +++++++-
+ 2 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/dev/x86/cmos.cc b/src/dev/x86/cmos.cc
+index 19fab68..d141922 100644
+--- a/src/dev/x86/cmos.cc
++++ b/src/dev/x86/cmos.cc
+@@ -56,7 +56,7 @@ X86ISA::Cmos::read(PacketPtr pkt)
+         pkt->setLE(address);
+         break;
+       case 0x1:
+-        pkt->setLE(readRegister(address));
++        pkt->setLE(readRegister(address.regNum));
+         break;
+       default:
+         panic("Read from undefined CMOS port.\n");
+@@ -75,7 +75,8 @@ X86ISA::Cmos::write(PacketPtr pkt)
+         address = pkt->getLE<uint8_t>();
+         break;
+       case 0x1:
+-        writeRegister(address, pkt->getLE<uint8_t>());
++        // Ignore the NMI mask bit since we never try to generate one anyway.
++        writeRegister(address.regNum, pkt->getLE<uint8_t>());
+         break;
+       default:
+         panic("Write to undefined CMOS port.\n");
+diff --git a/src/dev/x86/cmos.hh b/src/dev/x86/cmos.hh
+index 72937af..de64d5a 100644
+--- a/src/dev/x86/cmos.hh
++++ b/src/dev/x86/cmos.hh
+@@ -29,6 +29,7 @@
+ #ifndef __DEV_X86_CMOS_HH__
+ #define __DEV_X86_CMOS_HH__
+ 
++#include "base/bitunion.hh"
+ #include "dev/intpin.hh"
+ #include "dev/io_device.hh"
+ #include "dev/mc146818.hh"
+@@ -45,7 +46,12 @@ class Cmos : public BasicPioDevice
+   protected:
+     Tick latency;
+ 
+-    uint8_t address;
++    BitUnion8(CmosAddress)
++        Bitfield<6, 0> regNum;
++        Bitfield<7> nmiMask;
++    EndBitUnion(CmosAddress)
++
++    CmosAddress address;
+ 
+     static const int numRegs = 128;
+ 
+-- 
+1.8.3.1
+

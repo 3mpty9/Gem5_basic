@@ -1,0 +1,146 @@
+From b4ba4916dde485cd2fad2912f0f2bba6f0416cd4 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 28 Oct 2021 11:44:36 +0100
+Subject: [PATCH 260/757] cpu: Handle Request::NO_ACCESS flag in MinorCPU and
+ O3CPU
+
+The Request::NO_ACCESS flag instructs the cpu model to not issue
+the request to the memory port.
+
+While Atomic and Timing CPU models properly implement it [1], [2],
+
+* MinorCPU is not looking at the flag
+* O3CPU is looking at the flag only in case of a nested transaction
+start/commit
+
+This patch is extending NO_ACCESS support to all memory instructions.
+This is achieved by using the localAccess callback in the Request object.
+
+Handling of nested hardware transactions in the O3 LSQUnit is moved within
+the local accessor callback
+
+[1]: https://github.com/gem5/gem5/blob/v21.1.0.2/\
+    src/cpu/simple/timing.cc#L318
+[2]: https://github.com/gem5/gem5/blob/v21.1.0.2/\
+    src/cpu/simple/atomic.cc#L396
+
+Change-Id: Ifd5b388c53ead4fe358aa35d2197c12f1c5bb4f2
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56591
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: ZHENGRONG WANG <seanyukigeek@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/cpu/minor/lsq.cc   | 10 +++++++++-
+ src/cpu/o3/lsq.cc      | 17 +++++++++++++++++
+ src/cpu/o3/lsq_unit.cc | 32 --------------------------------
+ 3 files changed, 26 insertions(+), 33 deletions(-)
+
+diff --git a/src/cpu/minor/lsq.cc b/src/cpu/minor/lsq.cc
+index e4c000b..17ae290 100644
+--- a/src/cpu/minor/lsq.cc
++++ b/src/cpu/minor/lsq.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2013-2014,2017-2018,2020 ARM Limited
++ * Copyright (c) 2013-2014,2017-2018,2020-2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1651,6 +1651,14 @@ LSQ::pushRequest(MinorDynInstPtr inst, bool isLoad, uint8_t *data,
+         inst->pc->instAddr(), std::move(amo_op));
+     request->request->setByteEnable(byte_enable);
+ 
++    /* If the request is marked as NO_ACCESS, setup a local access
++     * doing nothing */
++    if (flags.isSet(Request::NO_ACCESS)) {
++        assert(!request->request->isLocalAccess());
++        request->request->setLocalAccessor(
++            [] (ThreadContext *tc, PacketPtr pkt) { return Cycles(1); });
++    }
++
+     requests.push(request);
+     inst->inLSQ = true;
+     request->startAddrTranslation();
+diff --git a/src/cpu/o3/lsq.cc b/src/cpu/o3/lsq.cc
+index 72ecc52..c932a93 100644
+--- a/src/cpu/o3/lsq.cc
++++ b/src/cpu/o3/lsq.cc
+@@ -1089,6 +1089,23 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
+                 _inst->pcState().instAddr(), _inst->contextId(),
+                 std::move(_amo_op));
+         req->setByteEnable(byte_enable);
++
++        /* If the request is marked as NO_ACCESS, setup a local access */
++        if (_flags.isSet(Request::NO_ACCESS)) {
++            req->setLocalAccessor(
++                [this, req](gem5::ThreadContext *tc, PacketPtr pkt) -> Cycles
++                {
++                    if ((req->isHTMStart() || req->isHTMCommit())) {
++                        auto& inst = this->instruction();
++                        assert(inst->inHtmTransactionalState());
++                        pkt->setHtmTransactional(
++                            inst->getHtmTransactionUid());
++                    }
++                    return Cycles(1);
++                }
++            );
++        }
++
+         _reqs.push_back(req);
+     }
+ }
+diff --git a/src/cpu/o3/lsq_unit.cc b/src/cpu/o3/lsq_unit.cc
+index 1541d2c..856cef3 100644
+--- a/src/cpu/o3/lsq_unit.cc
++++ b/src/cpu/o3/lsq_unit.cc
+@@ -1336,7 +1336,6 @@ LSQUnit::read(LSQRequest *request, int load_idx)
+ 
+     if (request->mainReq()->isLocalAccess()) {
+         assert(!load_inst->memData);
+-        assert(!load_inst->inHtmTransactionalState());
+         load_inst->memData = new uint8_t[MaxDataBytes];
+ 
+         gem5::ThreadContext *thread = cpu->tcBase(lsqID);
+@@ -1351,37 +1350,6 @@ LSQUnit::read(LSQRequest *request, int load_idx)
+         return NoFault;
+     }
+ 
+-    // hardware transactional memory
+-    if (request->mainReq()->isHTMStart() || request->mainReq()->isHTMCommit())
+-    {
+-        // don't want to send nested transactionStarts and
+-        // transactionStops outside of core, e.g. to Ruby
+-        if (request->mainReq()->getFlags().isSet(Request::NO_ACCESS)) {
+-            Cycles delay(0);
+-            PacketPtr data_pkt =
+-                new Packet(request->mainReq(), MemCmd::ReadReq);
+-
+-            // Allocate memory if this is the first time a load is issued.
+-            if (!load_inst->memData) {
+-                load_inst->memData =
+-                    new uint8_t[request->mainReq()->getSize()];
+-                // sanity checks espect zero in request's data
+-                memset(load_inst->memData, 0, request->mainReq()->getSize());
+-            }
+-
+-            data_pkt->dataStatic(load_inst->memData);
+-            if (load_inst->inHtmTransactionalState()) {
+-                data_pkt->setHtmTransactional(
+-                    load_inst->getHtmTransactionUid());
+-            }
+-            data_pkt->makeResponse();
+-
+-            WritebackEvent *wb = new WritebackEvent(load_inst, data_pkt, this);
+-            cpu->schedule(wb, cpu->clockEdge(delay));
+-            return NoFault;
+-        }
+-    }
+-
+     // Check the SQ for any previous stores that might lead to forwarding
+     auto store_it = load_inst->sqIt;
+     assert (store_it >= storeWBIt);
+-- 
+1.8.3.1
+

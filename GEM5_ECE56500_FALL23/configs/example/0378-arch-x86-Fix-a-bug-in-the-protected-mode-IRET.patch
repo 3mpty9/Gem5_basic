@@ -1,0 +1,33 @@
+From 5180ebc65aed3e1934c1bc8a2d76ffb4599148a9 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 23:58:06 -0800
+Subject: [PATCH 378/757] arch-x86: Fix a bug in the protected mode IRET.
+
+Fix the direction of the comparison which makes sure the new RIP will
+fit within the new CS limit.
+
+Change-Id: I3f3e66c185d0e1fbc430b0ae594d63cdd62b9dfd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55887
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../insts/general_purpose/control_transfer/interrupts_and_exceptions.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+index 525279c..60d0086 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+@@ -156,7 +156,7 @@ processCSDescriptor:
+     # appropriate/other RIP checks.
+     # if temp_RIP > CS.limit throw #GP(0)
+     rdlimit t6, cs, dataSize=8
+-    sub t0, t1, t6, flags=(ECF,)
++    sub t0, t6, t1, flags=(ECF,)
+     fault "std::make_shared<GeneralProtection>(0)", flags=(CECF,)
+ 
+     #(temp_CPL!=CPL)
+-- 
+1.8.3.1
+

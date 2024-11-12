@@ -1,0 +1,2911 @@
+From 9313294efe5a832ff1ba69436b36e6ce4c8457fe Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 9 Dec 2021 12:14:13 -0600
+Subject: [PATCH 027/757] misc: Remove AMD license addition
+
+Remove the line "For use for simulation and test purposes only" in files
+were AMD is the only copyright holder listed in the header. This happens
+to be the case for all files where this line exists, removing it
+completely from gem5.
+
+Change-Id: I623f266b002f564301b28774f49081099cfc60fd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53943
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/GPUTLBConfig.py                          | 2 --
+ configs/common/GPUTLBOptions.py                         | 2 --
+ configs/example/apu_se.py                               | 2 --
+ configs/example/gpufs/amd/AmdGPUOptions.py              | 2 --
+ configs/example/gpufs/runfs.py                          | 2 --
+ configs/example/gpufs/system/amdgpu.py                  | 2 --
+ configs/example/gpufs/system/system.py                  | 2 --
+ configs/example/hsaTopology.py                          | 2 --
+ configs/example/ruby_gpu_random_test.py                 | 2 --
+ configs/ruby/AMD_Base_Constructor.py                    | 2 --
+ configs/ruby/GPU_VIPER.py                               | 2 --
+ configs/ruby/MOESI_AMD_Base.py                          | 2 --
+ src/arch/amdgpu/common/SConscript                       | 2 --
+ src/arch/amdgpu/common/X86GPUTLB.py                     | 2 --
+ src/arch/amdgpu/common/tlb.cc                           | 2 --
+ src/arch/amdgpu/common/tlb.hh                           | 2 --
+ src/arch/amdgpu/common/tlb_coalescer.cc                 | 2 --
+ src/arch/amdgpu/common/tlb_coalescer.hh                 | 2 --
+ src/arch/amdgpu/gcn3/SConscript                         | 2 --
+ src/arch/amdgpu/gcn3/SConsopts                          | 2 --
+ src/arch/amdgpu/gcn3/decoder.cc                         | 2 --
+ src/arch/amdgpu/gcn3/gpu_decoder.hh                     | 2 --
+ src/arch/amdgpu/gcn3/gpu_isa.hh                         | 2 --
+ src/arch/amdgpu/gcn3/gpu_mem_helpers.hh                 | 2 --
+ src/arch/amdgpu/gcn3/gpu_registers.hh                   | 2 --
+ src/arch/amdgpu/gcn3/gpu_types.hh                       | 2 --
+ src/arch/amdgpu/gcn3/insts/gpu_static_inst.cc           | 2 --
+ src/arch/amdgpu/gcn3/insts/gpu_static_inst.hh           | 2 --
+ src/arch/amdgpu/gcn3/insts/inst_util.hh                 | 2 --
+ src/arch/amdgpu/gcn3/insts/instructions.cc              | 2 --
+ src/arch/amdgpu/gcn3/insts/instructions.hh              | 2 --
+ src/arch/amdgpu/gcn3/insts/op_encodings.cc              | 2 --
+ src/arch/amdgpu/gcn3/insts/op_encodings.hh              | 2 --
+ src/arch/amdgpu/gcn3/isa.cc                             | 2 --
+ src/arch/amdgpu/gcn3/operand.hh                         | 2 --
+ src/arch/amdgpu/gcn3/registers.cc                       | 2 --
+ src/arch/amdgpu/vega/SConscript                         | 2 --
+ src/arch/amdgpu/vega/SConsopts                          | 2 --
+ src/arch/amdgpu/vega/decoder.cc                         | 2 --
+ src/arch/amdgpu/vega/gpu_decoder.hh                     | 2 --
+ src/arch/amdgpu/vega/gpu_isa.hh                         | 2 --
+ src/arch/amdgpu/vega/gpu_mem_helpers.hh                 | 2 --
+ src/arch/amdgpu/vega/gpu_registers.hh                   | 2 --
+ src/arch/amdgpu/vega/gpu_types.hh                       | 2 --
+ src/arch/amdgpu/vega/insts/gpu_static_inst.cc           | 2 --
+ src/arch/amdgpu/vega/insts/gpu_static_inst.hh           | 2 --
+ src/arch/amdgpu/vega/insts/inst_util.hh                 | 2 --
+ src/arch/amdgpu/vega/insts/instructions.cc              | 2 --
+ src/arch/amdgpu/vega/insts/instructions.hh              | 2 --
+ src/arch/amdgpu/vega/insts/op_encodings.cc              | 2 --
+ src/arch/amdgpu/vega/insts/op_encodings.hh              | 2 --
+ src/arch/amdgpu/vega/isa.cc                             | 2 --
+ src/arch/amdgpu/vega/operand.hh                         | 2 --
+ src/arch/amdgpu/vega/registers.cc                       | 2 --
+ src/cpu/testers/gpu_ruby_test/CpuThread.py              | 2 --
+ src/cpu/testers/gpu_ruby_test/DmaThread.py              | 2 --
+ src/cpu/testers/gpu_ruby_test/GpuWavefront.py           | 2 --
+ src/cpu/testers/gpu_ruby_test/ProtocolTester.py         | 2 --
+ src/cpu/testers/gpu_ruby_test/README                    | 2 --
+ src/cpu/testers/gpu_ruby_test/SConscript                | 2 --
+ src/cpu/testers/gpu_ruby_test/TesterDma.py              | 2 --
+ src/cpu/testers/gpu_ruby_test/TesterThread.py           | 2 --
+ src/cpu/testers/gpu_ruby_test/address_manager.cc        | 2 --
+ src/cpu/testers/gpu_ruby_test/address_manager.hh        | 2 --
+ src/cpu/testers/gpu_ruby_test/cpu_thread.cc             | 2 --
+ src/cpu/testers/gpu_ruby_test/cpu_thread.hh             | 2 --
+ src/cpu/testers/gpu_ruby_test/dma_thread.cc             | 2 --
+ src/cpu/testers/gpu_ruby_test/dma_thread.hh             | 2 --
+ src/cpu/testers/gpu_ruby_test/episode.cc                | 2 --
+ src/cpu/testers/gpu_ruby_test/episode.hh                | 2 --
+ src/cpu/testers/gpu_ruby_test/gpu_wavefront.cc          | 2 --
+ src/cpu/testers/gpu_ruby_test/gpu_wavefront.hh          | 2 --
+ src/cpu/testers/gpu_ruby_test/protocol_tester.cc        | 2 --
+ src/cpu/testers/gpu_ruby_test/protocol_tester.hh        | 2 --
+ src/cpu/testers/gpu_ruby_test/tester_dma.hh             | 2 --
+ src/cpu/testers/gpu_ruby_test/tester_thread.cc          | 2 --
+ src/cpu/testers/gpu_ruby_test/tester_thread.hh          | 2 --
+ src/dev/amdgpu/AMDGPU.py                                | 2 --
+ src/dev/amdgpu/SConscript                               | 2 --
+ src/dev/amdgpu/amdgpu_device.cc                         | 2 --
+ src/dev/amdgpu/amdgpu_device.hh                         | 2 --
+ src/dev/amdgpu/mmio_reader.cc                           | 2 --
+ src/dev/amdgpu/mmio_reader.hh                           | 2 --
+ src/dev/dma_virt_device.cc                              | 2 --
+ src/dev/dma_virt_device.hh                              | 2 --
+ src/dev/hsa/HSADevice.py                                | 2 --
+ src/dev/hsa/HSADriver.py                                | 2 --
+ src/dev/hsa/SConscript                                  | 2 --
+ src/dev/hsa/hsa_packet.hh                               | 2 --
+ src/dev/hsa/hsa_packet_processor.cc                     | 2 --
+ src/dev/hsa/hsa_packet_processor.hh                     | 2 --
+ src/dev/hsa/hsa_queue.hh                                | 2 --
+ src/dev/hsa/hsa_signal.hh                               | 2 --
+ src/dev/hsa/hw_scheduler.cc                             | 2 --
+ src/dev/hsa/hw_scheduler.hh                             | 2 --
+ src/dev/hsa/kfd_event_defines.h                         | 2 --
+ src/gpu-compute/GPU.py                                  | 2 --
+ src/gpu-compute/GPUStaticInstFlags.py                   | 2 --
+ src/gpu-compute/LdsState.py                             | 2 --
+ src/gpu-compute/SConscript                              | 2 --
+ src/gpu-compute/comm.cc                                 | 2 --
+ src/gpu-compute/comm.hh                                 | 2 --
+ src/gpu-compute/compute_unit.cc                         | 2 --
+ src/gpu-compute/compute_unit.hh                         | 2 --
+ src/gpu-compute/dispatcher.cc                           | 2 --
+ src/gpu-compute/dispatcher.hh                           | 2 --
+ src/gpu-compute/dyn_pool_manager.cc                     | 2 --
+ src/gpu-compute/dyn_pool_manager.hh                     | 2 --
+ src/gpu-compute/exec_stage.cc                           | 2 --
+ src/gpu-compute/exec_stage.hh                           | 2 --
+ src/gpu-compute/fetch_stage.cc                          | 2 --
+ src/gpu-compute/fetch_stage.hh                          | 2 --
+ src/gpu-compute/fetch_unit.cc                           | 2 --
+ src/gpu-compute/fetch_unit.hh                           | 2 --
+ src/gpu-compute/global_memory_pipeline.cc               | 2 --
+ src/gpu-compute/global_memory_pipeline.hh               | 2 --
+ src/gpu-compute/gpu_command_processor.cc                | 2 --
+ src/gpu-compute/gpu_command_processor.hh                | 2 --
+ src/gpu-compute/gpu_compute_driver.cc                   | 2 --
+ src/gpu-compute/gpu_compute_driver.hh                   | 2 --
+ src/gpu-compute/gpu_dyn_inst.cc                         | 2 --
+ src/gpu-compute/gpu_dyn_inst.hh                         | 2 --
+ src/gpu-compute/gpu_exec_context.cc                     | 2 --
+ src/gpu-compute/gpu_exec_context.hh                     | 2 --
+ src/gpu-compute/gpu_static_inst.cc                      | 2 --
+ src/gpu-compute/gpu_static_inst.hh                      | 2 --
+ src/gpu-compute/hsa_queue_entry.hh                      | 2 --
+ src/gpu-compute/kernel_code.hh                          | 2 --
+ src/gpu-compute/lds_state.cc                            | 2 --
+ src/gpu-compute/lds_state.hh                            | 2 --
+ src/gpu-compute/local_memory_pipeline.cc                | 2 --
+ src/gpu-compute/local_memory_pipeline.hh                | 2 --
+ src/gpu-compute/misc.hh                                 | 2 --
+ src/gpu-compute/of_scheduling_policy.hh                 | 2 --
+ src/gpu-compute/operand_info.hh                         | 2 --
+ src/gpu-compute/pool_manager.cc                         | 2 --
+ src/gpu-compute/pool_manager.hh                         | 2 --
+ src/gpu-compute/register_file.cc                        | 2 --
+ src/gpu-compute/register_file.hh                        | 2 --
+ src/gpu-compute/register_manager.cc                     | 2 --
+ src/gpu-compute/register_manager.hh                     | 2 --
+ src/gpu-compute/register_manager_policy.hh              | 2 --
+ src/gpu-compute/rr_scheduling_policy.hh                 | 2 --
+ src/gpu-compute/scalar_memory_pipeline.cc               | 2 --
+ src/gpu-compute/scalar_memory_pipeline.hh               | 2 --
+ src/gpu-compute/scalar_register_file.cc                 | 2 --
+ src/gpu-compute/scalar_register_file.hh                 | 2 --
+ src/gpu-compute/schedule_stage.cc                       | 2 --
+ src/gpu-compute/schedule_stage.hh                       | 2 --
+ src/gpu-compute/scheduler.cc                            | 2 --
+ src/gpu-compute/scheduler.hh                            | 2 --
+ src/gpu-compute/scheduling_policy.hh                    | 2 --
+ src/gpu-compute/scoreboard_check_stage.cc               | 2 --
+ src/gpu-compute/scoreboard_check_stage.hh               | 2 --
+ src/gpu-compute/shader.cc                               | 2 --
+ src/gpu-compute/shader.hh                               | 2 --
+ src/gpu-compute/simple_pool_manager.cc                  | 2 --
+ src/gpu-compute/simple_pool_manager.hh                  | 2 --
+ src/gpu-compute/static_register_manager_policy.cc       | 2 --
+ src/gpu-compute/static_register_manager_policy.hh       | 2 --
+ src/gpu-compute/vector_register_file.cc                 | 2 --
+ src/gpu-compute/vector_register_file.hh                 | 2 --
+ src/gpu-compute/wavefront.cc                            | 2 --
+ src/gpu-compute/wavefront.hh                            | 2 --
+ src/mem/cache/replacement_policies/weighted_lru_rp.cc   | 2 --
+ src/mem/cache/replacement_policies/weighted_lru_rp.hh   | 2 --
+ src/mem/ruby/common/IntVec.cc                           | 2 --
+ src/mem/ruby/common/IntVec.hh                           | 2 --
+ src/mem/ruby/network/garnet/NetworkBridge.cc            | 2 --
+ src/mem/ruby/network/garnet/NetworkBridge.hh            | 2 --
+ src/mem/ruby/protocol/GPU_VIPER-SQC.sm                  | 2 --
+ src/mem/ruby/protocol/GPU_VIPER-TCC.sm                  | 2 --
+ src/mem/ruby/protocol/GPU_VIPER-TCP.sm                  | 2 --
+ src/mem/ruby/protocol/GPU_VIPER-msg.sm                  | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-CorePair.sm        | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-L3cache.sm         | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-Region-CorePair.sm | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-Region-dir.sm      | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-Region-msg.sm      | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-RegionBuffer.sm    | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-RegionDir.sm       | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-dir.sm             | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-msg.sm             | 2 --
+ src/mem/ruby/protocol/MOESI_AMD_Base-probeFilter.sm     | 2 --
+ src/mem/ruby/system/GPUCoalescer.cc                     | 2 --
+ src/mem/ruby/system/GPUCoalescer.hh                     | 2 --
+ src/mem/ruby/system/GPUCoalescer.py                     | 2 --
+ src/mem/ruby/system/VIPERCoalescer.cc                   | 2 --
+ src/mem/ruby/system/VIPERCoalescer.hh                   | 2 --
+ src/mem/ruby/system/VIPERCoalescer.py                   | 2 --
+ src/mem/slicc/ast/DeferEnqueueingStatementAST.py        | 2 --
+ src/mem/token_port.cc                                   | 2 --
+ src/mem/token_port.hh                                   | 2 --
+ src/sim/aux_vector.hh                                   | 2 --
+ src/sim/fd_array.cc                                     | 2 --
+ src/sim/fd_array.hh                                     | 2 --
+ src/sim/fd_entry.cc                                     | 2 --
+ src/sim/fd_entry.hh                                     | 2 --
+ src/sim/mem_pool.cc                                     | 2 --
+ src/sim/mem_pool.hh                                     | 2 --
+ tests/configs/gpu-randomtest-ruby.py                    | 5 -----
+ tests/configs/gpu-ruby.py                               | 5 -----
+ util/amdgpu/fs_files/collect_mmio_trace.sh              | 2 --
+ util/amdgpu/fs_files/dump_gpu_rom.sh                    | 2 --
+ util/maint/show_changes_by_file.py                      | 2 --
+ 205 files changed, 416 deletions(-)
+
+diff --git a/configs/common/GPUTLBConfig.py b/configs/common/GPUTLBConfig.py
+index 5173cbf..f6aaccf 100644
+--- a/configs/common/GPUTLBConfig.py
++++ b/configs/common/GPUTLBConfig.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/common/GPUTLBOptions.py b/configs/common/GPUTLBOptions.py
+index 79ff1e7..3a1f9ad 100644
+--- a/configs/common/GPUTLBOptions.py
++++ b/configs/common/GPUTLBOptions.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/apu_se.py b/configs/example/apu_se.py
+index 29ceddb..882d181 100644
+--- a/configs/example/apu_se.py
++++ b/configs/example/apu_se.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/gpufs/amd/AmdGPUOptions.py b/configs/example/gpufs/amd/AmdGPUOptions.py
+index 272c417..51e0108 100644
+--- a/configs/example/gpufs/amd/AmdGPUOptions.py
++++ b/configs/example/gpufs/amd/AmdGPUOptions.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/gpufs/runfs.py b/configs/example/gpufs/runfs.py
+index fc32a61..e5acf05 100644
+--- a/configs/example/gpufs/runfs.py
++++ b/configs/example/gpufs/runfs.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/gpufs/system/amdgpu.py b/configs/example/gpufs/system/amdgpu.py
+index b30892c..26e4809 100644
+--- a/configs/example/gpufs/system/amdgpu.py
++++ b/configs/example/gpufs/system/amdgpu.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 4ec3618..d06cd2c 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/hsaTopology.py b/configs/example/hsaTopology.py
+index 232464e..b11a8df 100644
+--- a/configs/example/hsaTopology.py
++++ b/configs/example/hsaTopology.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/example/ruby_gpu_random_test.py b/configs/example/ruby_gpu_random_test.py
+index 75aac2e..a5d9a49 100644
+--- a/configs/example/ruby_gpu_random_test.py
++++ b/configs/example/ruby_gpu_random_test.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2018-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/ruby/AMD_Base_Constructor.py b/configs/ruby/AMD_Base_Constructor.py
+index 7f4fb43..93907a3 100644
+--- a/configs/ruby/AMD_Base_Constructor.py
++++ b/configs/ruby/AMD_Base_Constructor.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/ruby/GPU_VIPER.py b/configs/ruby/GPU_VIPER.py
+index b8a4271..f8a7386 100644
+--- a/configs/ruby/GPU_VIPER.py
++++ b/configs/ruby/GPU_VIPER.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/configs/ruby/MOESI_AMD_Base.py b/configs/ruby/MOESI_AMD_Base.py
+index bd52eba..12b8771 100644
+--- a/configs/ruby/MOESI_AMD_Base.py
++++ b/configs/ruby/MOESI_AMD_Base.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/common/SConscript b/src/arch/amdgpu/common/SConscript
+index f6f9cb6..2e49e7a 100644
+--- a/src/arch/amdgpu/common/SConscript
++++ b/src/arch/amdgpu/common/SConscript
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/common/X86GPUTLB.py b/src/arch/amdgpu/common/X86GPUTLB.py
+index b5f3387..557ace6 100644
+--- a/src/arch/amdgpu/common/X86GPUTLB.py
++++ b/src/arch/amdgpu/common/X86GPUTLB.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/common/tlb.cc b/src/arch/amdgpu/common/tlb.cc
+index e108a0b..7bee4c3 100644
+--- a/src/arch/amdgpu/common/tlb.cc
++++ b/src/arch/amdgpu/common/tlb.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/common/tlb.hh b/src/arch/amdgpu/common/tlb.hh
+index 944c0ac..dec0d61 100644
+--- a/src/arch/amdgpu/common/tlb.hh
++++ b/src/arch/amdgpu/common/tlb.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/common/tlb_coalescer.cc b/src/arch/amdgpu/common/tlb_coalescer.cc
+index 507d0e2..367ce5c 100644
+--- a/src/arch/amdgpu/common/tlb_coalescer.cc
++++ b/src/arch/amdgpu/common/tlb_coalescer.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/common/tlb_coalescer.hh b/src/arch/amdgpu/common/tlb_coalescer.hh
+index 22f311c..6c940b1 100644
+--- a/src/arch/amdgpu/common/tlb_coalescer.hh
++++ b/src/arch/amdgpu/common/tlb_coalescer.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/SConscript b/src/arch/amdgpu/gcn3/SConscript
+index eb309c4..6b20648 100644
+--- a/src/arch/amdgpu/gcn3/SConscript
++++ b/src/arch/amdgpu/gcn3/SConscript
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/gcn3/SConsopts b/src/arch/amdgpu/gcn3/SConsopts
+index 3312e98..edccf60 100644
+--- a/src/arch/amdgpu/gcn3/SConsopts
++++ b/src/arch/amdgpu/gcn3/SConsopts
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2015, 2017 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/gcn3/decoder.cc b/src/arch/amdgpu/gcn3/decoder.cc
+index ec7ee4e..c0fcc3a 100644
+--- a/src/arch/amdgpu/gcn3/decoder.cc
++++ b/src/arch/amdgpu/gcn3/decoder.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/gpu_decoder.hh b/src/arch/amdgpu/gcn3/gpu_decoder.hh
+index 02a420b..1dadae6 100644
+--- a/src/arch/amdgpu/gcn3/gpu_decoder.hh
++++ b/src/arch/amdgpu/gcn3/gpu_decoder.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/gpu_isa.hh b/src/arch/amdgpu/gcn3/gpu_isa.hh
+index 26cbc5c..4d5aba4 100644
+--- a/src/arch/amdgpu/gcn3/gpu_isa.hh
++++ b/src/arch/amdgpu/gcn3/gpu_isa.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh b/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
+index 0a0b304..009bb7c 100644
+--- a/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
++++ b/src/arch/amdgpu/gcn3/gpu_mem_helpers.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/gpu_registers.hh b/src/arch/amdgpu/gcn3/gpu_registers.hh
+index e897d68..7f1307f 100644
+--- a/src/arch/amdgpu/gcn3/gpu_registers.hh
++++ b/src/arch/amdgpu/gcn3/gpu_registers.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/gpu_types.hh b/src/arch/amdgpu/gcn3/gpu_types.hh
+index 4c7e288..4cb862d 100644
+--- a/src/arch/amdgpu/gcn3/gpu_types.hh
++++ b/src/arch/amdgpu/gcn3/gpu_types.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/gpu_static_inst.cc b/src/arch/amdgpu/gcn3/insts/gpu_static_inst.cc
+index 2cedbe1..8e53108 100644
+--- a/src/arch/amdgpu/gcn3/insts/gpu_static_inst.cc
++++ b/src/arch/amdgpu/gcn3/insts/gpu_static_inst.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/gpu_static_inst.hh b/src/arch/amdgpu/gcn3/insts/gpu_static_inst.hh
+index 82f5714..aa742f2 100644
+--- a/src/arch/amdgpu/gcn3/insts/gpu_static_inst.hh
++++ b/src/arch/amdgpu/gcn3/insts/gpu_static_inst.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/inst_util.hh b/src/arch/amdgpu/gcn3/insts/inst_util.hh
+index dddbce4..dfade6a 100644
+--- a/src/arch/amdgpu/gcn3/insts/inst_util.hh
++++ b/src/arch/amdgpu/gcn3/insts/inst_util.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/instructions.cc b/src/arch/amdgpu/gcn3/insts/instructions.cc
+index bb15957..56a541c 100644
+--- a/src/arch/amdgpu/gcn3/insts/instructions.cc
++++ b/src/arch/amdgpu/gcn3/insts/instructions.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/instructions.hh b/src/arch/amdgpu/gcn3/insts/instructions.hh
+index f49182e..d1b7ccb 100644
+--- a/src/arch/amdgpu/gcn3/insts/instructions.hh
++++ b/src/arch/amdgpu/gcn3/insts/instructions.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/op_encodings.cc b/src/arch/amdgpu/gcn3/insts/op_encodings.cc
+index cf20a2e..41b4fee 100644
+--- a/src/arch/amdgpu/gcn3/insts/op_encodings.cc
++++ b/src/arch/amdgpu/gcn3/insts/op_encodings.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/insts/op_encodings.hh b/src/arch/amdgpu/gcn3/insts/op_encodings.hh
+index be96924..880ccc4 100644
+--- a/src/arch/amdgpu/gcn3/insts/op_encodings.hh
++++ b/src/arch/amdgpu/gcn3/insts/op_encodings.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/isa.cc b/src/arch/amdgpu/gcn3/isa.cc
+index 9349045..385a0f0 100644
+--- a/src/arch/amdgpu/gcn3/isa.cc
++++ b/src/arch/amdgpu/gcn3/isa.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/operand.hh b/src/arch/amdgpu/gcn3/operand.hh
+index e8e9321..6b51307 100644
+--- a/src/arch/amdgpu/gcn3/operand.hh
++++ b/src/arch/amdgpu/gcn3/operand.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/gcn3/registers.cc b/src/arch/amdgpu/gcn3/registers.cc
+index 7a06567..3329cf1 100644
+--- a/src/arch/amdgpu/gcn3/registers.cc
++++ b/src/arch/amdgpu/gcn3/registers.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/SConscript b/src/arch/amdgpu/vega/SConscript
+index 5e9e63a..a8bab57 100644
+--- a/src/arch/amdgpu/vega/SConscript
++++ b/src/arch/amdgpu/vega/SConscript
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/vega/SConsopts b/src/arch/amdgpu/vega/SConsopts
+index b2b6695..38b07a8 100644
+--- a/src/arch/amdgpu/vega/SConsopts
++++ b/src/arch/amdgpu/vega/SConsopts
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/arch/amdgpu/vega/decoder.cc b/src/arch/amdgpu/vega/decoder.cc
+index b7bd344..3344365 100644
+--- a/src/arch/amdgpu/vega/decoder.cc
++++ b/src/arch/amdgpu/vega/decoder.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/gpu_decoder.hh b/src/arch/amdgpu/vega/gpu_decoder.hh
+index 878dc8b..1ca2926 100644
+--- a/src/arch/amdgpu/vega/gpu_decoder.hh
++++ b/src/arch/amdgpu/vega/gpu_decoder.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/gpu_isa.hh b/src/arch/amdgpu/vega/gpu_isa.hh
+index 925503f..82dd8dd 100644
+--- a/src/arch/amdgpu/vega/gpu_isa.hh
++++ b/src/arch/amdgpu/vega/gpu_isa.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/gpu_mem_helpers.hh b/src/arch/amdgpu/vega/gpu_mem_helpers.hh
+index 3b2aa77..c60325d 100644
+--- a/src/arch/amdgpu/vega/gpu_mem_helpers.hh
++++ b/src/arch/amdgpu/vega/gpu_mem_helpers.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/gpu_registers.hh b/src/arch/amdgpu/vega/gpu_registers.hh
+index d744a90..63929d5 100644
+--- a/src/arch/amdgpu/vega/gpu_registers.hh
++++ b/src/arch/amdgpu/vega/gpu_registers.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/gpu_types.hh b/src/arch/amdgpu/vega/gpu_types.hh
+index e40230a..f95ab17 100644
+--- a/src/arch/amdgpu/vega/gpu_types.hh
++++ b/src/arch/amdgpu/vega/gpu_types.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/gpu_static_inst.cc b/src/arch/amdgpu/vega/insts/gpu_static_inst.cc
+index 35819f0..aba48a5 100644
+--- a/src/arch/amdgpu/vega/insts/gpu_static_inst.cc
++++ b/src/arch/amdgpu/vega/insts/gpu_static_inst.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/gpu_static_inst.hh b/src/arch/amdgpu/vega/insts/gpu_static_inst.hh
+index fa2a8e1..f5d3e73 100644
+--- a/src/arch/amdgpu/vega/insts/gpu_static_inst.hh
++++ b/src/arch/amdgpu/vega/insts/gpu_static_inst.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/inst_util.hh b/src/arch/amdgpu/vega/insts/inst_util.hh
+index 55176e5..01925f9 100644
+--- a/src/arch/amdgpu/vega/insts/inst_util.hh
++++ b/src/arch/amdgpu/vega/insts/inst_util.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index 28473d7..56ccc3d 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/instructions.hh b/src/arch/amdgpu/vega/insts/instructions.hh
+index 88c133c..95c66ba 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.hh
++++ b/src/arch/amdgpu/vega/insts/instructions.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.cc b/src/arch/amdgpu/vega/insts/op_encodings.cc
+index 585021d..40910e4 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.cc
++++ b/src/arch/amdgpu/vega/insts/op_encodings.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/insts/op_encodings.hh b/src/arch/amdgpu/vega/insts/op_encodings.hh
+index 50bb082..109e680 100644
+--- a/src/arch/amdgpu/vega/insts/op_encodings.hh
++++ b/src/arch/amdgpu/vega/insts/op_encodings.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/isa.cc b/src/arch/amdgpu/vega/isa.cc
+index 459a6e5..1a5d8d3 100644
+--- a/src/arch/amdgpu/vega/isa.cc
++++ b/src/arch/amdgpu/vega/isa.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/operand.hh b/src/arch/amdgpu/vega/operand.hh
+index e9e1fd0..d654297 100644
+--- a/src/arch/amdgpu/vega/operand.hh
++++ b/src/arch/amdgpu/vega/operand.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/arch/amdgpu/vega/registers.cc b/src/arch/amdgpu/vega/registers.cc
+index 6b75222..2145ee3 100644
+--- a/src/arch/amdgpu/vega/registers.cc
++++ b/src/arch/amdgpu/vega/registers.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/CpuThread.py b/src/cpu/testers/gpu_ruby_test/CpuThread.py
+index be64692..a9fa2ef 100644
+--- a/src/cpu/testers/gpu_ruby_test/CpuThread.py
++++ b/src/cpu/testers/gpu_ruby_test/CpuThread.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/DmaThread.py b/src/cpu/testers/gpu_ruby_test/DmaThread.py
+index 5f9165f..c5ab564 100644
+--- a/src/cpu/testers/gpu_ruby_test/DmaThread.py
++++ b/src/cpu/testers/gpu_ruby_test/DmaThread.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/GpuWavefront.py b/src/cpu/testers/gpu_ruby_test/GpuWavefront.py
+index b1dc45b..f71ed3c 100644
+--- a/src/cpu/testers/gpu_ruby_test/GpuWavefront.py
++++ b/src/cpu/testers/gpu_ruby_test/GpuWavefront.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/ProtocolTester.py b/src/cpu/testers/gpu_ruby_test/ProtocolTester.py
+index cf24aec..3a87337 100644
+--- a/src/cpu/testers/gpu_ruby_test/ProtocolTester.py
++++ b/src/cpu/testers/gpu_ruby_test/ProtocolTester.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/README b/src/cpu/testers/gpu_ruby_test/README
+index 390b503..73fd554 100644
+--- a/src/cpu/testers/gpu_ruby_test/README
++++ b/src/cpu/testers/gpu_ruby_test/README
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/SConscript b/src/cpu/testers/gpu_ruby_test/SConscript
+index a84e9f8..88215cc 100644
+--- a/src/cpu/testers/gpu_ruby_test/SConscript
++++ b/src/cpu/testers/gpu_ruby_test/SConscript
+@@ -2,8 +2,6 @@
+ # Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/TesterDma.py b/src/cpu/testers/gpu_ruby_test/TesterDma.py
+index 0b864ff..1555393 100644
+--- a/src/cpu/testers/gpu_ruby_test/TesterDma.py
++++ b/src/cpu/testers/gpu_ruby_test/TesterDma.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/TesterThread.py b/src/cpu/testers/gpu_ruby_test/TesterThread.py
+index eaa5cc4..c743dd5 100644
+--- a/src/cpu/testers/gpu_ruby_test/TesterThread.py
++++ b/src/cpu/testers/gpu_ruby_test/TesterThread.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/cpu/testers/gpu_ruby_test/address_manager.cc b/src/cpu/testers/gpu_ruby_test/address_manager.cc
+index 959f8a2..37f7420 100644
+--- a/src/cpu/testers/gpu_ruby_test/address_manager.cc
++++ b/src/cpu/testers/gpu_ruby_test/address_manager.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/address_manager.hh b/src/cpu/testers/gpu_ruby_test/address_manager.hh
+index 1527db4..3a76365 100644
+--- a/src/cpu/testers/gpu_ruby_test/address_manager.hh
++++ b/src/cpu/testers/gpu_ruby_test/address_manager.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/cpu_thread.cc b/src/cpu/testers/gpu_ruby_test/cpu_thread.cc
+index 2dce83a..c171d3a 100644
+--- a/src/cpu/testers/gpu_ruby_test/cpu_thread.cc
++++ b/src/cpu/testers/gpu_ruby_test/cpu_thread.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/cpu_thread.hh b/src/cpu/testers/gpu_ruby_test/cpu_thread.hh
+index 32c2020..fc639df 100644
+--- a/src/cpu/testers/gpu_ruby_test/cpu_thread.hh
++++ b/src/cpu/testers/gpu_ruby_test/cpu_thread.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/dma_thread.cc b/src/cpu/testers/gpu_ruby_test/dma_thread.cc
+index 0029ee3..1d6f46c 100644
+--- a/src/cpu/testers/gpu_ruby_test/dma_thread.cc
++++ b/src/cpu/testers/gpu_ruby_test/dma_thread.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/dma_thread.hh b/src/cpu/testers/gpu_ruby_test/dma_thread.hh
+index a80322b..f35ef7e 100644
+--- a/src/cpu/testers/gpu_ruby_test/dma_thread.hh
++++ b/src/cpu/testers/gpu_ruby_test/dma_thread.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/episode.cc b/src/cpu/testers/gpu_ruby_test/episode.cc
+index fb6c849..6822049b 100644
+--- a/src/cpu/testers/gpu_ruby_test/episode.cc
++++ b/src/cpu/testers/gpu_ruby_test/episode.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/episode.hh b/src/cpu/testers/gpu_ruby_test/episode.hh
+index 091329d..a597b3a 100644
+--- a/src/cpu/testers/gpu_ruby_test/episode.hh
++++ b/src/cpu/testers/gpu_ruby_test/episode.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/gpu_wavefront.cc b/src/cpu/testers/gpu_ruby_test/gpu_wavefront.cc
+index 35c30b1..ae4078e 100644
+--- a/src/cpu/testers/gpu_ruby_test/gpu_wavefront.cc
++++ b/src/cpu/testers/gpu_ruby_test/gpu_wavefront.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/gpu_wavefront.hh b/src/cpu/testers/gpu_ruby_test/gpu_wavefront.hh
+index 065eb69..153d977 100644
+--- a/src/cpu/testers/gpu_ruby_test/gpu_wavefront.hh
++++ b/src/cpu/testers/gpu_ruby_test/gpu_wavefront.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/protocol_tester.cc b/src/cpu/testers/gpu_ruby_test/protocol_tester.cc
+index 5cedd1f..f2fd7f9 100644
+--- a/src/cpu/testers/gpu_ruby_test/protocol_tester.cc
++++ b/src/cpu/testers/gpu_ruby_test/protocol_tester.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/protocol_tester.hh b/src/cpu/testers/gpu_ruby_test/protocol_tester.hh
+index 1d9b99f..758ece5 100644
+--- a/src/cpu/testers/gpu_ruby_test/protocol_tester.hh
++++ b/src/cpu/testers/gpu_ruby_test/protocol_tester.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/tester_dma.hh b/src/cpu/testers/gpu_ruby_test/tester_dma.hh
+index d4743ad..5b98be5 100644
+--- a/src/cpu/testers/gpu_ruby_test/tester_dma.hh
++++ b/src/cpu/testers/gpu_ruby_test/tester_dma.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/tester_thread.cc b/src/cpu/testers/gpu_ruby_test/tester_thread.cc
+index fec7718..2dfd54a 100644
+--- a/src/cpu/testers/gpu_ruby_test/tester_thread.cc
++++ b/src/cpu/testers/gpu_ruby_test/tester_thread.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/cpu/testers/gpu_ruby_test/tester_thread.hh b/src/cpu/testers/gpu_ruby_test/tester_thread.hh
+index 714a193..5612df9 100644
+--- a/src/cpu/testers/gpu_ruby_test/tester_thread.hh
++++ b/src/cpu/testers/gpu_ruby_test/tester_thread.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/amdgpu/AMDGPU.py b/src/dev/amdgpu/AMDGPU.py
+index f72f512..9ca9b3b 100644
+--- a/src/dev/amdgpu/AMDGPU.py
++++ b/src/dev/amdgpu/AMDGPU.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/dev/amdgpu/SConscript b/src/dev/amdgpu/SConscript
+index 605a0b7..87a560e 100644
+--- a/src/dev/amdgpu/SConscript
++++ b/src/dev/amdgpu/SConscript
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 94a5a6a..a4edef4 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/amdgpu/amdgpu_device.hh b/src/dev/amdgpu/amdgpu_device.hh
+index 6915d3d..b97d682 100644
+--- a/src/dev/amdgpu/amdgpu_device.hh
++++ b/src/dev/amdgpu/amdgpu_device.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/amdgpu/mmio_reader.cc b/src/dev/amdgpu/mmio_reader.cc
+index ddb860f..636330c 100644
+--- a/src/dev/amdgpu/mmio_reader.cc
++++ b/src/dev/amdgpu/mmio_reader.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/amdgpu/mmio_reader.hh b/src/dev/amdgpu/mmio_reader.hh
+index a057183..b22a872 100644
+--- a/src/dev/amdgpu/mmio_reader.hh
++++ b/src/dev/amdgpu/mmio_reader.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/dma_virt_device.cc b/src/dev/dma_virt_device.cc
+index b377a03..18fa4ec 100644
+--- a/src/dev/dma_virt_device.cc
++++ b/src/dev/dma_virt_device.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/dma_virt_device.hh b/src/dev/dma_virt_device.hh
+index e38d291..f49337c 100644
+--- a/src/dev/dma_virt_device.hh
++++ b/src/dev/dma_virt_device.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/HSADevice.py b/src/dev/hsa/HSADevice.py
+index 8a6e61d..00a3dd7 100644
+--- a/src/dev/hsa/HSADevice.py
++++ b/src/dev/hsa/HSADevice.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/dev/hsa/HSADriver.py b/src/dev/hsa/HSADriver.py
+index 4173dcf..021bd60 100644
+--- a/src/dev/hsa/HSADriver.py
++++ b/src/dev/hsa/HSADriver.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/dev/hsa/SConscript b/src/dev/hsa/SConscript
+index 14bdeac..c1d3ed4 100644
+--- a/src/dev/hsa/SConscript
++++ b/src/dev/hsa/SConscript
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2017 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/dev/hsa/hsa_packet.hh b/src/dev/hsa/hsa_packet.hh
+index d4874c3..8c7d694 100644
+--- a/src/dev/hsa/hsa_packet.hh
++++ b/src/dev/hsa/hsa_packet.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hsa_packet_processor.cc b/src/dev/hsa/hsa_packet_processor.cc
+index 44c0e87..91dd732 100644
+--- a/src/dev/hsa/hsa_packet_processor.cc
++++ b/src/dev/hsa/hsa_packet_processor.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hsa_packet_processor.hh b/src/dev/hsa/hsa_packet_processor.hh
+index 144fe42..29d6889 100644
+--- a/src/dev/hsa/hsa_packet_processor.hh
++++ b/src/dev/hsa/hsa_packet_processor.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hsa_queue.hh b/src/dev/hsa/hsa_queue.hh
+index 4aa1c3b..f62d7f9 100644
+--- a/src/dev/hsa/hsa_queue.hh
++++ b/src/dev/hsa/hsa_queue.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hsa_signal.hh b/src/dev/hsa/hsa_signal.hh
+index 725aca3..6acbcb7 100644
+--- a/src/dev/hsa/hsa_signal.hh
++++ b/src/dev/hsa/hsa_signal.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hw_scheduler.cc b/src/dev/hsa/hw_scheduler.cc
+index f42dede..bd02b30 100644
+--- a/src/dev/hsa/hw_scheduler.cc
++++ b/src/dev/hsa/hw_scheduler.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/hw_scheduler.hh b/src/dev/hsa/hw_scheduler.hh
+index 8c043ec..e7d1a61 100644
+--- a/src/dev/hsa/hw_scheduler.hh
++++ b/src/dev/hsa/hw_scheduler.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/dev/hsa/kfd_event_defines.h b/src/dev/hsa/kfd_event_defines.h
+index 020c174..9e83885 100644
+--- a/src/dev/hsa/kfd_event_defines.h
++++ b/src/dev/hsa/kfd_event_defines.h
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/GPU.py b/src/gpu-compute/GPU.py
+index f714cc0..99e7cd5 100644
+--- a/src/gpu-compute/GPU.py
++++ b/src/gpu-compute/GPU.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/gpu-compute/GPUStaticInstFlags.py b/src/gpu-compute/GPUStaticInstFlags.py
+index 6b1d107..75bd673 100644
+--- a/src/gpu-compute/GPUStaticInstFlags.py
++++ b/src/gpu-compute/GPUStaticInstFlags.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2016 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/gpu-compute/LdsState.py b/src/gpu-compute/LdsState.py
+index e3848a5..fb35d82 100644
+--- a/src/gpu-compute/LdsState.py
++++ b/src/gpu-compute/LdsState.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/gpu-compute/SConscript b/src/gpu-compute/SConscript
+index e7153fa..c6404bc 100644
+--- a/src/gpu-compute/SConscript
++++ b/src/gpu-compute/SConscript
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/gpu-compute/comm.cc b/src/gpu-compute/comm.cc
+index d6face2..a1eb3ae 100644
+--- a/src/gpu-compute/comm.cc
++++ b/src/gpu-compute/comm.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/comm.hh b/src/gpu-compute/comm.hh
+index d131fee..b43bbbc 100644
+--- a/src/gpu-compute/comm.hh
++++ b/src/gpu-compute/comm.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/compute_unit.cc b/src/gpu-compute/compute_unit.cc
+index 761d37b..0273ae9 100644
+--- a/src/gpu-compute/compute_unit.cc
++++ b/src/gpu-compute/compute_unit.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/compute_unit.hh b/src/gpu-compute/compute_unit.hh
+index 8beba70..10fd2f9 100644
+--- a/src/gpu-compute/compute_unit.hh
++++ b/src/gpu-compute/compute_unit.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/dispatcher.cc b/src/gpu-compute/dispatcher.cc
+index 6319da0..a76ba7c 100644
+--- a/src/gpu-compute/dispatcher.cc
++++ b/src/gpu-compute/dispatcher.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015,2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/dispatcher.hh b/src/gpu-compute/dispatcher.hh
+index a9a527b..7699cef 100644
+--- a/src/gpu-compute/dispatcher.hh
++++ b/src/gpu-compute/dispatcher.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015,2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/dyn_pool_manager.cc b/src/gpu-compute/dyn_pool_manager.cc
+index 22dfd9d..62a39a9 100644
+--- a/src/gpu-compute/dyn_pool_manager.cc
++++ b/src/gpu-compute/dyn_pool_manager.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/dyn_pool_manager.hh b/src/gpu-compute/dyn_pool_manager.hh
+index 623667f..c4b1c09 100644
+--- a/src/gpu-compute/dyn_pool_manager.hh
++++ b/src/gpu-compute/dyn_pool_manager.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/exec_stage.cc b/src/gpu-compute/exec_stage.cc
+index 730992c..bcba938 100644
+--- a/src/gpu-compute/exec_stage.cc
++++ b/src/gpu-compute/exec_stage.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/exec_stage.hh b/src/gpu-compute/exec_stage.hh
+index 71badb8..c71bdb1 100644
+--- a/src/gpu-compute/exec_stage.hh
++++ b/src/gpu-compute/exec_stage.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/fetch_stage.cc b/src/gpu-compute/fetch_stage.cc
+index 8ba9a85..15927b5 100644
+--- a/src/gpu-compute/fetch_stage.cc
++++ b/src/gpu-compute/fetch_stage.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/fetch_stage.hh b/src/gpu-compute/fetch_stage.hh
+index 86f778c..564df46 100644
+--- a/src/gpu-compute/fetch_stage.hh
++++ b/src/gpu-compute/fetch_stage.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/fetch_unit.cc b/src/gpu-compute/fetch_unit.cc
+index fed9cb5..a5a0370 100644
+--- a/src/gpu-compute/fetch_unit.cc
++++ b/src/gpu-compute/fetch_unit.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/fetch_unit.hh b/src/gpu-compute/fetch_unit.hh
+index 66e3343..6002665 100644
+--- a/src/gpu-compute/fetch_unit.hh
++++ b/src/gpu-compute/fetch_unit.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/global_memory_pipeline.cc b/src/gpu-compute/global_memory_pipeline.cc
+index 83d949f..f766f7e 100644
+--- a/src/gpu-compute/global_memory_pipeline.cc
++++ b/src/gpu-compute/global_memory_pipeline.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/global_memory_pipeline.hh b/src/gpu-compute/global_memory_pipeline.hh
+index 1a525c3..90215af 100644
+--- a/src/gpu-compute/global_memory_pipeline.hh
++++ b/src/gpu-compute/global_memory_pipeline.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_command_processor.cc b/src/gpu-compute/gpu_command_processor.cc
+index a444c9d..46a2004 100644
+--- a/src/gpu-compute/gpu_command_processor.cc
++++ b/src/gpu-compute/gpu_command_processor.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_command_processor.hh b/src/gpu-compute/gpu_command_processor.hh
+index c9084d1..332f2e0 100644
+--- a/src/gpu-compute/gpu_command_processor.hh
++++ b/src/gpu-compute/gpu_command_processor.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_compute_driver.cc b/src/gpu-compute/gpu_compute_driver.cc
+index 6101dbe..e908f4e 100644
+--- a/src/gpu-compute/gpu_compute_driver.cc
++++ b/src/gpu-compute/gpu_compute_driver.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_compute_driver.hh b/src/gpu-compute/gpu_compute_driver.hh
+index 6ce523e..868ad1c 100644
+--- a/src/gpu-compute/gpu_compute_driver.hh
++++ b/src/gpu-compute/gpu_compute_driver.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_dyn_inst.cc b/src/gpu-compute/gpu_dyn_inst.cc
+index 1b1fbe9..3cbb6f1 100644
+--- a/src/gpu-compute/gpu_dyn_inst.cc
++++ b/src/gpu-compute/gpu_dyn_inst.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_dyn_inst.hh b/src/gpu-compute/gpu_dyn_inst.hh
+index 1c6aa31..17c7ee6 100644
+--- a/src/gpu-compute/gpu_dyn_inst.hh
++++ b/src/gpu-compute/gpu_dyn_inst.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_exec_context.cc b/src/gpu-compute/gpu_exec_context.cc
+index 9f059c8..b1cab93 100644
+--- a/src/gpu-compute/gpu_exec_context.cc
++++ b/src/gpu-compute/gpu_exec_context.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_exec_context.hh b/src/gpu-compute/gpu_exec_context.hh
+index 372b701..50f29db 100644
+--- a/src/gpu-compute/gpu_exec_context.hh
++++ b/src/gpu-compute/gpu_exec_context.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_static_inst.cc b/src/gpu-compute/gpu_static_inst.cc
+index c66330c..063e87e 100644
+--- a/src/gpu-compute/gpu_static_inst.cc
++++ b/src/gpu-compute/gpu_static_inst.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/gpu_static_inst.hh b/src/gpu-compute/gpu_static_inst.hh
+index 8de6c89..b86a507 100644
+--- a/src/gpu-compute/gpu_static_inst.hh
++++ b/src/gpu-compute/gpu_static_inst.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/hsa_queue_entry.hh b/src/gpu-compute/hsa_queue_entry.hh
+index 4a22791..4261f2c 100644
+--- a/src/gpu-compute/hsa_queue_entry.hh
++++ b/src/gpu-compute/hsa_queue_entry.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2017-2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/kernel_code.hh b/src/gpu-compute/kernel_code.hh
+index 0e9bade..1879dee 100644
+--- a/src/gpu-compute/kernel_code.hh
++++ b/src/gpu-compute/kernel_code.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/lds_state.cc b/src/gpu-compute/lds_state.cc
+index 0c0b47e..42b5296 100644
+--- a/src/gpu-compute/lds_state.cc
++++ b/src/gpu-compute/lds_state.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/lds_state.hh b/src/gpu-compute/lds_state.hh
+index 65aec57..9dcaccb 100644
+--- a/src/gpu-compute/lds_state.hh
++++ b/src/gpu-compute/lds_state.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/local_memory_pipeline.cc b/src/gpu-compute/local_memory_pipeline.cc
+index c99be00..0149707 100644
+--- a/src/gpu-compute/local_memory_pipeline.cc
++++ b/src/gpu-compute/local_memory_pipeline.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/local_memory_pipeline.hh b/src/gpu-compute/local_memory_pipeline.hh
+index a4e3629..9ed733e 100644
+--- a/src/gpu-compute/local_memory_pipeline.hh
++++ b/src/gpu-compute/local_memory_pipeline.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/misc.hh b/src/gpu-compute/misc.hh
+index f45786d..88798da 100644
+--- a/src/gpu-compute/misc.hh
++++ b/src/gpu-compute/misc.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/of_scheduling_policy.hh b/src/gpu-compute/of_scheduling_policy.hh
+index cd60cd0..f912390 100644
+--- a/src/gpu-compute/of_scheduling_policy.hh
++++ b/src/gpu-compute/of_scheduling_policy.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/operand_info.hh b/src/gpu-compute/operand_info.hh
+index a0a4f6f..cdefdb9 100644
+--- a/src/gpu-compute/operand_info.hh
++++ b/src/gpu-compute/operand_info.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2019-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/pool_manager.cc b/src/gpu-compute/pool_manager.cc
+index a331cb5..f88ed1d 100644
+--- a/src/gpu-compute/pool_manager.cc
++++ b/src/gpu-compute/pool_manager.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/pool_manager.hh b/src/gpu-compute/pool_manager.hh
+index ffd59f7..03a7fe7 100644
+--- a/src/gpu-compute/pool_manager.hh
++++ b/src/gpu-compute/pool_manager.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/register_file.cc b/src/gpu-compute/register_file.cc
+index ba9d3e0..62510e4 100644
+--- a/src/gpu-compute/register_file.cc
++++ b/src/gpu-compute/register_file.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/register_file.hh b/src/gpu-compute/register_file.hh
+index 9fd4709..089516c 100644
+--- a/src/gpu-compute/register_file.hh
++++ b/src/gpu-compute/register_file.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/register_manager.cc b/src/gpu-compute/register_manager.cc
+index ffb0d00..419e0de 100644
+--- a/src/gpu-compute/register_manager.cc
++++ b/src/gpu-compute/register_manager.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016, 2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/register_manager.hh b/src/gpu-compute/register_manager.hh
+index fb97ff8..006e258 100644
+--- a/src/gpu-compute/register_manager.hh
++++ b/src/gpu-compute/register_manager.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016, 2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/register_manager_policy.hh b/src/gpu-compute/register_manager_policy.hh
+index 6895c99..a8eb06a 100644
+--- a/src/gpu-compute/register_manager_policy.hh
++++ b/src/gpu-compute/register_manager_policy.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/rr_scheduling_policy.hh b/src/gpu-compute/rr_scheduling_policy.hh
+index 00ba775..cebe1c0 100644
+--- a/src/gpu-compute/rr_scheduling_policy.hh
++++ b/src/gpu-compute/rr_scheduling_policy.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scalar_memory_pipeline.cc b/src/gpu-compute/scalar_memory_pipeline.cc
+index a79aed1..de24f94 100644
+--- a/src/gpu-compute/scalar_memory_pipeline.cc
++++ b/src/gpu-compute/scalar_memory_pipeline.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scalar_memory_pipeline.hh b/src/gpu-compute/scalar_memory_pipeline.hh
+index 8f0828b..5512c7c 100644
+--- a/src/gpu-compute/scalar_memory_pipeline.hh
++++ b/src/gpu-compute/scalar_memory_pipeline.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scalar_register_file.cc b/src/gpu-compute/scalar_register_file.cc
+index 3a00093..47337c5 100644
+--- a/src/gpu-compute/scalar_register_file.cc
++++ b/src/gpu-compute/scalar_register_file.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scalar_register_file.hh b/src/gpu-compute/scalar_register_file.hh
+index fa992fd..fa62436 100644
+--- a/src/gpu-compute/scalar_register_file.hh
++++ b/src/gpu-compute/scalar_register_file.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/schedule_stage.cc b/src/gpu-compute/schedule_stage.cc
+index 633e0c0..4c4028b 100644
+--- a/src/gpu-compute/schedule_stage.cc
++++ b/src/gpu-compute/schedule_stage.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/schedule_stage.hh b/src/gpu-compute/schedule_stage.hh
+index f6cd1bc..8eed002 100644
+--- a/src/gpu-compute/schedule_stage.hh
++++ b/src/gpu-compute/schedule_stage.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scheduler.cc b/src/gpu-compute/scheduler.cc
+index 4f47386..e19f924 100644
+--- a/src/gpu-compute/scheduler.cc
++++ b/src/gpu-compute/scheduler.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scheduler.hh b/src/gpu-compute/scheduler.hh
+index abb5e10..895e976 100644
+--- a/src/gpu-compute/scheduler.hh
++++ b/src/gpu-compute/scheduler.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scheduling_policy.hh b/src/gpu-compute/scheduling_policy.hh
+index 6566c57..9e45f39 100644
+--- a/src/gpu-compute/scheduling_policy.hh
++++ b/src/gpu-compute/scheduling_policy.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scoreboard_check_stage.cc b/src/gpu-compute/scoreboard_check_stage.cc
+index 790d324..fa16e54 100644
+--- a/src/gpu-compute/scoreboard_check_stage.cc
++++ b/src/gpu-compute/scoreboard_check_stage.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/scoreboard_check_stage.hh b/src/gpu-compute/scoreboard_check_stage.hh
+index bed7a7a..af90e08 100644
+--- a/src/gpu-compute/scoreboard_check_stage.hh
++++ b/src/gpu-compute/scoreboard_check_stage.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2014-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/shader.cc b/src/gpu-compute/shader.cc
+index 4d71ca0..5a8c939 100644
+--- a/src/gpu-compute/shader.cc
++++ b/src/gpu-compute/shader.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/shader.hh b/src/gpu-compute/shader.hh
+index 6108bdf..0ea8741 100644
+--- a/src/gpu-compute/shader.hh
++++ b/src/gpu-compute/shader.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/simple_pool_manager.cc b/src/gpu-compute/simple_pool_manager.cc
+index 2e3a0ce..d404210 100644
+--- a/src/gpu-compute/simple_pool_manager.cc
++++ b/src/gpu-compute/simple_pool_manager.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/simple_pool_manager.hh b/src/gpu-compute/simple_pool_manager.hh
+index 5241540..ae39fc3 100644
+--- a/src/gpu-compute/simple_pool_manager.hh
++++ b/src/gpu-compute/simple_pool_manager.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/static_register_manager_policy.cc b/src/gpu-compute/static_register_manager_policy.cc
+index cc32abe..7f221e1 100644
+--- a/src/gpu-compute/static_register_manager_policy.cc
++++ b/src/gpu-compute/static_register_manager_policy.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/static_register_manager_policy.hh b/src/gpu-compute/static_register_manager_policy.hh
+index a2e9ab8..7cb1ea4 100644
+--- a/src/gpu-compute/static_register_manager_policy.hh
++++ b/src/gpu-compute/static_register_manager_policy.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/vector_register_file.cc b/src/gpu-compute/vector_register_file.cc
+index 2355643..9ab1cfd 100644
+--- a/src/gpu-compute/vector_register_file.cc
++++ b/src/gpu-compute/vector_register_file.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/vector_register_file.hh b/src/gpu-compute/vector_register_file.hh
+index 4743a0f..25a2ff6 100644
+--- a/src/gpu-compute/vector_register_file.hh
++++ b/src/gpu-compute/vector_register_file.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/wavefront.cc b/src/gpu-compute/wavefront.cc
+index cf7b91a..8e1a066 100644
+--- a/src/gpu-compute/wavefront.cc
++++ b/src/gpu-compute/wavefront.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/gpu-compute/wavefront.hh b/src/gpu-compute/wavefront.hh
+index 2cc8bd5..43ac3e9 100644
+--- a/src/gpu-compute/wavefront.hh
++++ b/src/gpu-compute/wavefront.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2017 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/cache/replacement_policies/weighted_lru_rp.cc b/src/mem/cache/replacement_policies/weighted_lru_rp.cc
+index 8b10a98..ed6a7f6 100644
+--- a/src/mem/cache/replacement_policies/weighted_lru_rp.cc
++++ b/src/mem/cache/replacement_policies/weighted_lru_rp.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/cache/replacement_policies/weighted_lru_rp.hh b/src/mem/cache/replacement_policies/weighted_lru_rp.hh
+index 613592a..bc0e573 100644
+--- a/src/mem/cache/replacement_policies/weighted_lru_rp.hh
++++ b/src/mem/cache/replacement_policies/weighted_lru_rp.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/common/IntVec.cc b/src/mem/ruby/common/IntVec.cc
+index f599f32..ff93885 100644
+--- a/src/mem/ruby/common/IntVec.cc
++++ b/src/mem/ruby/common/IntVec.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/common/IntVec.hh b/src/mem/ruby/common/IntVec.hh
+index e92dc9b..09946a5 100644
+--- a/src/mem/ruby/common/IntVec.hh
++++ b/src/mem/ruby/common/IntVec.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/network/garnet/NetworkBridge.cc b/src/mem/ruby/network/garnet/NetworkBridge.cc
+index 98a05fd..9412b5b 100644
+--- a/src/mem/ruby/network/garnet/NetworkBridge.cc
++++ b/src/mem/ruby/network/garnet/NetworkBridge.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/network/garnet/NetworkBridge.hh b/src/mem/ruby/network/garnet/NetworkBridge.hh
+index 206c662..1287ab1 100644
+--- a/src/mem/ruby/network/garnet/NetworkBridge.hh
++++ b/src/mem/ruby/network/garnet/NetworkBridge.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/GPU_VIPER-SQC.sm b/src/mem/ruby/protocol/GPU_VIPER-SQC.sm
+index 84e86dc..dea347a 100644
+--- a/src/mem/ruby/protocol/GPU_VIPER-SQC.sm
++++ b/src/mem/ruby/protocol/GPU_VIPER-SQC.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2012-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/GPU_VIPER-TCC.sm b/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
+index dc6cf03..0d92565 100644
+--- a/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
++++ b/src/mem/ruby/protocol/GPU_VIPER-TCC.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/GPU_VIPER-TCP.sm b/src/mem/ruby/protocol/GPU_VIPER-TCP.sm
+index a231da4..2e8378b 100644
+--- a/src/mem/ruby/protocol/GPU_VIPER-TCP.sm
++++ b/src/mem/ruby/protocol/GPU_VIPER-TCP.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/GPU_VIPER-msg.sm b/src/mem/ruby/protocol/GPU_VIPER-msg.sm
+index 6011748..9074a86 100644
+--- a/src/mem/ruby/protocol/GPU_VIPER-msg.sm
++++ b/src/mem/ruby/protocol/GPU_VIPER-msg.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-CorePair.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-CorePair.sm
+index 11b53bc..12270cd 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-CorePair.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-CorePair.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-L3cache.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-L3cache.sm
+index daf500c..469bb9a 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-L3cache.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-L3cache.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-CorePair.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-CorePair.sm
+index d4c6bbc..a5e75e9 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-CorePair.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-CorePair.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-dir.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-dir.sm
+index 3218574..f16c257 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-dir.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-dir.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-msg.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-msg.sm
+index ec70f33..52c2be8 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-Region-msg.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-Region-msg.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-RegionBuffer.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-RegionBuffer.sm
+index 4a231f6..3eeece2 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-RegionBuffer.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-RegionBuffer.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-RegionDir.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-RegionDir.sm
+index 785d045..1b03286 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-RegionDir.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-RegionDir.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2012-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-dir.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-dir.sm
+index d176581..e44d8db 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-dir.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-dir.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-msg.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-msg.sm
+index c0bd4fe..46bab43 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-msg.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-msg.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2010-2015, 2018 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/protocol/MOESI_AMD_Base-probeFilter.sm b/src/mem/ruby/protocol/MOESI_AMD_Base-probeFilter.sm
+index 06c2934..8608608 100644
+--- a/src/mem/ruby/protocol/MOESI_AMD_Base-probeFilter.sm
++++ b/src/mem/ruby/protocol/MOESI_AMD_Base-probeFilter.sm
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/system/GPUCoalescer.cc b/src/mem/ruby/system/GPUCoalescer.cc
+index b842b55..a0808fa 100644
+--- a/src/mem/ruby/system/GPUCoalescer.cc
++++ b/src/mem/ruby/system/GPUCoalescer.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/system/GPUCoalescer.hh b/src/mem/ruby/system/GPUCoalescer.hh
+index 51239cb..1120947 100644
+--- a/src/mem/ruby/system/GPUCoalescer.hh
++++ b/src/mem/ruby/system/GPUCoalescer.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/system/GPUCoalescer.py b/src/mem/ruby/system/GPUCoalescer.py
+index 1a70028..c3c44ef 100644
+--- a/src/mem/ruby/system/GPUCoalescer.py
++++ b/src/mem/ruby/system/GPUCoalescer.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/mem/ruby/system/VIPERCoalescer.cc b/src/mem/ruby/system/VIPERCoalescer.cc
+index e4f9f86..ea95129 100644
+--- a/src/mem/ruby/system/VIPERCoalescer.cc
++++ b/src/mem/ruby/system/VIPERCoalescer.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/system/VIPERCoalescer.hh b/src/mem/ruby/system/VIPERCoalescer.hh
+index bfe99ca..c7e21e9 100644
+--- a/src/mem/ruby/system/VIPERCoalescer.hh
++++ b/src/mem/ruby/system/VIPERCoalescer.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2013-2015 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/ruby/system/VIPERCoalescer.py b/src/mem/ruby/system/VIPERCoalescer.py
+index 7e11ae2..311ce94 100644
+--- a/src/mem/ruby/system/VIPERCoalescer.py
++++ b/src/mem/ruby/system/VIPERCoalescer.py
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2015 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/mem/slicc/ast/DeferEnqueueingStatementAST.py b/src/mem/slicc/ast/DeferEnqueueingStatementAST.py
+index 5bd7123..b713105 100644
+--- a/src/mem/slicc/ast/DeferEnqueueingStatementAST.py
++++ b/src/mem/slicc/ast/DeferEnqueueingStatementAST.py
+@@ -2,8 +2,6 @@
+ # Copyright (c) 2017 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/src/mem/token_port.cc b/src/mem/token_port.cc
+index 46032f2..1919ddf 100644
+--- a/src/mem/token_port.cc
++++ b/src/mem/token_port.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/mem/token_port.hh b/src/mem/token_port.hh
+index 53e32a7..8a2d15d 100644
+--- a/src/mem/token_port.hh
++++ b/src/mem/token_port.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016-2020 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/aux_vector.hh b/src/sim/aux_vector.hh
+index bc100c5..3cf4f1e 100644
+--- a/src/sim/aux_vector.hh
++++ b/src/sim/aux_vector.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/fd_array.cc b/src/sim/fd_array.cc
+index c371c4d..5ca9370 100644
+--- a/src/sim/fd_array.cc
++++ b/src/sim/fd_array.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/fd_array.hh b/src/sim/fd_array.hh
+index 492865b..d6d1b3c 100644
+--- a/src/sim/fd_array.hh
++++ b/src/sim/fd_array.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/fd_entry.cc b/src/sim/fd_entry.cc
+index a716002..bc54808 100644
+--- a/src/sim/fd_entry.cc
++++ b/src/sim/fd_entry.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/fd_entry.hh b/src/sim/fd_entry.hh
+index 5301ee1..1efd02b 100644
+--- a/src/sim/fd_entry.hh
++++ b/src/sim/fd_entry.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2016 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/mem_pool.cc b/src/sim/mem_pool.cc
+index bd56df8..20b6eda 100644
+--- a/src/sim/mem_pool.cc
++++ b/src/sim/mem_pool.cc
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/src/sim/mem_pool.hh b/src/sim/mem_pool.hh
+index a2a00d5..f35fdbc 100644
+--- a/src/sim/mem_pool.hh
++++ b/src/sim/mem_pool.hh
+@@ -2,8 +2,6 @@
+  * Copyright (c) 2011-2021 Advanced Micro Devices, Inc.
+  * All rights reserved.
+  *
+- * For use for simulation and test purposes only
+- *
+  * Redistribution and use in source and binary forms, with or without
+  * modification, are permitted provided that the following conditions are met:
+  *
+diff --git a/tests/configs/gpu-randomtest-ruby.py b/tests/configs/gpu-randomtest-ruby.py
+index 03d31fe..ff4071c 100644
+--- a/tests/configs/gpu-randomtest-ruby.py
++++ b/tests/configs/gpu-randomtest-ruby.py
+@@ -2,8 +2,6 @@
+ #  Copyright (c) 2010-2015 Advanced Micro Devices, Inc.
+ #  All rights reserved.
+ #
+-#  For use for simulation and test purposes only
+-#
+ #  Redistribution and use in source and binary forms, with or without
+ #  modification, are permitted provided that the following conditions are met:
+ #
+@@ -29,9 +27,6 @@
+ #  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ #  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ #  POSSIBILITY OF SUCH DAMAGE.
+-#
+-#  Author: Brad Beckmann
+-#
+ 
+ import m5
+ from m5.objects import *
+diff --git a/tests/configs/gpu-ruby.py b/tests/configs/gpu-ruby.py
+index 2f57779..391b98d 100644
+--- a/tests/configs/gpu-ruby.py
++++ b/tests/configs/gpu-ruby.py
+@@ -2,8 +2,6 @@
+ #  Copyright (c) 2015 Advanced Micro Devices, Inc.
+ #  All rights reserved.
+ #
+-#  For use for simulation and test purposes only
+-#
+ #  Redistribution and use in source and binary forms, with or without
+ #  modification, are permitted provided that the following conditions are met:
+ #
+@@ -29,9 +27,6 @@
+ #  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ #  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ #  POSSIBILITY OF SUCH DAMAGE.
+-#
+-#  Author: Brad Beckmann
+-#
+ 
+ import m5
+ from m5.objects import *
+diff --git a/util/amdgpu/fs_files/collect_mmio_trace.sh b/util/amdgpu/fs_files/collect_mmio_trace.sh
+index 7dbaade..17bd239 100755
+--- a/util/amdgpu/fs_files/collect_mmio_trace.sh
++++ b/util/amdgpu/fs_files/collect_mmio_trace.sh
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/util/amdgpu/fs_files/dump_gpu_rom.sh b/util/amdgpu/fs_files/dump_gpu_rom.sh
+index fd34cf0..3735e78 100755
+--- a/util/amdgpu/fs_files/dump_gpu_rom.sh
++++ b/util/amdgpu/fs_files/dump_gpu_rom.sh
+@@ -1,8 +1,6 @@
+ # Copyright (c) 2021 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+diff --git a/util/maint/show_changes_by_file.py b/util/maint/show_changes_by_file.py
+index 298021f..3c08b21 100755
+--- a/util/maint/show_changes_by_file.py
++++ b/util/maint/show_changes_by_file.py
+@@ -3,8 +3,6 @@
+ # Copyright (c) 2018 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+-# For use for simulation and test purposes only
+-#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are met:
+ #
+-- 
+1.8.3.1
+

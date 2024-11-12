@@ -1,0 +1,38 @@
+From c2969401031eab42f2ca2d6e1a26006f18d9aa4c Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 31 Mar 2022 12:08:18 -0700
+Subject: [PATCH 536/757] stdlib: Fixing resources.json caching for multi-user
+ envs
+
+The downloader briefly caches the resources.json file in "/tmp". This
+works fine if the system only has one user, but in a system supporting
+many users, where "/tmp" is shared, there were permission issues when a
+user tried to access a resources.json cache from another user. To
+resolve this the uid of the user is appended to the filename.
+
+Change-Id: Iba8ab12cd7054c2f5636e444ac0f1f8f73fedc89
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58489
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/resources/downloader.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/python/gem5/resources/downloader.py b/src/python/gem5/resources/downloader.py
+index 828ebc8..e18c31c 100644
+--- a/src/python/gem5/resources/downloader.py
++++ b/src/python/gem5/resources/downloader.py
+@@ -80,7 +80,8 @@ def _get_resources_json_at_url(url: str, use_caching: bool = True) -> Dict:
+ 
+     file_path = os.path.join(
+         gettempdir(),
+-        f"gem5-resources-{hashlib.md5(url.encode()).hexdigest()}.base64",
++        f"gem5-resources-{hashlib.md5(url.encode()).hexdigest()}"
++        f"-{str(os.getuid())}.base64",
+     )
+ 
+     # We apply a lock on the resources file for when it's downloaded, or
+-- 
+1.8.3.1
+

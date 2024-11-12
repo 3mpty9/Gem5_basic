@@ -1,0 +1,105 @@
+From 97d5120982ff76d6e4312026605d35d82dd7722b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 25 Apr 2021 04:47:59 -0700
+Subject: [PATCH 199/757] cpu,arch-arm: Track register size in RegClassInfo.
+
+By default, registers are the size of RegVal, the type often used to
+store them. For some types of registers, like vector or vector predicate
+registers, the size of each individual register is larger, and can't fit
+in a primitive type.
+
+To help facilitate storing even these outliers in a generalized way,
+this change adds two fields to RegClassInfo to track the size of
+individual registers. One tracks the raw size of the registers
+themselves, and the other tracks the minimal shift necessary to find the
+offset of a register in a contiguous(ish) array of bytes. By forcing
+each register to be aligned to a power of two boundary, we avoid having
+to do a multiplication to find their address even if the registers are
+oddly sized. We can instead do a shift with a precomputed shift amount
+which should be faster.
+
+Change-Id: I035f1b4cb00ece4e8306d7953ea358af75a0d1de
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49104
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.cc  |  4 ++--
+ src/cpu/reg_class.hh | 21 +++++++++++++++------
+ 2 files changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index 5c8c743..3210351 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -88,10 +88,10 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+ {
+     _regClasses.emplace_back(NUM_INTREGS, INTREG_ZERO);
+     _regClasses.emplace_back(0);
+-    _regClasses.emplace_back(NumVecRegs);
++    _regClasses.emplace_back(NumVecRegs, -1, sizeof(VecRegContainer));
+     _regClasses.emplace_back(NumVecRegs * NumVecElemPerVecReg,
+             vecRegElemClassOps);
+-    _regClasses.emplace_back(NumVecPredRegs);
++    _regClasses.emplace_back(NumVecPredRegs, -1, sizeof(VecPredRegContainer));
+     _regClasses.emplace_back(NUM_CCREGS);
+     _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps);
+ 
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index ab3e8f9..5664bc3 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -41,12 +41,11 @@
+ #ifndef __CPU__REG_CLASS_HH__
+ #define __CPU__REG_CLASS_HH__
+ 
+-#include <cassert>
+ #include <cstddef>
+ #include <string>
+ 
++#include "base/intmath.hh"
+ #include "base/types.hh"
+-#include "config/the_isa.hh"
+ 
+ namespace gem5
+ {
+@@ -97,22 +96,32 @@ class RegClass
+   private:
+     size_t _numRegs;
+     const RegIndex _zeroReg;
++    size_t _regBytes;
++    // This is how much to shift an index by to get an offset of a register in
++    // a register file from the register index, which would otherwise need to
++    // be calculated with a multiply.
++    size_t _regShift;
+ 
+     static inline DefaultRegClassOps defaultOps;
+     RegClassOps *_ops = &defaultOps;
+ 
+   public:
+-    RegClass(size_t num_regs, RegIndex new_zero=-1) :
+-        _numRegs(num_regs), _zeroReg(new_zero)
++    RegClass(size_t num_regs, RegIndex new_zero=-1,
++            size_t reg_bytes=sizeof(RegVal)) :
++        _numRegs(num_regs), _zeroReg(new_zero), _regBytes(reg_bytes),
++        _regShift(ceilLog2(reg_bytes))
+     {}
+-    RegClass(size_t num_regs, RegClassOps &new_ops, RegIndex new_zero=-1) :
+-        RegClass(num_regs, new_zero)
++    RegClass(size_t num_regs, RegClassOps &new_ops, RegIndex new_zero=-1,
++            size_t reg_bytes=sizeof(RegVal)) :
++        RegClass(num_regs, new_zero, reg_bytes)
+     {
+         _ops = &new_ops;
+     }
+ 
+     size_t numRegs() const { return _numRegs; }
+     RegIndex zeroReg() const { return _zeroReg; }
++    size_t regBytes() const { return _regBytes; }
++    size_t regShift() const { return _regShift; }
+ 
+     std::string regName(const RegId &id) const { return _ops->regName(id); }
+ };
+-- 
+1.8.3.1
+

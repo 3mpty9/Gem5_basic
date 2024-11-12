@@ -1,0 +1,139 @@
+From 8452e7bf1931003235bda4e84ebd7f32d8c2456e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 10 Dec 2021 22:51:28 -0800
+Subject: [PATCH 028/757] arch,sim-se: Update the PC before emulating a system
+ call.
+
+For most system calls, it doesn't matter if the PC is advanced to the
+instruction after the system call instruction before or after the system
+call itself is invoked, because the system call itself doesn't interact
+with it.
+
+For some system calls however, specifically "clone" and "execve",
+advancing the PC *after* the system call complicates things, because it
+means the system call needs to set the PC to something that will equal
+the desired value only *after* it's advanced.
+
+By setting the PC *before* the system call, the system call can set the
+PC to whatever it needs to. This means the new cloned context doesn't
+need to advance the PC because it's already advanced, and execve doesn't
+need to set NPC, it can leave the PC set to the correct value from the
+entry point set during Process initialization.
+
+Change-Id: I830607c2e9adcc22e738178fd3663417512e2e56
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53983
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Kyle Roarty <kyleroarty1716@gmail.com>
+---
+ src/arch/arm/faults.cc            | 8 ++++----
+ src/arch/riscv/faults.cc          | 5 +++--
+ src/arch/x86/linux/se_workload.cc | 2 +-
+ src/sim/faults.cc                 | 3 ++-
+ src/sim/syscall_emul.hh           | 6 ------
+ 5 files changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/src/arch/arm/faults.cc b/src/arch/arm/faults.cc
+index e340d07..ba5bcc9 100644
+--- a/src/arch/arm/faults.cc
++++ b/src/arch/arm/faults.cc
+@@ -881,15 +881,15 @@ SupervisorCall::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+         return;
+     }
+ 
+-    // As of now, there isn't a 32 bit thumb version of this instruction.
+-    assert(!machInst.bigThumb);
+-    tc->getSystemPtr()->workload->syscall(tc);
+-
+     // Advance the PC since that won't happen automatically.
+     PCState pc = tc->pcState().as<PCState>();
+     assert(inst);
+     inst->advancePC(pc);
+     tc->pcState(pc);
++
++    // As of now, there isn't a 32 bit thumb version of this instruction.
++    assert(!machInst.bigThumb);
++    tc->getSystemPtr()->workload->syscall(tc);
+ }
+ 
+ bool
+diff --git a/src/arch/riscv/faults.cc b/src/arch/riscv/faults.cc
+index 129e767..eea42fe 100644
+--- a/src/arch/riscv/faults.cc
++++ b/src/arch/riscv/faults.cc
+@@ -157,11 +157,12 @@ RiscvFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+         if (isInterrupt() && bits(tc->readMiscReg(tvec), 1, 0) == 1)
+             addr += 4 * _code;
+         pc_state.set(addr);
++        tc->pcState(pc_state);
+     } else {
+-        invokeSE(tc, inst);
+         inst->advancePC(pc_state);
++        tc->pcState(pc_state);
++        invokeSE(tc, inst);
+     }
+-    tc->pcState(pc_state);
+ }
+ 
+ void
+diff --git a/src/arch/x86/linux/se_workload.cc b/src/arch/x86/linux/se_workload.cc
+index f5fa519..d280c7c 100644
+--- a/src/arch/x86/linux/se_workload.cc
++++ b/src/arch/x86/linux/se_workload.cc
+@@ -120,7 +120,7 @@ EmuLinux::syscall(ThreadContext *tc)
+         Addr eip = pc.pc();
+         const auto &vsyscall = proc32->getVSyscallPage();
+         if (eip >= vsyscall.base && eip < vsyscall.base + vsyscall.size) {
+-            pc.npc(vsyscall.base + vsyscall.vsysexitOffset);
++            pc.set(vsyscall.base + vsyscall.vsysexitOffset);
+             tc->pcState(pc);
+         }
+         syscallDescs32.get(rax)->doSyscall(tc);
+diff --git a/src/sim/faults.cc b/src/sim/faults.cc
+index 98778f2..115c0ed 100644
+--- a/src/sim/faults.cc
++++ b/src/sim/faults.cc
+@@ -71,11 +71,12 @@ UnimpFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ void
+ SESyscallFault::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+ {
+-    tc->getSystemPtr()->workload->syscall(tc);
+     // Move the PC forward since that doesn't happen automatically.
+     std::unique_ptr<PCStateBase> pc(tc->pcState().clone());
+     inst->advancePC(*pc);
+     tc->pcState(*pc);
++
++    tc->getSystemPtr()->workload->syscall(tc);
+ }
+ 
+ void
+diff --git a/src/sim/syscall_emul.hh b/src/sim/syscall_emul.hh
+index a74aabf..546ae75 100644
+--- a/src/sim/syscall_emul.hh
++++ b/src/sim/syscall_emul.hh
+@@ -1703,9 +1703,6 @@ cloneFunc(SyscallDesc *desc, ThreadContext *tc, RegVal flags, RegVal newStack,
+ 
+     desc->returnInto(ctc, 0);
+ 
+-    std::unique_ptr<PCStateBase> cpc(tc->pcState().clone());
+-    cpc->advance();
+-    ctc->pcState(*cpc);
+     ctc->activate();
+ 
+     if (flags & OS::TGT_CLONE_VFORK) {
+@@ -2267,9 +2264,6 @@ execveFunc(SyscallDesc *desc, ThreadContext *tc,
+     new_p->init();
+     new_p->initState();
+     tc->activate();
+-    std::unique_ptr<PCStateBase> pc_state(tc->pcState().clone());
+-    pc_state->advance();
+-    tc->pcState(*pc_state);
+ 
+     return SyscallReturn();
+ }
+-- 
+1.8.3.1
+

@@ -1,0 +1,56 @@
+From 3d5bb844ee1d48d90e2bfaa37c82830226e1d99c Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Thu, 12 May 2022 17:09:54 -0700
+Subject: [PATCH 630/757] python: Don't assume RubyNetwork exists in
+ do_ruby_dot.
+
+If Ruby is disabled, then RubyNetwork is not a SimObject, and
+do_ruby_dot which tries to reference it will crash. This more flexibly
+checks for RubyNetwork, and if that isn't in m5.objects will gracefully
+return instead of crashing.
+
+Also streamline the code in that function a little bit using filter()
+instead of preconstructing the list of ruby networks.
+
+Change-Id: Ia4bdb04201df8453a1b6692a2f211b6cde00be2d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59629
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/m5/util/dot_writer_ruby.py | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/python/m5/util/dot_writer_ruby.py b/src/python/m5/util/dot_writer_ruby.py
+index 4123cac..1794cef 100644
+--- a/src/python/m5/util/dot_writer_ruby.py
++++ b/src/python/m5/util/dot_writer_ruby.py
+@@ -133,17 +133,17 @@ def _do_dot(network, outdir, dotFilename):
+ 
+ 
+ def do_ruby_dot(root, outdir, dotFilename):
+-    if not pydot:
++    RubyNetwork = getattr(m5.objects, 'RubyNetwork', None)
++
++    if not pydot or not RubyNetwork:
+         return
+ 
+-    # Generate a graph for all ruby systems
+-    networks = []
+-    for obj in root.descendants():
+-        if isinstance(obj, m5.objects.RubyNetwork):
+-            networks.append(obj)
++    # Generate a graph for all ruby networks.
++    def is_ruby_network(obj):
++        return isinstance(obj, RubyNetwork)
+ 
+-    for network in networks:
+-        # We assume each ruby system has a single network
++    for network in filter(is_ruby_network, root.descendants()):
++        # We assume each ruby system has a single network.
+         rubydotFilename = dotFilename.replace(".dot",
+                                 "." + network.get_parent().path() + ".dot")
+         _do_dot(network, outdir, rubydotFilename)
+-- 
+1.8.3.1
+

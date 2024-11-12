@@ -1,0 +1,37 @@
+From 8a53add7f889d843b088c78bd22c7bf5c8c82ca4 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 14 Apr 2022 16:17:39 -0500
+Subject: [PATCH 573/757] dev-amdgpu: Fix frame writes for <32-bit writes
+
+In theory a packet between one and eight bytes can be written to frame
+buffer memory from the driver. In gem5 pkt->getLE<utin32_t>() will
+assert if the packet size is <32-bits. Change to pkt->getUintX(...) to
+fix this issue.
+
+Change-Id: If8554013e4ea7bac90985487991d0bf8bdc765ea
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58852
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_device.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 3c5b179..132a81a 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -253,7 +253,7 @@ AMDGPUDevice::writeFrame(PacketPtr pkt, Addr offset)
+     Addr aperture_offset = offset - aperture;
+ 
+     // Record the value
+-    frame_regs[offset] = pkt->getLE<uint32_t>();
++    frame_regs[offset] = pkt->getUintX(ByteOrder::little);
+     if (aperture == gpuvm.gartBase()) {
+         frame_regs[aperture_offset] = pkt->getLE<uint32_t>();
+         DPRINTF(AMDGPUDevice, "GART translation %p -> %p\n", aperture_offset,
+-- 
+1.8.3.1
+

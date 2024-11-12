@@ -1,0 +1,203 @@
+From 7f4a485fcfede99527e31e321f8cbf901252a14d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 11 Dec 2021 07:04:05 -0800
+Subject: [PATCH 044/757] sim: Make the EmbeddedPyBind::initAll method work
+ correctly.
+
+This method depended on all of the EmbeddedPyBind objects having all
+been constructed already so that it would have a complete list. This
+would only be true if it was called after static intialization was
+complete, which is not true if python is ready to go as soon as gem5
+(in library form) is loaded.
+
+This change makes EmbeddedPyBind able to defer initialization of a
+module more generically than before, so that they can wait for either
+another module to be initiailized, or the _m5 package itself.
+
+Change-Id: I6b636524f969bd9882d8c1a7594dc36eb4e78037
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54005
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54265
+---
+ src/sim/init.cc | 93 ++++++++++++++++++++++++++++++++-------------------------
+ src/sim/init.hh | 17 ++++++++---
+ 2 files changed, 66 insertions(+), 44 deletions(-)
+
+diff --git a/src/sim/init.cc b/src/sim/init.cc
+index d594b08..1c3d3aa 100644
+--- a/src/sim/init.cc
++++ b/src/sim/init.cc
+@@ -55,76 +55,89 @@ namespace py = pybind11;
+ namespace gem5
+ {
+ 
++pybind11::module_ *EmbeddedPyBind::mod = nullptr;
++
+ EmbeddedPyBind::EmbeddedPyBind(const char *_name,
+                                void (*init_func)(py::module_ &),
+-                               const char *_base)
+-    : initFunc(init_func), registered(false), name(_name), base(_base)
++                               const char *_base) :
++    initFunc(init_func), name(_name), base(_base)
+ {
+-    getMap()[_name] = this;
++    init();
+ }
+ 
+ EmbeddedPyBind::EmbeddedPyBind(const char *_name,
+-                               void (*init_func)(py::module_ &))
+-    : initFunc(init_func), registered(false), name(_name), base("")
+-{
+-    getMap()[_name] = this;
+-}
++                               void (*init_func)(py::module_ &)) :
++    EmbeddedPyBind(_name, init_func, "")
++{}
+ 
+ void
+-EmbeddedPyBind::init(py::module_ &m)
++EmbeddedPyBind::init()
+ {
+-    if (!registered) {
+-        initFunc(m);
+-        registered = true;
+-    } else {
++    // If this module is already registered, complain and stop.
++    if (registered) {
+         cprintf("Warning: %s already registered.\n", name);
++        return;
+     }
++
++    auto &ready = getReady();
++    auto &pending = getPending();
++
++    // If we're not ready for this module yet, defer intialization.
++    if (!mod || (!base.empty() && ready.find(base) == ready.end())) {
++        pending.insert({std::string(base), this});
++        return;
++    }
++
++    // We must be ready, so set this module up.
++    initFunc(*mod);
++    ready[name] = this;
++    registered = true;
++
++    // Find any other modules that were waiting for this one and init them.
++    initPending(name);
+ }
+ 
+-bool
+-EmbeddedPyBind::depsReady() const
++void
++EmbeddedPyBind::initPending(const std::string &finished)
+ {
+-    return base.empty() || getMap()[base]->registered;
++    auto &pending = getPending();
++
++    auto range = pending.equal_range(finished);
++    std::list<std::pair<std::string, EmbeddedPyBind *>> todo(
++        range.first, range.second);
++    pending.erase(range.first, range.second);
++
++    for (auto &entry: todo)
++        entry.second->init();
+ }
+ 
+ std::map<std::string, EmbeddedPyBind *> &
+-EmbeddedPyBind::getMap()
++EmbeddedPyBind::getReady()
++{
++    static std::map<std::string, EmbeddedPyBind *> ready;
++    return ready;
++}
++
++std::multimap<std::string, EmbeddedPyBind *> &
++EmbeddedPyBind::getPending()
+ {
+-    static std::map<std::string, EmbeddedPyBind *> objs;
+-    return objs;
++    static std::multimap<std::string, EmbeddedPyBind *> pending;
++    return pending;
+ }
+ 
+ void
+ EmbeddedPyBind::initAll(py::module_ &_m5)
+ {
+-    std::list<EmbeddedPyBind *> pending;
+-
+     pybind_init_core(_m5);
+     pybind_init_debug(_m5);
+ 
+     pybind_init_event(_m5);
+     pybind_init_stats(_m5);
+ 
+-    for (auto &kv : EmbeddedPyBind::getMap()) {
+-        auto &obj = kv.second;
+-        if (obj->base.empty()) {
+-            obj->init(_m5);
+-        } else {
+-            pending.push_back(obj);
+-        }
+-    }
++    mod = &_m5;
+ 
+-    while (!pending.empty()) {
+-        for (auto it = pending.begin(); it != pending.end(); ) {
+-            EmbeddedPyBind &obj = **it;
+-            if (obj.depsReady()) {
+-                obj.init(_m5);
+-                it = pending.erase(it);
+-            } else {
+-                ++it;
+-            }
+-        }
+-    }
++    // Init all the modules that were waiting on the _m5 module itself.
++    initPending("");
+ }
+ 
+ GEM5_PYBIND_MODULE_INIT(_m5, EmbeddedPyBind::initAll)
+diff --git a/src/sim/init.hh b/src/sim/init.hh
+index 9e7158a..3b86f82 100644
+--- a/src/sim/init.hh
++++ b/src/sim/init.hh
+@@ -43,6 +43,7 @@
+ 
+ #include "pybind11/pybind11.h"
+ 
++#include <list>
+ #include <map>
+ #include <string>
+ 
+@@ -64,14 +65,22 @@ class EmbeddedPyBind
+   private:
+     void (*initFunc)(pybind11::module_ &);
+ 
+-    bool depsReady() const;
+-    void init(pybind11::module_ &m);
++    void init();
+ 
+-    bool registered;
++    bool registered = false;
+     const std::string name;
+     const std::string base;
+ 
+-    static std::map<std::string, EmbeddedPyBind *> &getMap();
++    // The _m5 module.
++    static pybind11::module_ *mod;
++
++    // A map from initialized module names to their descriptors.
++    static std::map<std::string, EmbeddedPyBind *> &getReady();
++    // A map to pending modules from the name of what they're waiting on.
++    static std::multimap<std::string, EmbeddedPyBind *> &getPending();
++
++    // Initialize all modules waiting on "finished".
++    static void initPending(const std::string &finished);
+ };
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

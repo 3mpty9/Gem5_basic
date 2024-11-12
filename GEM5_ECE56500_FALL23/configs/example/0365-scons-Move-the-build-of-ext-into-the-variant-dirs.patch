@@ -1,0 +1,470 @@
+From 64d1297d86e469eb7238e24601b3899ddcaf6c4e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 10 Feb 2022 21:52:51 -0800
+Subject: [PATCH 365/757] scons: Move the build of ext/ into the variant dirs.
+
+These are no longer split out and shared in the root build/ directory.
+This does result in a small amount of overhead from building redundant
+copies of these files, although the overhead is not significant. When
+building 7 different variants of gem5, all the ISAs and NULL, the
+difference on my machine was:
+
+Before:
+real    41m25.372s
+user    914m22.266s
+sys     41m51.816s
+
+After:
+real    42m38.074s
+user    921m36.852s
+sys     43m2.949s
+
+This is about a 2-3% difference, which is a worse than typical case,
+since the overhead scales with the number of variants being built.
+
+The benefit of pulling ext/ into the variant directory is that there can
+now be a single config which applies to all files used to build gem5,
+and that config is represented by the variant of gem5 being built.
+
+Change-Id: I6f0db97c63a7f3e252e7e351aa862340978e701b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56750
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ SConstruct                | 29 +++++++++--------------------
+ ext/drampower/SConscript  | 10 +++++-----
+ ext/dramsim2/SConscript   | 18 +++++++++---------
+ ext/dramsim3/SConscript   | 14 +++++++-------
+ ext/fputils/SConscript    | 10 +++++-----
+ ext/googletest/SConscript | 20 ++++++++++----------
+ ext/iostream3/SConscript  | 10 +++++-----
+ ext/libelf/SConscript     | 10 +++++-----
+ ext/libfdt/SConscript     | 10 +++++-----
+ ext/nomali/SConscript     | 10 +++++-----
+ ext/softfloat/SConscript  | 30 +++++++++++++++---------------
+ ext/systemc/SConscript    |  4 ++--
+ 12 files changed, 82 insertions(+), 93 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index 679315e..fe7b3ab 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -643,23 +643,6 @@ sticky_vars.Add(BoolVariable('USE_EFENCE',
+ 
+ ########################################################################
+ #
+-# Find and process all the SConscript files in ext. These are shared by
+-# all variants in a build root.
+-#
+-########################################################################
+-
+-ext_dir = Dir('#ext').abspath
+-ext_build_dirs = []
+-for root, dirs, files in os.walk(ext_dir):
+-    if 'SConscript' in files:
+-        build_dir = os.path.relpath(root, ext_dir)
+-        ext_build_dirs.append(build_dir)
+-        main.SConscript(os.path.join(root, 'SConscript'),
+-                        variant_dir=os.path.join(build_root, build_dir))
+-
+-
+-########################################################################
+-#
+ # Define build environments for required variants.
+ #
+ ########################################################################
+@@ -686,9 +669,6 @@ for variant_path in variant_paths:
+         sticky_vars.files.append(current_vars_file)
+         if not GetOption('silent'):
+             print("Using saved variables file %s" % current_vars_file)
+-    elif variant_dir in ext_build_dirs:
+-        # Things in ext are built without a variant directory.
+-        continue
+     else:
+         # Variant specific variables file doesn't exist.
+ 
+@@ -741,6 +721,15 @@ Build variables for {dir}:
+ 
+     exports=['env', 'gem5py_env']
+ 
++    ext_dir = Dir('#ext').abspath
++    variant_ext = os.path.join(variant_path, 'ext')
++    for root, dirs, files in os.walk(ext_dir):
++        if 'SConscript' in files:
++            build_dir = os.path.relpath(root, ext_dir)
++            SConscript(os.path.join(root, 'SConscript'),
++                       variant_dir=os.path.join(variant_ext, build_dir),
++                       exports=exports)
++
+     # The src/SConscript file sets up the build rules in 'env' according
+     # to the configured variables.  It returns a list of environments,
+     # one for each variant build (debug, opt, etc.)
+diff --git a/ext/drampower/SConscript b/ext/drampower/SConscript
+index 0518197..870d050 100644
+--- a/ext/drampower/SConscript
++++ b/ext/drampower/SConscript
+@@ -39,9 +39,9 @@
+ 
+ import os
+ 
+-Import('main')
++Import('env')
+ 
+-main.Prepend(CPPPATH=Dir('./src'))
++env.Prepend(CPPPATH=Dir('./src'))
+ 
+ # Add the appropriate files for the library
+ drampower_files = []
+@@ -63,7 +63,7 @@ DRAMPowerFile('CAHelpers.cc')
+ DRAMPowerFile('CmdHandlers.cc')
+ DRAMPowerFile('MemBankWiseParams.cc')
+ 
+-main.Library('drampower', [main.SharedObject(f) for f in drampower_files])
++env.Library('drampower', [env.SharedObject(f) for f in drampower_files])
+ 
+-main.Append(LIBS=['drampower'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Append(LIBS=['drampower'])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/dramsim2/SConscript b/ext/dramsim2/SConscript
+index b4355fa..95b999d 100644
+--- a/ext/dramsim2/SConscript
++++ b/ext/dramsim2/SConscript
+@@ -38,16 +38,16 @@
+ 
+ import os
+ 
+-Import('main')
++Import('env')
+ 
+ # See if we got a cloned DRAMSim2 repo as a subdirectory and set the
+ # HAVE_DRAMSIM flag accordingly
+ if not os.path.exists(Dir('.').srcnode().abspath + '/DRAMSim2'):
+-    main['HAVE_DRAMSIM'] = False
++    env['HAVE_DRAMSIM'] = False
+     Return()
+ 
+ # We have got the folder, so add the library and build the wrappers
+-main['HAVE_DRAMSIM'] = True
++env['HAVE_DRAMSIM'] = True
+ 
+ # Add the appropriate files. We leave out the trace driven simulator
+ dram_files = []
+@@ -59,7 +59,7 @@ DRAMFile('AddressMapping.cpp')
+ DRAMFile('Bank.cpp')
+ DRAMFile('BankState.cpp')
+ DRAMFile('BusPacket.cpp')
+-DRAMFile('ClockDomain.cpp')
++DRAMFile('ClockDoenv.cpp')
+ DRAMFile('CommandQueue.cpp')
+ DRAMFile('IniReader.cpp')
+ DRAMFile('MemoryController.cpp')
+@@ -71,11 +71,11 @@ DRAMFile('Transaction.cpp')
+ 
+ # DRAMSim2 violates some of the warning flags used by gem5, so
+ # we explicitly disable them here
+-dramenv = main.Clone()
++dramenv = env.Clone()
+ dramenv.Append(CCFLAGS=['-Wno-unused-value', '-Wno-error=nonnull-compare'])
+ 
+ # If we are using clang, there are more flags to disable
+-if main['CLANG']:
++if env['CLANG']:
+     dramenv.Append(CCFLAGS=['-Wno-unused-private-field',
+                             '-Wno-tautological-undefined-compare'])
+ 
+@@ -85,6 +85,6 @@ dramenv.Append(CCFLAGS=['-DNO_STORAGE'])
+ 
+ dramenv.Library('dramsim2', [dramenv.SharedObject(f) for f in dram_files])
+ 
+-main.Prepend(CPPPATH=Dir('.'))
+-main.Append(LIBS=['dramsim2'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Prepend(CPPPATH=Dir('.'))
++env.Append(LIBS=['dramsim2'])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/dramsim3/SConscript b/ext/dramsim3/SConscript
+index 9e5a3a1..b717816 100644
+--- a/ext/dramsim3/SConscript
++++ b/ext/dramsim3/SConscript
+@@ -38,32 +38,32 @@
+ 
+ import os
+ 
+-Import('main')
++Import('env')
+ 
+ thermal = False
+ 
+ # See if we got a cloned DRAMSim3 repo as a subdirectory and set the
+ # HAVE_DRAMSIM flag accordingly
+ if not os.path.exists(Dir('.').srcnode().abspath + '/DRAMsim3'):
+-    main['HAVE_DRAMSIM3'] = False
++    env['HAVE_DRAMSIM3'] = False
+     Return()
+ 
+ # We have got the folder, so add the library and build the wrappers
+-main['HAVE_DRAMSIM3'] = True
++env['HAVE_DRAMSIM3'] = True
+ 
+ 
+ dramsim_path = os.path.join(Dir('#').abspath, 'ext/dramsim3/DRAMsim3/')
+ 
+ if thermal:
+     superlu_path = os.path.join(dramsim_path, 'ext/SuperLU_MT_3.1/lib')
+-    main.Prepend(CPPPATH=Dir('.'))
+-    main.Append(LIBS=['dramsim3', 'superlu_mt_OPENMP', 'm', 'f77blas',
++    env.Prepend(CPPPATH=Dir('.'))
++    env.Append(LIBS=['dramsim3', 'superlu_mt_OPENMP', 'm', 'f77blas',
+                       'atlas', 'gomp'],
+                 LIBPATH=[dramsim_path, superlu_path])
+ else:
+-    main.Prepend(CPPPATH=Dir('.'))
++    env.Prepend(CPPPATH=Dir('.'))
+     # a littel hacky but can get a shared library working
+-    main.Append(LIBS=['dramsim3', 'gomp'],
++    env.Append(LIBS=['dramsim3', 'gomp'],
+                 LIBPATH=[dramsim_path],  # compile-time lookup
+                 RPATH=[dramsim_path],  # runtime lookup
+                 CPPPATH=[dramsim_path+'/src/'])
+diff --git a/ext/fputils/SConscript b/ext/fputils/SConscript
+index 6d3f1ff..6a8e44f 100644
+--- a/ext/fputils/SConscript
++++ b/ext/fputils/SConscript
+@@ -28,11 +28,11 @@
+ #
+ # Authors: Andreas Sandberg
+ 
+-Import('main')
++Import('env')
+ 
+-main.Prepend(CPPPATH=Dir('./include'))
++env.Prepend(CPPPATH=Dir('./include'))
+ 
+-fpenv = main.Clone()
++fpenv = env.Clone()
+ 
+ # By default gcc uses c89 and clang uses c99. For fputils to compile
+ # we need to use c99.
+@@ -44,6 +44,6 @@ fpenv.Library('fputils', [
+         fpenv.SharedObject('fp80.c'),
+     ])
+ 
+-main.Append(LIBS=['fputils'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Append(LIBS=['fputils'])
++env.Prepend(LIBPATH=[Dir('.')])
+ 
+diff --git a/ext/googletest/SConscript b/ext/googletest/SConscript
+index 5a4b691..21830f0 100644
+--- a/ext/googletest/SConscript
++++ b/ext/googletest/SConscript
+@@ -26,7 +26,7 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+-Import('main')
++Import('env')
+ 
+ # The root of the build directory.
+ build = Dir('.')
+@@ -40,18 +40,18 @@ gmock_include = gmock_base.Dir('include')
+ gtest_src = Dir('googletest/src')
+ gmock_src = Dir('googlemock/src')
+ 
+-main.Append(CPPPATH=[gtest_include, gmock_include])
+-main.Append(LIBPATH=[build])
++env.Append(CPPPATH=[gtest_include, gmock_include])
++env.Append(LIBPATH=[build])
+ 
+-env = main.Clone(CCFLAGS=['-g', '-pthread', '-Wno-undef', '-isystem',
++genv = env.Clone(CCFLAGS=['-g', '-pthread', '-Wno-undef', '-isystem',
+                           str(gtest_include), '-isystem', str(gmock_include)])
+-env.Append(CPPPATH=[gtest_base, gmock_base])
++genv.Append(CPPPATH=[gtest_base, gmock_base])
+ 
+-gtest_all = env.Object(gtest_src.File('gtest-all.cc'))
+-gmock_all = env.Object(gmock_src.File('gmock-all.cc'))
+-gtest_main = env.StaticLibrary(target='libgtest', source=[
++gtest_all = genv.Object(gtest_src.File('gtest-all.cc'))
++gmock_all = genv.Object(gmock_src.File('gmock-all.cc'))
++gtest_main = genv.StaticLibrary(target='libgtest', source=[
+         gtest_all, gmock_all, gtest_src.File('gtest_main.cc')])
+ 
+-main['GTEST_LIBS'] = ['libgtest', 'pthread']
+-main['GTEST_CPPFLAGS'] = [
++env['GTEST_LIBS'] = ['libgtest', 'pthread']
++env['GTEST_CPPFLAGS'] = [
+     '-pthread', '-DUSE_GMOCK', '-Wno-undef', '-isystem', gtest_include.abspath]
+diff --git a/ext/iostream3/SConscript b/ext/iostream3/SConscript
+index f8b5461..df0b213 100644
+--- a/ext/iostream3/SConscript
++++ b/ext/iostream3/SConscript
+@@ -37,10 +37,10 @@
+ #
+ # Authors: Andreas Hansson
+ 
+-Import('main')
++Import('env')
+ 
+-main.Library('iostream3', [main.SharedObject('zfstream.cc')])
++env.Library('iostream3', [env.SharedObject('zfstream.cc')])
+ 
+-main.Prepend(CPPPATH=Dir('.'))
+-main.Append(LIBS=['iostream3'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Prepend(CPPPATH=Dir('.'))
++env.Append(LIBS=['iostream3'])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/libelf/SConscript b/ext/libelf/SConscript
+index ccc1f64..535e216 100644
+--- a/ext/libelf/SConscript
++++ b/ext/libelf/SConscript
+@@ -30,7 +30,7 @@
+ 
+ import os, subprocess
+ 
+-Import('main')
++Import('env')
+ 
+ elf_files = []
+ def ElfFile(filename):
+@@ -97,7 +97,7 @@ ElfFile('libelf_convert.c')
+ ElfFile('libelf_fsize.c')
+ ElfFile('libelf_msize.c')
+ 
+-m4env = main.Clone()
++m4env = env.Clone()
+ if m4env['GCC']:
+     m4env.Append(CCFLAGS=['-Wno-pointer-sign',
+                           '-Wno-unused-but-set-variable',
+@@ -146,6 +146,6 @@ m4env.Library('elf', [m4env.SharedObject(f) for f in elf_files])
+ m4env.Command(File('native-elf-format.h'), File('native-elf-format'),
+               '${SOURCE} > ${TARGET}')
+ 
+-main.Prepend(CPPPATH=Dir('.'))
+-main.Append(LIBS=[File('libelf.a')])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Prepend(CPPPATH=Dir('.'))
++env.Append(LIBS=[File('libelf.a')])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/libfdt/SConscript b/ext/libfdt/SConscript
+index fb44115..64573b7 100644
+--- a/ext/libfdt/SConscript
++++ b/ext/libfdt/SConscript
+@@ -28,7 +28,7 @@
+ #
+ # Authors: Anthony Gutierrez
+ 
+-Import('main')
++Import('env')
+ 
+ fdt_files = []
+ 
+@@ -43,7 +43,7 @@ FdtFile('fdt_wip.c')
+ FdtFile('fdt_empty_tree.c')
+ FdtFile('fdt_strerror.c')
+ 
+-main.Library('fdt', [main.SharedObject(f) for f in fdt_files])
+-main.Prepend(CPPPATH=Dir('.'))
+-main.Append(LIBS=['fdt'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Library('fdt', [env.SharedObject(f) for f in fdt_files])
++env.Prepend(CPPPATH=Dir('.'))
++env.Append(LIBS=['fdt'])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/nomali/SConscript b/ext/nomali/SConscript
+index 2810f6d..b156ab0 100644
+--- a/ext/nomali/SConscript
++++ b/ext/nomali/SConscript
+@@ -37,11 +37,11 @@
+ #
+ # Authors: Andreas Sandberg
+ 
+-Import('main')
++Import('env')
+ 
+-main.Prepend(CPPPATH=Dir('./include'))
++env.Prepend(CPPPATH=Dir('./include'))
+ 
+-nomali = main.Clone()
++nomali = env.Clone()
+ nomali.Append(CCFLAGS=['-Wno-ignored-qualifiers'])
+ 
+ nomali_sources = [
+@@ -60,6 +60,6 @@ nomali_sources = [
+ 
+ nomali.Library('nomali', [  nomali.SharedObject(f) for f in nomali_sources ])
+ 
+-main.Append(LIBS=['nomali'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Append(LIBS=['nomali'])
++env.Prepend(LIBPATH=[Dir('.')])
+ 
+diff --git a/ext/softfloat/SConscript b/ext/softfloat/SConscript
+index f08a022..bfa2b28 100644
+--- a/ext/softfloat/SConscript
++++ b/ext/softfloat/SConscript
+@@ -31,19 +31,19 @@
+ 
+ import os
+ 
+-Import('main')
++Import('env')
+ 
+-env = main.Clone()
+-if env['GCC']:
+-    env.Append(CCFLAGS=['-Wno-unused-variable',
+-                        '-Wno-unused-label',
+-                        '-Wno-implicit-fallthrough',
+-                        '-g'])
++sf_env = env.Clone()
++if sf_env['GCC']:
++    sf_env.Append(CCFLAGS=['-Wno-unused-variable',
++                           '-Wno-unused-label',
++                           '-Wno-implicit-fallthrough',
++                           '-g'])
+ 
+-elif env['CLANG']:
+-    env.Append(CCFLAGS=['-Wno-unused-variable',
+-                        '-Wno-unused-label',
+-                        '-g'])
++elif sf_env['CLANG']:
++    sf_env.Append(CCFLAGS=['-Wno-unused-variable',
++                           '-Wno-unused-label',
++                           '-g'])
+ 
+ # Add the appropriate files for the library
+ softfloat_files = []
+@@ -271,8 +271,8 @@ SoftfloatFile('ui64_to_f16.c')
+ SoftfloatFile('ui64_to_f32.c')
+ SoftfloatFile('ui64_to_f64.c')
+ 
+-env.Library('softfloat', [env.SharedObject(f) for f in softfloat_files])
++sf_env.Library('softfloat', [sf_env.SharedObject(f) for f in softfloat_files])
+ 
+-main.Prepend(CPPPATH=Dir('./'))
+-main.Append(LIBS=['softfloat'])
+-main.Prepend(LIBPATH=[Dir('.')])
++env.Prepend(CPPPATH=Dir('./'))
++env.Append(LIBS=['softfloat'])
++env.Prepend(LIBPATH=[Dir('.')])
+diff --git a/ext/systemc/SConscript b/ext/systemc/SConscript
+index d0cb6f8..89ef920 100644
+--- a/ext/systemc/SConscript
++++ b/ext/systemc/SConscript
+@@ -26,8 +26,8 @@
+ import os
+ from m5.util.terminal import get_termcap
+ 
+-Import('main')
+-systemc = main.Clone()
++Import('env')
++systemc = env.Clone()
+ 
+ build_root = Dir('.').abspath
+ src_root = Dir('.').srcdir.abspath
+-- 
+1.8.3.1
+

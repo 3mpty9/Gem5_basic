@@ -1,0 +1,151 @@
+From 4f833b539ae3112e6f2e81b52befc97ed9d0341f Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 15 Dec 2021 10:33:58 +0000
+Subject: [PATCH 182/757] arch-arm: Avoid Gic write side effect with
+ blockIntUpdate
+
+When trasferring the state between two GICs (essentially
+writing architectural registers) an interrupt might be posted
+by the model. We don't want this to happen as the GIC might
+be in an inconsistent state. We therefore disable side effects
+by relying on the blockIntUpdate method.
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I0e5a86551705254ebacb81b7b358470faad0230c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55608
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/base_gic.hh             | 10 ++++++++++
+ src/dev/arm/gic_v2.cc               |  3 +++
+ src/dev/arm/gic_v3.hh               |  1 +
+ src/dev/arm/gic_v3_cpu_interface.cc |  8 +++++++-
+ src/dev/arm/gic_v3_distributor.cc   |  5 ++++-
+ src/dev/arm/gic_v3_redistributor.cc |  5 ++++-
+ 6 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/src/dev/arm/base_gic.hh b/src/dev/arm/base_gic.hh
+index e1d1a89..7dcb95b 100644
+--- a/src/dev/arm/base_gic.hh
++++ b/src/dev/arm/base_gic.hh
+@@ -119,6 +119,16 @@ class BaseGic :  public PioDevice
+     /** Check if version supported */
+     virtual bool supportsVersion(GicVersion version) = 0;
+ 
++  protected: // GIC state transfer
++    /**
++     * When trasferring the state between two GICs (essentially
++     * writing architectural registers) an interrupt might be posted
++     * by the model. We don't want this to happen as the GIC might
++     * be in an inconsistent state. We therefore disable side effects
++     * by relying on the blockIntUpdate method.
++     */
++    virtual bool blockIntUpdate() const { return false; }
++
+   protected:
+     /** Platform this GIC belongs to. */
+     Platform *platform;
+diff --git a/src/dev/arm/gic_v2.cc b/src/dev/arm/gic_v2.cc
+index f2ced39..0a87275 100644
+--- a/src/dev/arm/gic_v2.cc
++++ b/src/dev/arm/gic_v2.cc
+@@ -738,6 +738,9 @@ GicV2::getCpuPriority(unsigned cpu)
+ void
+ GicV2::updateIntState(int hint)
+ {
++    if (blockIntUpdate())
++        return;
++
+     for (int cpu = 0; cpu < sys->threads.size(); cpu++) {
+         if (!cpuEnabled(cpu))
+             continue;
+diff --git a/src/dev/arm/gic_v3.hh b/src/dev/arm/gic_v3.hh
+index f4aaea5..40c6f3c 100644
+--- a/src/dev/arm/gic_v3.hh
++++ b/src/dev/arm/gic_v3.hh
+@@ -58,6 +58,7 @@ class Gicv3 : public BaseGic
+   protected:
+     friend class Gicv3CPUInterface;
+     friend class Gicv3Redistributor;
++    friend class Gicv3Distributor;
+ 
+     Gicv3Distributor * distributor;
+     std::vector<Gicv3Redistributor *> redistributors;
+diff --git a/src/dev/arm/gic_v3_cpu_interface.cc b/src/dev/arm/gic_v3_cpu_interface.cc
+index 6093e86..496e3fa 100644
+--- a/src/dev/arm/gic_v3_cpu_interface.cc
++++ b/src/dev/arm/gic_v3_cpu_interface.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019 ARM Limited
++ * Copyright (c) 2019, 2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -2032,6 +2032,9 @@ Gicv3CPUInterface::updateDistributor()
+ void
+ Gicv3CPUInterface::update()
+ {
++    if (gic->blockIntUpdate())
++        return;
++
+     bool signal_IRQ = false;
+     bool signal_FIQ = false;
+ 
+@@ -2066,6 +2069,9 @@ Gicv3CPUInterface::update()
+ void
+ Gicv3CPUInterface::virtualUpdate()
+ {
++    if (gic->blockIntUpdate())
++        return;
++
+     bool signal_IRQ = false;
+     bool signal_FIQ = false;
+     int lr_idx = getHPPVILR();
+diff --git a/src/dev/arm/gic_v3_distributor.cc b/src/dev/arm/gic_v3_distributor.cc
+index 75c3df5..c91dfb0 100644
+--- a/src/dev/arm/gic_v3_distributor.cc
++++ b/src/dev/arm/gic_v3_distributor.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2020 ARM Limited
++ * Copyright (c) 2019-2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -1085,6 +1085,9 @@ Gicv3Distributor::clearIrqCpuInterface(uint32_t int_id)
+ void
+ Gicv3Distributor::update()
+ {
++    if (gic->blockIntUpdate())
++        return;
++
+     // Find the highest priority pending SPI
+     for (int int_id = Gicv3::SGI_MAX + Gicv3::PPI_MAX; int_id < itLines;
+          int_id++) {
+diff --git a/src/dev/arm/gic_v3_redistributor.cc b/src/dev/arm/gic_v3_redistributor.cc
+index 8d4c29b..225e4cd 100644
+--- a/src/dev/arm/gic_v3_redistributor.cc
++++ b/src/dev/arm/gic_v3_redistributor.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019-2020 ARM Limited
++ * Copyright (c) 2019-2021 Arm Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -804,6 +804,9 @@ Gicv3Redistributor::updateDistributor()
+ void
+ Gicv3Redistributor::update()
+ {
++    if (gic->blockIntUpdate())
++        return;
++
+     for (int int_id = 0; int_id < Gicv3::SGI_MAX + Gicv3::PPI_MAX; int_id++) {
+         Gicv3::GroupId int_group = getIntGroup(int_id);
+         bool group_enabled = distributor->groupEnabled(int_group);
+-- 
+1.8.3.1
+

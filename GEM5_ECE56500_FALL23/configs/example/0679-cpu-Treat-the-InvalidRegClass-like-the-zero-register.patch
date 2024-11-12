@@ -1,0 +1,432 @@
+From b920772d78866b5d500a9846248b7f9a89bf7153 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 05:19:06 -0700
+Subject: [PATCH 679/757] cpu: Treat the InvalidRegClass like the zero
+ register.
+
+This is a transitional step towards the InvalidRegClass taking over for
+the zero register.
+
+Change-Id: I423e1f6b5138d8bb41493f9febb3b28f333f9f00
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49744
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/checker/cpu.hh            | 10 ++++++++--
+ src/cpu/checker/cpu_impl.hh       |  4 ++++
+ src/cpu/minor/dyn_inst.cc         |  3 +++
+ src/cpu/minor/exec_context.hh     |  8 +++++++-
+ src/cpu/o3/dyn_inst.hh            | 21 +++++++++++++++++----
+ src/cpu/o3/probe/elastic_trace.cc |  6 ++++--
+ src/cpu/o3/regfile.hh             |  2 ++
+ src/cpu/o3/rename.cc              |  2 ++
+ src/cpu/o3/rename_map.cc          |  3 +++
+ src/cpu/o3/rename_map.hh          | 16 +++++++++-------
+ src/cpu/o3/scoreboard.hh          | 15 ++++++++-------
+ src/cpu/reg_class.hh              |  2 +-
+ src/cpu/simple/exec_context.hh    |  4 ++++
+ src/cpu/simple_thread.hh          |  6 ++++++
+ 14 files changed, 78 insertions(+), 24 deletions(-)
+
+diff --git a/src/cpu/checker/cpu.hh b/src/cpu/checker/cpu.hh
+index 2ca32e6..66e9ef8 100644
+--- a/src/cpu/checker/cpu.hh
++++ b/src/cpu/checker/cpu.hh
+@@ -196,14 +196,20 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     void
+     setRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        thread->setReg(si->destRegIdx(idx), val);
++        const RegId& id = si->destRegIdx(idx);
++        if (id.is(InvalidRegClass))
++            return;
++        thread->setReg(id, val);
+         result.emplace(val);
+     }
+ 
+     void
+     setRegOperand(const StaticInst *si, int idx, const void *val) override
+     {
+-        thread->setReg(si->destRegIdx(idx), val);
++        const RegId& id = si->destRegIdx(idx);
++        if (id.is(InvalidRegClass))
++            return;
++        thread->setReg(id, val);
+         //TODO setVecResult, setVecPredResult setVecElemResult?
+     }
+ 
+diff --git a/src/cpu/checker/cpu_impl.hh b/src/cpu/checker/cpu_impl.hh
+index 218d87f..8137812 100644
+--- a/src/cpu/checker/cpu_impl.hh
++++ b/src/cpu/checker/cpu_impl.hh
+@@ -584,6 +584,8 @@ Checker<DynInstPtr>::copyResult(
+     if (start_idx >= 0) {
+         const RegId& idx = inst->destRegIdx(start_idx);
+         switch (idx.classValue()) {
++          case InvalidRegClass:
++            break;
+           case IntRegClass:
+             thread->setIntReg(idx.index(), mismatch_val.as<RegVal>());
+             break;
+@@ -612,6 +614,8 @@ Checker<DynInstPtr>::copyResult(
+         const RegId& idx = inst->destRegIdx(i);
+         res = inst->popResult();
+         switch (idx.classValue()) {
++          case InvalidRegClass:
++            break;
+           case IntRegClass:
+             thread->setIntReg(idx.index(), res.as<RegVal>());
+             break;
+diff --git a/src/cpu/minor/dyn_inst.cc b/src/cpu/minor/dyn_inst.cc
+index e01d990..e8b22a0 100644
+--- a/src/cpu/minor/dyn_inst.cc
++++ b/src/cpu/minor/dyn_inst.cc
+@@ -139,6 +139,9 @@ printRegName(std::ostream &os, const RegId& reg,
+ {
+     const auto &reg_class = reg_classes.at(reg.classValue());
+     switch (reg.classValue()) {
++      case InvalidRegClass:
++        os << 'z';
++        break;
+       case MiscRegClass:
+         {
+             RegIndex misc_reg = reg.index();
+diff --git a/src/cpu/minor/exec_context.hh b/src/cpu/minor/exec_context.hh
+index d9cf75f..d3ae878 100644
+--- a/src/cpu/minor/exec_context.hh
++++ b/src/cpu/minor/exec_context.hh
+@@ -147,7 +147,10 @@ class ExecContext : public gem5::ExecContext
+     RegVal
+     getRegOperand(const StaticInst *si, int idx) override
+     {
+-        return thread.getReg(si->srcRegIdx(idx));
++        const RegId &reg = si->srcRegIdx(idx);
++        if (reg.is(InvalidRegClass))
++            return 0;
++        return thread.getReg(reg);
+     }
+ 
+     void
+@@ -165,6 +168,9 @@ class ExecContext : public gem5::ExecContext
+     void
+     setRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
++        const RegId &reg = si->destRegIdx(idx);
++        if (reg.is(InvalidRegClass))
++            return;
+         thread.setReg(si->destRegIdx(idx), val);
+     }
+ 
+diff --git a/src/cpu/o3/dyn_inst.hh b/src/cpu/o3/dyn_inst.hh
+index 37f6c39..c49581b 100644
+--- a/src/cpu/o3/dyn_inst.hh
++++ b/src/cpu/o3/dyn_inst.hh
+@@ -1103,6 +1103,7 @@ class DynInst : public ExecContext, public RefCounted
+                     setRegOperand(staticInst.get(), idx, &val);
+                 }
+                 break;
++              case InvalidRegClass:
+               case MiscRegClass:
+                 // no need to forward misc reg values
+                 break;
+@@ -1131,13 +1132,19 @@ class DynInst : public ExecContext, public RefCounted
+     RegVal
+     getRegOperand(const StaticInst *si, int idx) override
+     {
+-        return cpu->getReg(renamedSrcIdx(idx));
++        const PhysRegIdPtr reg = renamedSrcIdx(idx);
++        if (reg->is(InvalidRegClass))
++            return 0;
++        return cpu->getReg(reg);
+     }
+ 
+     void
+     getRegOperand(const StaticInst *si, int idx, void *val) override
+     {
+-        cpu->getReg(renamedSrcIdx(idx), val);
++        const PhysRegIdPtr reg = renamedSrcIdx(idx);
++        if (reg->is(InvalidRegClass))
++            return;
++        cpu->getReg(reg, val);
+     }
+ 
+     void *
+@@ -1152,14 +1159,20 @@ class DynInst : public ExecContext, public RefCounted
+     void
+     setRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        cpu->setReg(renamedDestIdx(idx), val);
++        const PhysRegIdPtr reg = renamedDestIdx(idx);
++        if (reg->is(InvalidRegClass))
++            return;
++        cpu->setReg(reg, val);
+         setResult(val);
+     }
+ 
+     void
+     setRegOperand(const StaticInst *si, int idx, const void *val) override
+     {
+-        cpu->setReg(renamedDestIdx(idx), val);
++        const PhysRegIdPtr reg = renamedDestIdx(idx);
++        if (reg->is(InvalidRegClass))
++            return;
++        cpu->setReg(reg, val);
+         //TODO setResult
+     }
+ };
+diff --git a/src/cpu/o3/probe/elastic_trace.cc b/src/cpu/o3/probe/elastic_trace.cc
+index 0a48412..e9e6d55 100644
+--- a/src/cpu/o3/probe/elastic_trace.cc
++++ b/src/cpu/o3/probe/elastic_trace.cc
+@@ -252,7 +252,8 @@ ElasticTrace::updateRegDep(const DynInstConstPtr& dyn_inst)
+ 
+         const RegId& src_reg = dyn_inst->srcRegIdx(src_idx);
+         if (!src_reg.is(MiscRegClass) &&
+-                !(src_reg.is(IntRegClass) && src_reg.index() == zeroReg)) {
++                !((src_reg.is(IntRegClass) && src_reg.index() == zeroReg) ||
++                    src_reg.is(InvalidRegClass))) {
+             // Get the physical register index of the i'th source register.
+             PhysRegIdPtr phys_src_reg = dyn_inst->renamedSrcIdx(src_idx);
+             DPRINTFR(ElasticTrace, "[sn:%lli] Check map for src reg"
+@@ -284,7 +285,8 @@ ElasticTrace::updateRegDep(const DynInstConstPtr& dyn_inst)
+         // CC register and not a Misc register.
+         const RegId& dest_reg = dyn_inst->destRegIdx(dest_idx);
+         if (!dest_reg.is(MiscRegClass) &&
+-                !(dest_reg.is(IntRegClass) && dest_reg.index() == zeroReg)) {
++                !((dest_reg.is(IntRegClass) && dest_reg.index() == zeroReg) ||
++                    dest_reg.is(InvalidRegClass))) {
+             // Get the physical register index of the i'th destination
+             // register.
+             PhysRegIdPtr phys_dest_reg =
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index b5d972d..62d2fa2 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -252,6 +252,8 @@ class PhysRegFile
+         const RegIndex idx = phys_reg->index();
+ 
+         switch (type) {
++          case InvalidRegClass:
++            break;
+           case IntRegClass:
+             if (phys_reg->index() != zeroReg.index())
+                 intRegFile.reg(idx) = val;
+diff --git a/src/cpu/o3/rename.cc b/src/cpu/o3/rename.cc
+index 2ff428b..89d4542 100644
+--- a/src/cpu/o3/rename.cc
++++ b/src/cpu/o3/rename.cc
+@@ -1017,6 +1017,8 @@ Rename::renameSrcRegs(const DynInstPtr &inst, ThreadID tid)
+ 
+         renamed_reg = map->lookup(tc->flattenRegId(src_reg));
+         switch (src_reg.classValue()) {
++          case InvalidRegClass:
++            break;
+           case IntRegClass:
+             stats.intLookups++;
+             break;
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index 256b4bf..447ec10 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -82,6 +82,9 @@ SimpleRenameMap::rename(const RegId& arch_reg)
+     if (arch_reg == zeroReg) {
+         assert(prev_reg->index() == zeroReg.index());
+         renamed_reg = prev_reg;
++    } else if (arch_reg.is(InvalidRegClass)) {
++        assert(prev_reg->is(InvalidRegClass));
++        renamed_reg = prev_reg;
+     } else if (prev_reg->getNumPinnedWrites() > 0) {
+         // Do not rename if the register is pinned
+         assert(arch_reg.getNumPinnedWrites() == 0);  // Prevent pinning the
+diff --git a/src/cpu/o3/rename_map.hh b/src/cpu/o3/rename_map.hh
+index 3e5380b..2e12635 100644
+--- a/src/cpu/o3/rename_map.hh
++++ b/src/cpu/o3/rename_map.hh
+@@ -179,6 +179,8 @@ class UnifiedRenameMap
+   private:
+     std::array<SimpleRenameMap, CCRegClass + 1> renameMaps;
+ 
++    static inline PhysRegId invalidPhysRegId{};
++
+     /**
+      * The register file object is used only to get PhysRegIdPtr
+      * on MiscRegs, as they are stored in it.
+@@ -210,8 +212,7 @@ class UnifiedRenameMap
+     RenameInfo
+     rename(const RegId& arch_reg)
+     {
+-        auto reg_class = arch_reg.classValue();
+-        if (reg_class == MiscRegClass) {
++        if (!arch_reg.isRenameable()) {
+             // misc regs aren't really renamed, just remapped
+             PhysRegIdPtr phys_reg = lookup(arch_reg);
+             // Set the new register to the previous one to keep the same
+@@ -219,7 +220,7 @@ class UnifiedRenameMap
+             return RenameInfo(phys_reg, phys_reg);
+         }
+ 
+-        return renameMaps[reg_class].rename(arch_reg);
++        return renameMaps[arch_reg.classValue()].rename(arch_reg);
+     }
+ 
+     /**
+@@ -233,7 +234,9 @@ class UnifiedRenameMap
+     lookup(const RegId& arch_reg) const
+     {
+         auto reg_class = arch_reg.classValue();
+-        if (reg_class == MiscRegClass) {
++        if (reg_class == InvalidRegClass) {
++            return &invalidPhysRegId;
++        } else if (reg_class == MiscRegClass) {
+             // misc regs aren't really renamed, they keep the same
+             // mapping throughout the execution.
+             return regFile->getMiscRegId(arch_reg.index());
+@@ -253,8 +256,7 @@ class UnifiedRenameMap
+     setEntry(const RegId& arch_reg, PhysRegIdPtr phys_reg)
+     {
+         assert(phys_reg->is(arch_reg.classValue()));
+-        auto reg_class = arch_reg.classValue();
+-        if (reg_class == MiscRegClass) {
++        if (!arch_reg.isRenameable()) {
+             // Misc registers do not actually rename, so don't change
+             // their mappings.  We end up here when a commit or squash
+             // tries to update or undo a hardwired misc reg nmapping,
+@@ -263,7 +265,7 @@ class UnifiedRenameMap
+             return;
+         }
+ 
+-        return renameMaps[reg_class].setEntry(arch_reg, phys_reg);
++        return renameMaps[arch_reg.classValue()].setEntry(arch_reg, phys_reg);
+     }
+ 
+     /**
+diff --git a/src/cpu/o3/scoreboard.hh b/src/cpu/o3/scoreboard.hh
+index 7a6b656..f7c17bc 100644
+--- a/src/cpu/o3/scoreboard.hh
++++ b/src/cpu/o3/scoreboard.hh
+@@ -34,6 +34,7 @@
+ #include <vector>
+ 
+ #include "base/compiler.hh"
++#include "base/logging.hh"
+ #include "base/trace.hh"
+ #include "cpu/reg_class.hh"
+ #include "debug/Scoreboard.hh"
+@@ -85,17 +86,17 @@ class Scoreboard
+     bool
+     getReg(PhysRegIdPtr phys_reg) const
+     {
+-        assert(phys_reg->flatIndex() < numPhysRegs);
+-
+         if (phys_reg->isFixedMapping()) {
+             // Fixed mapping regs are always ready
+             return true;
+         }
+ 
++        assert(phys_reg->flatIndex() < numPhysRegs);
++
+         bool ready = regScoreBoard[phys_reg->flatIndex()];
+ 
+         if (phys_reg->is(IntRegClass) && phys_reg->index() == zeroReg)
+-            assert(ready);
++            gem5_assert(ready);
+ 
+         return ready;
+     }
+@@ -104,14 +105,14 @@ class Scoreboard
+     void
+     setReg(PhysRegIdPtr phys_reg)
+     {
+-        assert(phys_reg->flatIndex() < numPhysRegs);
+-
+         if (phys_reg->isFixedMapping()) {
+             // Fixed mapping regs are always ready, ignore attempts to change
+             // that
+             return;
+         }
+ 
++        assert(phys_reg->flatIndex() < numPhysRegs);
++
+         DPRINTF(Scoreboard, "Setting reg %i (%s) as ready\n",
+                 phys_reg->index(), phys_reg->className());
+ 
+@@ -122,14 +123,14 @@ class Scoreboard
+     void
+     unsetReg(PhysRegIdPtr phys_reg)
+     {
+-        assert(phys_reg->flatIndex() < numPhysRegs);
+-
+         if (phys_reg->isFixedMapping()) {
+             // Fixed mapping regs are always ready, ignore attempts to
+             // change that
+             return;
+         }
+ 
++        assert(phys_reg->flatIndex() < numPhysRegs);
++
+         // zero reg should never be marked unready
+         if (phys_reg->is(IntRegClass) && phys_reg->index() == zeroReg)
+             return;
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index e368bc4..e295530 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -167,7 +167,7 @@ class RegId
+     bool
+     isRenameable() const
+     {
+-        return regClass != MiscRegClass;
++        return regClass != MiscRegClass && regClass != InvalidRegClass;
+     }
+ 
+     /** @return true if it is of the specified class. */
+diff --git a/src/cpu/simple/exec_context.hh b/src/cpu/simple/exec_context.hh
+index 443939c..fa3c61c 100644
+--- a/src/cpu/simple/exec_context.hh
++++ b/src/cpu/simple/exec_context.hh
+@@ -311,6 +311,8 @@ class SimpleExecContext : public ExecContext
+     getRegOperand(const StaticInst *si, int idx) override
+     {
+         const RegId &reg = si->srcRegIdx(idx);
++        if (reg.is(InvalidRegClass))
++            return 0;
+         (*execContextStats.numRegReads[reg.classValue()])++;
+         return thread->getReg(reg);
+     }
+@@ -335,6 +337,8 @@ class SimpleExecContext : public ExecContext
+     setRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+         const RegId &reg = si->destRegIdx(idx);
++        if (reg.is(InvalidRegClass))
++            return;
+         (*execContextStats.numRegWrites[reg.classValue()])++;
+         thread->setReg(reg, val);
+     }
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 2f5805e..81c8839 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -400,6 +400,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+     {
+         const RegId reg = flattenRegId(arch_reg);
+ 
++        if (reg.is(InvalidRegClass))
++            return;
++
+         const RegIndex idx = reg.index();
+ 
+         auto &reg_file = regFiles[reg.classValue()];
+@@ -416,6 +419,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+     void
+     setRegFlat(const RegId &reg, RegVal val) override
+     {
++        if (reg.is(InvalidRegClass))
++            return;
++
+         const RegIndex idx = reg.index();
+ 
+         auto &reg_file = regFiles[reg.classValue()];
+-- 
+1.8.3.1
+

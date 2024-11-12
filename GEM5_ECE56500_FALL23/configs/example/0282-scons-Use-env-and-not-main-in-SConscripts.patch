@@ -1,0 +1,70 @@
+From 375236082d825ae5bf7344b36e689b0448cbfaab Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 16 Feb 2022 03:12:03 -0800
+Subject: [PATCH 282/757] scons: Use env and not main in SConscripts.
+
+"env" is the environment for the current variant, where "main" is the
+environment that was derived from.
+
+Change-Id: I71e30684aa82a297241820502f204400c89c80cf
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56890
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+---
+ src/base/stats/SConscript     | 2 +-
+ src/systemc/core/SConscript   | 4 ++--
+ src/systemc/dt/int/SConscript | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/base/stats/SConscript b/src/base/stats/SConscript
+index 841e455..f81bd24 100644
+--- a/src/base/stats/SConscript
++++ b/src/base/stats/SConscript
+@@ -35,7 +35,7 @@ Source('storage.cc')
+ Source('text.cc')
+ 
+ if env['HAVE_HDF5']:
+-    if main['GCC']:
++    if env['GCC']:
+         Source('hdf5.cc', append={'CXXFLAGS': '-Wno-deprecated-copy'})
+     else:
+         Source('hdf5.cc')
+diff --git a/src/systemc/core/SConscript b/src/systemc/core/SConscript
+index 45bad4f..b439fbe 100644
+--- a/src/systemc/core/SConscript
++++ b/src/systemc/core/SConscript
+@@ -65,7 +65,7 @@ if env['USE_SYSTEMC']:
+         Source('python.cc')
+         Source('sc_main_python.cc')
+         append = {}
+-        with gem5_scons.Configure(main) as conf:
++        with gem5_scons.Configure(env) as conf:
+             for flag in ('-Wno-self-assign-overloaded', '-Wno-self-assign'):
+                 if conf.CheckCxxFlag(flag, autoadd=False):
+                     append['CCFLAGS'] = [flag]
+@@ -73,7 +73,7 @@ if env['USE_SYSTEMC']:
+         Source('sc_time_python.cc', append=append)
+ 
+     # Disable the false positive warning for the event members of the scheduler.
+-    with gem5_scons.Configure(main) as conf:
++    with gem5_scons.Configure(env) as conf:
+         flag = '-Wno-free-nonheap-object'
+         append = {}
+         if conf.CheckCxxFlag(flag, autoadd=False):
+diff --git a/src/systemc/dt/int/SConscript b/src/systemc/dt/int/SConscript
+index 159eb6f..10b3560 100644
+--- a/src/systemc/dt/int/SConscript
++++ b/src/systemc/dt/int/SConscript
+@@ -28,7 +28,7 @@ Import('*')
+ from gem5_scons.util import compareVersions
+ 
+ if env['USE_SYSTEMC']:
+-    if main['GCC'] and compareVersions(main['CXXVERSION'], '10.0') >= 0:
++    if env['GCC'] and compareVersions(env['CXXVERSION'], '10.0') >= 0:
+         disable_false_positives = {
+             "CCFLAGS": [ "-Wno-array-bounds",
+                          "-Wno-stringop-overflow" ]
+-- 
+1.8.3.1
+

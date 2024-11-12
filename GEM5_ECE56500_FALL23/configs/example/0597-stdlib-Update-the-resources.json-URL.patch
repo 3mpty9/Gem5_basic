@@ -1,0 +1,87 @@
+From d5ebbc18572b4124f0f6f91739b564828cd608e1 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 22 Apr 2022 10:56:19 -0700
+Subject: [PATCH 597/757] stdlib: Update the resources.json URL
+
+It is important this URL remains stable across releases. Pulling
+directly from the Google Source git repo is not stable and may change
+over time. This patch updates the URL to
+https://resources.gem5.org/resources.json. As the gem5.org domain is
+under the gem5 project's control, we can ensure this does not change.
+
+Change-Id: I549fabb1525ee1df68cb1641c1bd82ea8bd32262
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59050
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/python/gem5/resources/downloader.py | 32 +++++++++++++++-----------------
+ 1 file changed, 15 insertions(+), 17 deletions(-)
+
+diff --git a/src/python/gem5/resources/downloader.py b/src/python/gem5/resources/downloader.py
+index c3f853d..aa617be 100644
+--- a/src/python/gem5/resources/downloader.py
++++ b/src/python/gem5/resources/downloader.py
+@@ -56,12 +56,7 @@ def _resources_json_version_required() -> str:
+     return "develop"
+ 
+ def _get_resources_json_uri() -> str:
+-    uri = (
+-        "https://gem5.googlesource.com/public/gem5-resources/"
+-        + "+/refs/heads/stable/resources.json?format=TEXT"
+-    )
+-
+-    return uri
++    return "https://resources.gem5.org/resources.json"
+ 
+ def _get_resources_json_at_url(url: str, use_caching: bool = True) -> Dict:
+     '''
+@@ -71,11 +66,6 @@ def _get_resources_json_at_url(url: str, use_caching: bool = True) -> Dict:
+     If `use_caching` is True, a copy of the JSON will be cached locally, and
+     used for up to an hour after retrieval.
+ 
+-    **Note**: The URL is assumed to be the location within a Google Source
+-    repository. Special processing is done to handle this. This is the primary
+-    reason there are separate functions for handling the retrieving of the
+-    resources JSON comapared to just using the `_download` function directly.
+-
+     :param url: The URL of the JSON file.
+     :param use_caching: True if a cached file is to be used (up to an hour),
+     otherwise the file will be retrieved from the URL regardless. True by
+@@ -85,7 +75,7 @@ def _get_resources_json_at_url(url: str, use_caching: bool = True) -> Dict:
+     file_path = os.path.join(
+         gettempdir(),
+         f"gem5-resources-{hashlib.md5(url.encode()).hexdigest()}"
+-        f"-{str(os.getuid())}.base64",
++        f"-{str(os.getuid())}.json",
+     )
+ 
+     # We apply a lock on the resources file for when it's downloaded, or
+@@ -111,11 +101,19 @@ def _get_resources_json_at_url(url: str, use_caching: bool = True) -> Dict:
+             (time.time() - os.path.getmtime(file_path)) > 3600:
+                     _download(url, file_path)
+ 
+-        # Note: Google Source does not properly support obtaining files as raw
+-        # text. Therefore when we open the URL we receive the JSON in base64
+-        # format. Conversion is needed before it can be loaded.
+-        with open(file_path) as file:
+-            return json.loads(base64.b64decode(file.read()).decode("utf-8"))
++    with open(file_path) as f:
++        file_contents = f.read()
++
++    try:
++        to_return = json.loads(file_contents)
++    except json.JSONDecodeError:
++        # This is a bit of a hack. If the URL specified exists in a Google
++        # Source repo (which is the case when on the gem5 develop branch) we
++        # retrieve the JSON in base64 format. This cannot be loaded directly as
++        # text. Conversion is therefore needed.
++        to_return = json.loads(base64.b64decode(file_contents).decode("utf-8"))
++
++    return to_return
+ 
+ def _get_resources_json() -> Dict:
+     """
+-- 
+1.8.3.1
+

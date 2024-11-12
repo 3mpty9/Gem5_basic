@@ -1,0 +1,101 @@
+From 38abefd9d31e91bafb08cdbf06ae7e00b14635c9 Mon Sep 17 00:00:00 2001
+From: Jui-min Lee <fcrh@google.com>
+Date: Mon, 7 Mar 2022 11:16:46 +0800
+Subject: [PATCH 336/757] systemc: Fix memory leak of sc_event_list
+
+Make SensitivityAnd/OrList class track the sc_event_and/or_list and
+delete it when the Sensitivity object itself is deleted.
+
+Bug: 222177290
+Test: Run gem5 unittests, presubmits, and systemc unittests
+Change-Id: Ib46f8dfb6727f77ad843ba33ce22c7e6d2645ff2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57329
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/systemc/core/sensitivity.cc | 28 ++++++++++++++++++++++++++--
+ src/systemc/core/sensitivity.hh |  6 ++++++
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/src/systemc/core/sensitivity.cc b/src/systemc/core/sensitivity.cc
+index 8c4aa23..1367b29 100644
+--- a/src/systemc/core/sensitivity.cc
++++ b/src/systemc/core/sensitivity.cc
+@@ -214,9 +214,21 @@ void newDynamicSensitivityEventAndList(
+ 
+ DynamicSensitivityEventOrList::DynamicSensitivityEventOrList(
+         Process *p, const sc_core::sc_event_or_list *eol) :
+-    Sensitivity(p), DynamicSensitivity(p), SensitivityEvents(p, eol->events)
++    Sensitivity(p),
++    DynamicSensitivity(p),
++    SensitivityEvents(p, eol->events),
++    list(eol)
+ {}
+ 
++DynamicSensitivityEventOrList::~DynamicSensitivityEventOrList()
++{
++    if (list->autoDelete) {
++        panic_if(list->busy,
++                 "sc_event_or_list can never be busy in gem5 implementation");
++        delete list;
++    }
++}
++
+ bool
+ DynamicSensitivityEventOrList::notifyWork(Event *e)
+ {
+@@ -233,9 +245,21 @@ DynamicSensitivityEventOrList::notifyWork(Event *e)
+ 
+ DynamicSensitivityEventAndList::DynamicSensitivityEventAndList(
+         Process *p, const sc_core::sc_event_and_list *eal) :
+-    Sensitivity(p), DynamicSensitivity(p), SensitivityEvents(p, eal->events)
++    Sensitivity(p),
++    DynamicSensitivity(p),
++    SensitivityEvents(p, eal->events),
++    list(eal)
+ {}
+ 
++DynamicSensitivityEventAndList::~DynamicSensitivityEventAndList()
++{
++    if (list->autoDelete) {
++        panic_if(list->busy,
++                 "sc_event_and_list can never be busy in gem5 implementation");
++        delete list;
++    }
++}
++
+ bool
+ DynamicSensitivityEventAndList::notifyWork(Event *e)
+ {
+diff --git a/src/systemc/core/sensitivity.hh b/src/systemc/core/sensitivity.hh
+index 9e76969..af4ce2d 100644
+--- a/src/systemc/core/sensitivity.hh
++++ b/src/systemc/core/sensitivity.hh
+@@ -274,8 +274,11 @@ class DynamicSensitivityEventOrList :
+ 
+     DynamicSensitivityEventOrList(
+             Process *p, const sc_core::sc_event_or_list *eol);
++    ~DynamicSensitivityEventOrList();
+ 
+     bool notifyWork(Event *e) override;
++
++    const sc_core::sc_event_or_list *list;
+ };
+ 
+ //XXX This sensitivity can't be reused. To reset it, it has to be deleted and
+@@ -290,8 +293,11 @@ class DynamicSensitivityEventAndList :
+ 
+     DynamicSensitivityEventAndList(
+             Process *p, const sc_core::sc_event_and_list *eal);
++    ~DynamicSensitivityEventAndList();
+ 
+     bool notifyWork(Event *e) override;
++
++    const sc_core::sc_event_and_list *list;
+ };
+ 
+ } // namespace sc_gem5
+-- 
+1.8.3.1
+

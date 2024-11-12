@@ -1,0 +1,140 @@
+From b4d924fdca2d1c7e5e13dc482f7258940c066987 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Fri, 8 Apr 2022 18:29:42 +0800
+Subject: [PATCH 578/757] fastmodel: Add CortexA76 model reset port
+
+The model reset is an aggregated logic to reset the whole model. The
+port helps us to simulate the reboot process.
+
+Change-Id: I9aacc398b299e26e4675f7229db1afc8f6c8a34f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58814
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ .../arm/fastmodel/CortexA76/FastModelCortexA76.py    |  2 ++
+ src/arch/arm/fastmodel/CortexA76/cortex_a76.cc       |  5 +++--
+ src/arch/arm/fastmodel/CortexA76/evs.cc              | 20 ++++++++++++++++++++
+ src/arch/arm/fastmodel/CortexA76/evs.hh              |  5 +++++
+ 4 files changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py b/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
+index 9a56f29..3f98162 100644
+--- a/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
++++ b/src/arch/arm/fastmodel/CortexA76/FastModelCortexA76.py
+@@ -31,6 +31,7 @@ from m5.objects.ArmInterrupts import ArmInterrupts
+ from m5.objects.ArmISA import ArmISA
+ from m5.objects.FastModel import AmbaInitiatorSocket, AmbaTargetSocket
+ from m5.objects.FastModelGIC import Gicv3CommsTargetSocket
++from m5.objects.ResetPort import ResetResponsePort
+ from m5.objects.IntPin import IntSinkPin
+ from m5.objects.Gic import ArmPPI
+ from m5.objects.Iris import IrisBaseCPU
+@@ -172,6 +173,7 @@ class FastModelCortexA76Cluster(SimObject):
+             'all resettable registers in DynamIQ.')
+     dbg_reset = IntSinkPin('Initialize the shared debug APB, Cross Trigger ' \
+             'Interface (CTI), and Cross Trigger Matrix (CTM) logic.')
++    model_reset = ResetResponsePort('A reset port to reset the whole cluster.')
+ 
+     # These parameters are described in "Fast Models Reference Manual" section
+     # 3.4.19, "ARMCortexA7x1CT".
+diff --git a/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc b/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
+index e67a0f6..9280a04 100644
+--- a/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
++++ b/src/arch/arm/fastmodel/CortexA76/cortex_a76.cc
+@@ -104,7 +104,8 @@ CortexA76::setResetAddr(Addr addr, bool secure)
+ Port &
+ CortexA76::getPort(const std::string &if_name, PortID idx)
+ {
+-    if (if_name == "redistributor" || if_name == "core_reset")
++    if (if_name == "redistributor" || if_name == "core_reset" ||
++        if_name == "poweron_reset")
+         return cluster->getEvs()->gem5_getPort(if_name, num);
+     else
+         return Base::getPort(if_name, idx);
+@@ -200,7 +201,7 @@ Port &
+ CortexA76Cluster::getPort(const std::string &if_name, PortID idx)
+ {
+     if (if_name == "amba" || if_name == "top_reset" ||
+-        if_name == "dbg_reset") {
++        if_name == "dbg_reset" || if_name == "model_reset") {
+         return evs->gem5_getPort(if_name, idx);
+     } else {
+         return SimObject::getPort(if_name, idx);
+diff --git a/src/arch/arm/fastmodel/CortexA76/evs.cc b/src/arch/arm/fastmodel/CortexA76/evs.cc
+index d54ad78..1c06935 100644
+--- a/src/arch/arm/fastmodel/CortexA76/evs.cc
++++ b/src/arch/arm/fastmodel/CortexA76/evs.cc
+@@ -71,12 +71,30 @@ ScxEvsCortexA76<Types>::setResetAddr(int core, Addr addr, bool secure)
+ }
+ 
+ template <class Types>
++void
++ScxEvsCortexA76<Types>::requestReset()
++{
++    // Reset all cores.
++    for (auto &poweron_reset : this->poweron_reset) {
++        poweron_reset->signal_out.set_state(0, true);
++        poweron_reset->signal_out.set_state(0, false);
++    }
++    // Reset DSU.
++    this->top_reset.signal_out.set_state(0, true);
++    this->top_reset.signal_out.set_state(0, false);
++    // Reset debug APB.
++    this->dbg_reset.signal_out.set_state(0, true);
++    this->dbg_reset.signal_out.set_state(0, false);
++}
++
++template <class Types>
+ ScxEvsCortexA76<Types>::ScxEvsCortexA76(
+         const sc_core::sc_module_name &mod_name, const Params &p) :
+     Base(mod_name),
+     amba(Base::amba, p.name + ".amba", -1),
+     top_reset(p.name + ".top_reset", 0),
+     dbg_reset(p.name + ".dbg_reset", 0),
++    model_reset(p.name + ".model_reset", -1, this),
+     params(p)
+ {
+     for (int i = 0; i < CoreCount; i++) {
+@@ -178,6 +196,8 @@ ScxEvsCortexA76<Types>::gem5_getPort(const std::string &if_name, int idx)
+         return top_reset;
+     else if (if_name == "dbg_reset")
+         return dbg_reset;
++    else if (if_name == "model_reset")
++        return model_reset;
+     else
+         return Base::gem5_getPort(if_name, idx);
+ }
+diff --git a/src/arch/arm/fastmodel/CortexA76/evs.hh b/src/arch/arm/fastmodel/CortexA76/evs.hh
+index e1b6aed..081e80f 100644
+--- a/src/arch/arm/fastmodel/CortexA76/evs.hh
++++ b/src/arch/arm/fastmodel/CortexA76/evs.hh
+@@ -35,6 +35,7 @@
+ #include "arch/arm/fastmodel/common/signal_sender.hh"
+ #include "arch/arm/fastmodel/iris/cpu.hh"
+ #include "arch/arm/fastmodel/protocol/exported_clock_rate_control.hh"
++#include "dev/reset_port.hh"
+ #include "mem/port_proxy.hh"
+ #include "params/FastModelScxEvsCortexA76x1.hh"
+ #include "params/FastModelScxEvsCortexA76x2.hh"
+@@ -98,6 +99,8 @@ class ScxEvsCortexA76 : public Types::Base, public Iris::BaseCpuEvs
+ 
+     SignalSender dbg_reset;
+ 
++    ResetResponsePort<ScxEvsCortexA76> model_reset;
++
+     CortexA76Cluster *gem5CpuCluster;
+ 
+     const Params &params;
+@@ -126,6 +129,8 @@ class ScxEvsCortexA76 : public Types::Base, public Iris::BaseCpuEvs
+     void setCluster(SimObject *cluster) override;
+ 
+     void setResetAddr(int core, Addr addr, bool secure) override;
++
++    void requestReset();
+ };
+ 
+ struct ScxEvsCortexA76x1Types
+-- 
+1.8.3.1
+

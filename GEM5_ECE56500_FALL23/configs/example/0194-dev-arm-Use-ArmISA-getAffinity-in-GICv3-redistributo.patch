@@ -1,0 +1,46 @@
+From 342ad011683fe187b3eb487a3c34973cfbb4035d Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 20 Jan 2022 15:34:14 +0000
+Subject: [PATCH 194/757] dev-arm: Use ArmISA::getAffinity in GICv3
+ redistributor
+
+The GICv3 redistributor was reading the MPIDR value and manually
+extracting the affinity numbers from it. This is not necessary as there
+is already a getAffinity helper function
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I6ef150937b51bb065575ed2f432f4f5f0bc38b07
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55704
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/gic_v3_redistributor.cc | 12 +-----------
+ 1 file changed, 1 insertion(+), 11 deletions(-)
+
+diff --git a/src/dev/arm/gic_v3_redistributor.cc b/src/dev/arm/gic_v3_redistributor.cc
+index 225e4cd..adfc5bc 100644
+--- a/src/dev/arm/gic_v3_redistributor.cc
++++ b/src/dev/arm/gic_v3_redistributor.cc
+@@ -1017,17 +1017,7 @@ uint32_t
+ Gicv3Redistributor::getAffinity() const
+ {
+     ThreadContext *tc = gic->getSystem()->threads[cpuId];
+-    uint64_t mpidr = getMPIDR(gic->getSystem(), tc);
+-    /*
+-     * Aff3 = MPIDR[39:32]
+-     * (Note getMPIDR() returns uint32_t so Aff3 is always 0...)
+-     * Aff2 = MPIDR[23:16]
+-     * Aff1 = MPIDR[15:8]
+-     * Aff0 = MPIDR[7:0]
+-     * affinity = Aff3.Aff2.Aff1.Aff0
+-     */
+-    uint64_t affinity = ((mpidr & 0xff00000000) >> 8) | (mpidr & (0xffffff));
+-    return affinity;
++    return gem5::ArmISA::getAffinity(gic->getSystem(), tc);
+ }
+ 
+ bool
+-- 
+1.8.3.1
+

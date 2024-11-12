@@ -1,0 +1,36 @@
+From d77407c0e4250d7c86fc4a2b29a46089c7584343 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 20 Dec 2021 09:15:28 +0000
+Subject: [PATCH 064/757] configs: RubySequencer doesn't have "out_ports"
+
+"out_ports" are actually called "interrupt_out_port"
+This error has been introduced by [1]
+
+[1]: https://gem5-review.googlesource.com/c/public/gem5/+/52584
+
+Change-Id: If0a8d22b2cd1ef0d4240f37f8a0adcf5a826fb9d
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54524
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/ruby/CHI_config.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configs/ruby/CHI_config.py b/configs/ruby/CHI_config.py
+index 2d39659..097f367 100644
+--- a/configs/ruby/CHI_config.py
++++ b/configs/ruby/CHI_config.py
+@@ -360,7 +360,7 @@ class CPUSequencerWrapper:
+             if str(p) != 'icache_port':
+                 exec('cpu.%s = self.data_seq.in_ports' % p)
+         cpu.connectUncachedPorts(
+-            self.data_seq.in_ports, self.data_seq.out_ports)
++            self.data_seq.in_ports, self.data_seq.interrupt_out_port)
+ 
+     def connectIOPorts(self, piobus):
+         self.data_seq.connectIOPorts(piobus)
+-- 
+1.8.3.1
+

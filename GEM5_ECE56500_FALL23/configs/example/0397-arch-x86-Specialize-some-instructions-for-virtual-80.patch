@@ -1,0 +1,428 @@
+From 0eef985373322d057b6da2c1b7730a8c7afb0c12 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 06:15:45 -0800
+Subject: [PATCH 397/757] arch-x86: Specialize some instructions for virtual
+ 8086 mode.
+
+Some instructions behave in special ways in virtual 8086 mode. In some
+cases, that means that they behave like they do in real mode, even
+though the CPU has protected mode enabled. In other cases, it means that
+there are extra checks, or even very different behaviors, which help
+virtualize the system for the 8086 programs.
+
+Change-Id: I70723b38ea0a7625c4a557bf4dd8f044e5715172
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55809
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/isa/decoder/one_byte_opcodes.isa      | 99 +++++++++++++++++-----
+ src/arch/x86/isa/decoder/two_byte_opcodes.isa      | 10 +--
+ .../control_transfer/interrupts_and_exceptions.py  | 12 +++
+ .../insts/general_purpose/flags/push_and_pop.py    |  8 ++
+ .../insts/general_purpose/flags/set_and_clear.py   |  8 ++
+ .../general_purpose/input_output/general_io.py     | 16 ++++
+ .../general_purpose/input_output/string_io.py      | 16 ++++
+ 7 files changed, 141 insertions(+), 28 deletions(-)
+
+diff --git a/src/arch/x86/isa/decoder/one_byte_opcodes.isa b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+index 152f6e4..f4236a9 100644
+--- a/src/arch/x86/isa/decoder/one_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/one_byte_opcodes.isa
+@@ -47,7 +47,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: POP_REAL(sEv);
++                0x3, 0x4: POP_REAL(sEv);
+                 default: WarnUnimpl::pop_ES();
+             }
+             default: MultiInst::ADD(OPCODE_OP_BOTTOM3,
+@@ -75,7 +75,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: POP_REAL(sSv);
++                0x3, 0x4: POP_REAL(sSv);
+                 default: WarnUnimpl::pop_SS();
+             }
+             default: MultiInst::ADC(OPCODE_OP_BOTTOM3,
+@@ -90,7 +90,7 @@
+             }
+             0x7: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: POP_REAL(sDv);
++                0x3, 0x4: POP_REAL(sDv);
+                 default: WarnUnimpl::pop_DS();
+             }
+             default: MultiInst::SBB(OPCODE_OP_BOTTOM3,
+@@ -192,10 +192,22 @@
+             0x1: IMUL(Gv,Ev,Iz);
+             0x2: PUSH(Ib);
+             0x3: IMUL(Gv,Ev,Ib);
+-            0x4: StringInst::INS(Yb,rD);
+-            0x5: StringInst::INS(Yz,rD);
+-            0x6: StringInst::OUTS(rD,Xb);
+-            0x7: StringInst::OUTS(rD,Xz);
++            0x4: decode MODE_SUBMODE {
++                0x3: StringInst::INS_VIRT(Yb,rD);
++                default: StringInst::INS(Yb,rD);
++            }
++            0x5: decode MODE_SUBMODE {
++                0x3: StringInst::INS_VIRT(Yz,rD);
++                default: StringInst::INS(Yz,rD);
++            }
++            0x6: decode MODE_SUBMODE {
++                0x3: StringInst::OUTS_VIRT(rD,Xb);
++                default: StringInst::OUTS(rD,Xb);
++            }
++            0x7: decode MODE_SUBMODE {
++                0x3: StringInst::OUTS_VIRT(rD,Xz);
++                default: StringInst::OUTS(rD,Xz);
++            }
+         }
+         0x0E: decode OPCODE_OP_BOTTOM3 {
+             0x0: JO(Jb);
+@@ -305,12 +317,18 @@
+             0x1: CQO(rAv,rDv);
+             0x2: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: CALL_FAR_REAL(Iz);
++                0x3, 0x4: CALL_FAR_REAL(Iz);
+                 default: WarnUnimpl::call_far_Ap();
+             }
+             0x3: WarnUnimpl::fwait(); //aka wait
+-            0x4: PUSHF();
+-            0x5: POPF();
++            0x4: decode MODE_SUBMODE {
++                0x3: PUSHF_VIRT();
++                default: PUSHF();
++            }
++            0x5: decode MODE_SUBMODE {
++                0x3: POPF_VIRT();
++                default: POPF();
++            }
+             //The 64 bit versions of both of these should be illegal only
+             //if CPUID says it isn't supported. For now, we'll just assume
+             //that it's supported.
+@@ -366,12 +384,12 @@
+             0x3: RET_NEAR();
+             0x4: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: LES_REAL(Gz,Mz);
++                0x3, 0x4: LES_REAL(Gz,Mz);
+                 default: WarnUnimpl::les_Gz_Mp();
+             }
+             0x5: decode MODE_SUBMODE {
+                 0x0: UD2();
+-                0x4: LDS_REAL(Gz,Mz);
++                0x3, 0x4: LDS_REAL(Gz,Mz);
+                 default: WarnUnimpl::lds_Gz_Mp();
+             }
+             //0x6: group12_Eb_Ib();
+@@ -400,7 +418,11 @@
+                     0x3, 0x4: Inst::RET_FAR_REAL();
+                     default: Inst::RET_FAR();
+                 }
+-                0x4: Inst::INT3();
++                0x4: decode MODE_SUBMODE {
++                    0x4: Inst::INT3_REAL();
++                    0x3: Inst::INT3_VIRT();
++                    default: Inst::INT3();
++                }
+                 0x5: decode FullSystemInt default inst_ib() {
+                     0: decode IMMEDIATE {
+                         // Really only the LSB matters, but the decoder
+@@ -416,6 +438,7 @@
+                         0x0: Inst::INT_LONG(Ib);
+                         0x1: decode MODE_SUBMODE {
+                             0x4: Inst::INT_REAL(Ib);
++                            0x3: Inst::INT_VIRT(Ib);
+                             default: Inst::INT_PROT(Ib);
+                         }
+                     }
+@@ -499,10 +522,22 @@
+             0x1: LOOPE(Jb);
+             0x2: LOOP(Jb);
+             0x3: JRCXZ(Jb);
+-            0x4: IN(rAb,Ib);
+-            0x5: IN(rAv,Iv);
+-            0x6: OUT(Ib,rAb);
+-            0x7: OUT(Iv,rAv);
++            0x4: decode MODE_SUBMODE {
++                0x3: IN_VIRT(rAb,Ib);
++                default: IN(rAb,Ib);
++            }
++            0x5: decode MODE_SUBMODE {
++                0x3: IN_VIRT(rAv,Iv);
++                default: IN(rAv,Iv);
++            }
++            0x6: decode MODE_SUBMODE {
++                0x3: OUT_VIRT(Ib,rAb);
++                default: OUT(Ib,rAb);
++            }
++            0x7: decode MODE_SUBMODE {
++                0x3: OUT_VIRT(Iv,rAv);
++                default: OUT(Iv,rAv);
++            }
+         }
+         0x1D: decode OPCODE_OP_BOTTOM3 {
+             0x0: CALL_NEAR(Jz);
+@@ -515,10 +550,22 @@
+                 0x4: JMP_FAR_REAL(Iz);
+             }
+             0x3: JMP(Jb);
+-            0x4: IN(rAb,rD);
+-            0x5: IN(rAv,rD);
+-            0x6: OUT(rD,rAb);
+-            0x7: OUT(rD,rAv);
++            0x4: decode MODE_SUBMODE {
++                0x3: IN_VIRT(rAb,rD);
++                default: IN(rAb,rD);
++            }
++            0x5: decode MODE_SUBMODE {
++                0x3: IN_VIRT(rAv,rD);
++                default: IN(rAv,rD);
++            }
++            0x6: decode MODE_SUBMODE {
++                0x3: OUT_VIRT(rD,rAb);
++                default: OUT(rD,rAb);
++            }
++            0x7: decode MODE_SUBMODE {
++                0x3: OUT_VIRT(rD,rAv);
++                default: OUT(rD,rAv);
++            }
+         }
+         0x1E: decode OPCODE_OP_BOTTOM3 {
+             0x0: M5InternalError::error(
+@@ -557,8 +604,14 @@
+         0x1F: decode OPCODE_OP_BOTTOM3 {
+             0x0: CLC();
+             0x1: STC();
+-            0x2: CLI();
+-            0x3: STI();
++            0x2: decode MODE_SUBMODE {
++                0x3: CLI_VIRT();
++                default: CLI();
++            }
++            0x3: decode MODE_SUBMODE {
++                0x3: STI_VIRT();
++                default: STI();
++            }
+             0x4: CLD();
+             0x5: STD();
+             //0x6: group4();
+diff --git a/src/arch/x86/isa/decoder/two_byte_opcodes.isa b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+index 43f1eb3..b82afb0 100644
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa
+@@ -669,7 +669,7 @@
+         0x14: decode OPCODE_OP_BOTTOM3 {
+             0x0: Inst::PUSH(sFv);
+             0x1: decode MODE_SUBMODE {
+-                0x4: Inst::POP_REAL(sFv);
++                0x3, 0x4: Inst::POP_REAL(sFv);
+                 default: pop_fs();
+             }
+             0x2: CPUIDInst::CPUID({{
+@@ -699,7 +699,7 @@
+         0x15: decode OPCODE_OP_BOTTOM3 {
+             0x0: Inst::PUSH(sGv);
+             0x1: decode MODE_SUBMODE {
+-                0x4: Inst::POP_REAL(sGv);
++                0x3, 0x4: Inst::POP_REAL(sGv);
+                 default: pop_gs();
+             }
+             0x2: rsm_smm();
+@@ -751,16 +751,16 @@
+                 0x0: CMPXCHG(Eb,Gb);
+                 0x1: CMPXCHG(Ev,Gv);
+                 0x2: decode MODE_SUBMODE {
+-                    0x4: LSS_REAL(Gz,Mz);
++                    0x3, 0x4: LSS_REAL(Gz,Mz);
+                     default: WarnUnimpl::lss_Gz_Mp();
+                 }
+                 0x3: BTR(Ev,Gv);
+                 0x4: decode MODE_SUBMODE {
+-                    0x4: LFS_REAL(Gz,Mz);
++                    0x3, 0x4: LFS_REAL(Gz,Mz);
+                     default: WarnUnimpl::lfs_Gz_Mp();
+                 }
+                 0x5: decode MODE_SUBMODE {
+-                    0x4: LGS_REAL(Gz,Mz);
++                    0x3, 0x4: LGS_REAL(Gz,Mz);
+                     default: WarnUnimpl::lgs_Gz_Mp();
+                 }
+                 //The size of the second operand in these instructions
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+index 60d0086..7184849 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/interrupts_and_exceptions.py
+@@ -264,6 +264,14 @@ def macroop INT3 {
+     br rom_label("legacyModeInterrupt")
+ };
+ 
++def macroop INT3_VIRT {
++    panic "Virtual mode int3 isn't implemented!"
++};
++
++def macroop INT3_REAL {
++    panic "Real mode int3 isn't implemented!"
++};
++
+ def macroop INT_LONG_I {
+     #load the byte-sized interrupt vector specified in the instruction
+     .adjust_imm trimImm(8)
+@@ -329,6 +337,10 @@ def macroop INT_REAL_I {
+     # Set the new RIP
+     wrip t2, t0
+ };
++
++def macroop INT_VIRT_I {
++    panic "Virtual mode int3 isn't implemented!"
++};
+ '''
+ #let {{
+ #    class INT(Inst):
+diff --git a/src/arch/x86/isa/insts/general_purpose/flags/push_and_pop.py b/src/arch/x86/isa/insts/general_purpose/flags/push_and_pop.py
+index 4a0ca56..cebe65d 100644
+--- a/src/arch/x86/isa/insts/general_purpose/flags/push_and_pop.py
++++ b/src/arch/x86/isa/insts/general_purpose/flags/push_and_pop.py
+@@ -42,6 +42,10 @@ def macroop PUSHF {
+     subi rsp, rsp, dsz, dataSize=ssz
+ };
+ 
++def macroop PUSHF_VIRT {
++    panic "Virtual mode pushf isn't implemented!"
++};
++
+ def macroop POPF {
+     .adjust_env oszIn64Override
+ 
+@@ -49,4 +53,8 @@ def macroop POPF {
+     addi rsp, rsp, dsz, dataSize=ssz
+     wrflags t1, t0
+ };
++
++def macroop POPF_VIRT {
++    panic "Virtual mode popf isn't implemented!"
++};
+ '''
+diff --git a/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py b/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
+index f1d43bb..63b37bb 100644
+--- a/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
++++ b/src/arch/x86/isa/insts/general_purpose/flags/set_and_clear.py
+@@ -72,10 +72,18 @@ def macroop STI {
+     wrflags t1, t0
+ };
+ 
++def macroop STI_VIRT {
++    panic "Virtual mode sti isn't implemented!"
++};
++
+ def macroop CLI {
+     rflags t1
+     limm t2, "~IFBit", dataSize=8
+     and t1, t1, t2
+     wrflags t1, t0
+ };
++
++def macroop CLI_VIRT {
++    panic "Virtual mode cli isn't implemented!"
++};
+ '''
+diff --git a/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py b/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
+index 58b38e5..94d026c 100644
+--- a/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
++++ b/src/arch/x86/isa/insts/general_purpose/input_output/general_io.py
+@@ -46,6 +46,10 @@ microcode = '''
+         mfence
+     };
+ 
++    def macroop IN_VIRT_R_I {
++        panic "Virtual mode in isn't implemented!"
++    };
++
+     def macroop IN_R_R {
+         zexti t2, regm, 15, dataSize=8
+         mfence
+@@ -54,6 +58,10 @@ microcode = '''
+         mfence
+     };
+ 
++    def macroop IN_VIRT_R_R {
++        panic "Virtual mode in isn't implemented!"
++    };
++
+     def macroop OUT_I_R {
+         .adjust_imm trimImm(8)
+         limm t1, imm, dataSize=8
+@@ -63,6 +71,10 @@ microcode = '''
+         mfence
+     };
+ 
++    def macroop OUT_VIRT_I_R {
++        panic "Virtual mode out isn't implemented!"
++    };
++
+     def macroop OUT_R_R {
+         zexti t2, reg, 15, dataSize=8
+         mfence
+@@ -70,4 +82,8 @@ microcode = '''
+             nonSpec=True
+         mfence
+     };
++
++    def macroop OUT_VIRT_R_R {
++        panic "Virtual mode out isn't implemented!"
++    };
+ '''
+diff --git a/src/arch/x86/isa/insts/general_purpose/input_output/string_io.py b/src/arch/x86/isa/insts/general_purpose/input_output/string_io.py
+index b333526..ec386a0 100644
+--- a/src/arch/x86/isa/insts/general_purpose/input_output/string_io.py
++++ b/src/arch/x86/isa/insts/general_purpose/input_output/string_io.py
+@@ -52,6 +52,10 @@ def macroop INS_M_R {
+     add rdi, rdi, t3, dataSize=asz
+ };
+ 
++def macroop INS_VIRT_M_R {
++    panic "Virtual mode ins isn't implemented!"
++};
++
+ def macroop INS_E_M_R {
+     and t0, rcx, rcx, flags=(EZF,), dataSize=asz
+     br label("end"), flags=(CEZF,)
+@@ -77,6 +81,10 @@ end:
+     fault "NoFault"
+ };
+ 
++def macroop INS_VIRT_E_M_R {
++    panic "Virtual mode ins isn't implemented!"
++};
++
+ def macroop OUTS_R_M {
+     # Find the constant we need to either add or subtract from rdi
+     ruflag t0, 10
+@@ -95,6 +103,10 @@ def macroop OUTS_R_M {
+     add rsi, rsi, t3, dataSize=asz
+ };
+ 
++def macroop OUTS_VIRT_R_M {
++    panic "Virtual mode outs isn't implemented!"
++};
++
+ def macroop OUTS_E_R_M {
+     and t0, rcx, rcx, flags=(EZF,), dataSize=asz
+     br label("end"), flags=(CEZF,)
+@@ -119,4 +131,8 @@ end:
+     mfence
+     fault "NoFault"
+ };
++
++def macroop OUTS_VIRT_E_R_M {
++    panic "Virtual mode outs isn't implemented!"
++};
+ '''
+-- 
+1.8.3.1
+

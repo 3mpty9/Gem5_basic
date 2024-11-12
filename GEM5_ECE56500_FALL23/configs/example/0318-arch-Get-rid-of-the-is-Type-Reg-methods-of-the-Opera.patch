@@ -1,0 +1,113 @@
+From f1b421baf53225fb6389189a64c932357de7a5c8 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 21:47:17 -0700
+Subject: [PATCH 318/757] arch: Get rid of the is${Type}Reg methods of the
+ Operand class.
+
+These are not used, and would prevent creating a truly generic register
+operand class.
+
+Change-Id: Ibffadc7a682b878aee8e632a0f85c06e91a60614
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49720
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 39 ------------------------------------
+ 1 file changed, 39 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 3a1e5a4..bf8184f 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -122,27 +122,6 @@ class Operand(object):
+     def isReg(self):
+         return 0
+ 
+-    def isFloatReg(self):
+-        return 0
+-
+-    def isIntReg(self):
+-        return 0
+-
+-    def isCCReg(self):
+-        return 0
+-
+-    def isControlReg(self):
+-        return 0
+-
+-    def isVecReg(self):
+-        return 0
+-
+-    def isVecElem(self):
+-        return 0
+-
+-    def isVecPredReg(self):
+-        return 0
+-
+     def isPCState(self):
+         return 0
+ 
+@@ -177,9 +156,6 @@ class RegOperand(Operand):
+ class IntRegOperand(RegOperand):
+     reg_class = 'IntRegClass'
+ 
+-    def isIntReg(self):
+-        return 1
+-
+     def makeConstructor(self, predRead, predWrite):
+         c_src = ''
+         c_dest = ''
+@@ -246,9 +222,6 @@ class IntRegOperand(RegOperand):
+ class FloatRegOperand(RegOperand):
+     reg_class = 'FloatRegClass'
+ 
+-    def isFloatReg(self):
+-        return 1
+-
+     def makeConstructor(self, predRead, predWrite):
+         c_src = ''
+         c_dest = ''
+@@ -310,9 +283,6 @@ class VecRegOperand(RegOperand):
+         super().__init__(parser, full_name, ext, is_src, is_dest)
+         self.elemExt = None
+ 
+-    def isVecReg(self):
+-        return 1
+-
+     def makeDeclElem(self, elem_op):
+         (elem_name, elem_ext) = elem_op
+         (elem_spec, dflt_elem_ext) = self.elems[elem_name]
+@@ -450,9 +420,6 @@ class VecRegOperand(RegOperand):
+ class VecElemOperand(RegOperand):
+     reg_class = 'VecElemClass'
+ 
+-    def isVecElem(self):
+-        return 1
+-
+     def makeDecl(self):
+         if self.is_dest and not self.is_src:
+             return '\n\t%s %s;' % (self.ctype, self.base_name)
+@@ -494,9 +461,6 @@ class VecElemOperand(RegOperand):
+ class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+ 
+-    def isVecPredReg(self):
+-        return 1
+-
+     def makeDecl(self):
+         return ''
+ 
+@@ -571,9 +535,6 @@ class VecPredRegOperand(RegOperand):
+ class CCRegOperand(RegOperand):
+     reg_class = 'CCRegClass'
+ 
+-    def isCCReg(self):
+-        return 1
+-
+     def makeConstructor(self, predRead, predWrite):
+         c_src = ''
+         c_dest = ''
+-- 
+1.8.3.1
+

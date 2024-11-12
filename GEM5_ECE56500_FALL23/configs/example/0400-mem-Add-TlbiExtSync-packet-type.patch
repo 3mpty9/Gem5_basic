@@ -1,0 +1,60 @@
+From e41323fb93da41f7d30d02ba9bdc7072176a8e50 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:50:39 +0000
+Subject: [PATCH 400/757] mem: Add TlbiExtSync packet type
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I45435326daca599ac973c747777ecac52bf7fd33
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57290
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/packet.cc | 3 ++-
+ src/mem/packet.hh | 4 +++-
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/mem/packet.cc b/src/mem/packet.cc
+index 24c3d9c..3cd1bb9 100644
+--- a/src/mem/packet.cc
++++ b/src/mem/packet.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2011-2019 ARM Limited
++ * Copyright (c) 2011-2019, 2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -232,6 +232,7 @@ MemCmd::commandInfo[] =
+     { {IsRead, IsRequest, NeedsResponse}, HTMReqResp, "HTMReq" },
+     { {IsRead, IsResponse}, InvalidCmd, "HTMReqResp" },
+     { {IsRead, IsRequest}, InvalidCmd, "HTMAbort" },
++    { {IsRequest}, InvalidCmd, "TlbiExtSync" },
+ };
+ 
+ AddrRange
+diff --git a/src/mem/packet.hh b/src/mem/packet.hh
+index d42ea27..7d32634 100644
+--- a/src/mem/packet.hh
++++ b/src/mem/packet.hh
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2019 ARM Limited
++ * Copyright (c) 2012-2019, 2021 ARM Limited
+  * All rights reserved
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -144,6 +144,8 @@ class MemCmd
+         HTMReq,
+         HTMReqResp,
+         HTMAbort,
++        // Tlb shootdown
++        TlbiExtSync,
+         NUM_MEM_CMDS
+     };
+ 
+-- 
+1.8.3.1
+

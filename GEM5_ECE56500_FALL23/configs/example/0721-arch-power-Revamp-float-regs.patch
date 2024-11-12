@@ -1,0 +1,136 @@
+From 0d18112f0ff1fc536e7cb9d014629439b5f1e926 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 28 Aug 2021 23:15:55 -0700
+Subject: [PATCH 721/757] arch-power: Revamp float regs.
+
+Change-Id: I77a5a021da82c8528d092f7363a927dec224d5ac
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49771
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Boris Shingarov <shingarov@labware.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/power/isa.cc        |  8 +++++---
+ src/arch/power/regs/float.hh |  8 ++++++--
+ src/arch/power/remote_gdb.cc | 16 ++++++++--------
+ src/arch/power/remote_gdb.hh |  4 ++--
+ 4 files changed, 21 insertions(+), 15 deletions(-)
+
+diff --git a/src/arch/power/isa.cc b/src/arch/power/isa.cc
+index 99aef2f..ff9f9b6 100644
+--- a/src/arch/power/isa.cc
++++ b/src/arch/power/isa.cc
+@@ -55,7 +55,7 @@ namespace PowerISA
+ ISA::ISA(const Params &p) : BaseISA(p)
+ {
+     _regClasses.emplace_back(int_reg::NumRegs, debug::IntRegs);
+-    _regClasses.emplace_back(NumFloatRegs, debug::FloatRegs);
++    _regClasses.emplace_back(float_reg::NumRegs, debug::FloatRegs);
+     _regClasses.emplace_back(1, debug::IntRegs);
+     _regClasses.emplace_back(2, debug::IntRegs);
+     _regClasses.emplace_back(1, debug::IntRegs);
+@@ -74,8 +74,10 @@ ISA::copyRegsFrom(ThreadContext *src)
+     }
+ 
+     // Then loop through the floating point registers.
+-    for (int i = 0; i < NumFloatRegs; ++i)
+-        tc->setFloatReg(i, src->readFloatReg(i));
++    for (int i = 0; i < float_reg::NumRegs; ++i) {
++        RegId reg(FloatRegClass, i);
++        tc->setReg(reg, src->getReg(reg));
++    }
+ 
+     //TODO Copy misc. registers
+ 
+diff --git a/src/arch/power/regs/float.hh b/src/arch/power/regs/float.hh
+index 9464101..ce31c3a 100644
+--- a/src/arch/power/regs/float.hh
++++ b/src/arch/power/regs/float.hh
+@@ -35,9 +35,13 @@ namespace gem5
+ namespace PowerISA
+ {
+ 
+-const int NumFloatArchRegs = 32;
+-const int NumFloatRegs = NumFloatArchRegs;
++namespace float_reg
++{
++
++const int NumArchRegs = 32;
++const int NumRegs = NumArchRegs;
+ 
++} // namespace float_reg
+ } // namespace PowerISA
+ } // namespace gem5
+ 
+diff --git a/src/arch/power/remote_gdb.cc b/src/arch/power/remote_gdb.cc
+index 5d2f4dd..bd2e087 100644
+--- a/src/arch/power/remote_gdb.cc
++++ b/src/arch/power/remote_gdb.cc
+@@ -192,8 +192,8 @@ RemoteGDB::PowerGdbRegCache::getRegs(ThreadContext *context)
+         r.gpr[i] = htog((uint32_t)context->getReg(reg), order);
+     }
+ 
+-    for (int i = 0; i < NumFloatArchRegs; i++)
+-        r.fpr[i] = context->readFloatReg(i);
++    for (int i = 0; i < float_reg::NumArchRegs; i++)
++        r.fpr[i] = context->getReg(RegId(FloatRegClass, i));
+ 
+     r.pc = htog((uint32_t)context->pcState().instAddr(), order);
+     r.msr = 0; // MSR is privileged, hence not exposed here
+@@ -215,8 +215,8 @@ RemoteGDB::PowerGdbRegCache::setRegs(ThreadContext *context) const
+     for (int i = 0; i < int_reg::NumArchRegs; i++)
+         context->setReg(RegId(IntRegClass, i), gtoh(r.gpr[i], order));
+ 
+-    for (int i = 0; i < NumFloatArchRegs; i++)
+-        context->setFloatReg(i, r.fpr[i]);
++    for (int i = 0; i < float_reg::NumArchRegs; i++)
++        context->setReg(RegId(FloatRegClass, i), r.fpr[i]);
+ 
+     auto pc = context->pcState().as<PowerISA::PCState>();
+     pc.byteOrder(order);
+@@ -246,8 +246,8 @@ RemoteGDB::Power64GdbRegCache::getRegs(ThreadContext *context)
+     for (int i = 0; i < int_reg::NumArchRegs; i++)
+         r.gpr[i] = htog(context->getReg(RegId(IntRegClass, i)), order);
+ 
+-    for (int i = 0; i < NumFloatArchRegs; i++)
+-        r.fpr[i] = context->readFloatReg(i);
++    for (int i = 0; i < float_reg::NumArchRegs; i++)
++        r.fpr[i] = context->getReg(RegId(FloatRegClass, i));
+ 
+     r.pc = htog(context->pcState().instAddr(), order);
+     r.msr = 0; // MSR is privileged, hence not exposed here
+@@ -269,8 +269,8 @@ RemoteGDB::Power64GdbRegCache::setRegs(ThreadContext *context) const
+     for (int i = 0; i < int_reg::NumArchRegs; i++)
+         context->setReg(RegId(IntRegClass, i), gtoh(r.gpr[i], order));
+ 
+-    for (int i = 0; i < NumFloatArchRegs; i++)
+-        context->setFloatReg(i, r.fpr[i]);
++    for (int i = 0; i < float_reg::NumArchRegs; i++)
++        context->setReg(RegId(FloatRegClass, i), r.fpr[i]);
+ 
+     auto pc = context->pcState().as<PowerISA::PCState>();
+     pc.byteOrder(order);
+diff --git a/src/arch/power/remote_gdb.hh b/src/arch/power/remote_gdb.hh
+index c2a2853..138913e 100644
+--- a/src/arch/power/remote_gdb.hh
++++ b/src/arch/power/remote_gdb.hh
+@@ -57,7 +57,7 @@ class RemoteGDB : public BaseRemoteGDB
+         struct GEM5_PACKED
+         {
+             uint32_t gpr[int_reg::NumArchRegs];
+-            uint64_t fpr[NumFloatArchRegs];
++            uint64_t fpr[float_reg::NumArchRegs];
+             uint32_t pc;
+             uint32_t msr;
+             uint32_t cr;
+@@ -86,7 +86,7 @@ class RemoteGDB : public BaseRemoteGDB
+         struct GEM5_PACKED
+         {
+             uint64_t gpr[int_reg::NumArchRegs];
+-            uint64_t fpr[NumFloatArchRegs];
++            uint64_t fpr[float_reg::NumArchRegs];
+             uint64_t pc;
+             uint64_t msr;
+             uint32_t cr;
+-- 
+1.8.3.1
+

@@ -1,0 +1,54 @@
+From 96b11c511e463bea39da5ba2e884b727cc76b274 Mon Sep 17 00:00:00 2001
+From: Yen-lin Lai <yenlinlai@google.com>
+Date: Thu, 31 Mar 2022 09:11:15 +0800
+Subject: [PATCH 504/757] scons: Allow sources and libs called multiple times
+
+In Python, "+=" operator for list acts more like append and list assign
+doesn't make a copy. This will cause unexpected append to the orignal
+list. Since we have multiple env to "declare", these functions will be
+called multiple times and could wrongly append duplicated entries in
+later calls.
+
+Make a copy before appending the entries from filter to avoid this
+problem.
+
+Change-Id: I144d5054e4d93191ebc94b93291ff9a3f8a6c429
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58409
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/SConscript | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index d55520b..746d3f1 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -38,6 +38,7 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ import collections
++import copy
+ import distutils.spawn
+ import itertools
+ import os
+@@ -329,13 +330,13 @@ class TopLevelBase(object, metaclass=TopLevelMeta):
+         self.dir = Dir('.')
+ 
+     def sources(self, env):
+-        srcs = self.srcs
++        srcs = copy.copy(self.srcs)
+         for f in self.filters:
+             srcs += Source.all.apply_filter(env, f)
+         return srcs
+ 
+     def libs(self, env):
+-        libs = self.sourceLibs
++        libs = copy.copy(self.sourceLibs)
+         for f in self.filters:
+             libs += SourceLib.all.apply_filter(env, f)
+         return libs
+-- 
+1.8.3.1
+

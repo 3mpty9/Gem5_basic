@@ -1,0 +1,57 @@
+From cb3c607f4bf5c6e00172153c161d7967911642f9 Mon Sep 17 00:00:00 2001
+From: Boris Shingarov <shingarov@labware.com>
+Date: Sun, 29 May 2022 15:29:06 -0400
+Subject: [PATCH 672/757] misc: Clarify commit message guidelines
+
+This change in wording aims towards a more welcoming first review
+atmosphere for new contributors. I was recently reading through a
+chain of very-high-quality commits from a first-time contributor,
+and the only problem was the conjugation of the commit message.
+This is a totally minor issue but when I am scanning through a list
+of a thousand commit messages in imperative mood and there is one
+standing out in past indicative, it throws off my concentration.
+Now I am left with a dilemma on my hands: I don't want the risk of
+mistaken impression of undue nitpicking over undocumented style
+preference, in a good commit from a new contributor. The present
+change borrows additional explanatory language from Eclipse's Commit
+Guidelines, to avoid this kind of tensions in the future.
+
+Change-Id: If6aa8341871304ee7ff88a014048e4104aa9dcb5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60129
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ CONTRIBUTING.md | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index bdbcc2d..189b63f 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -144,13 +144,17 @@ changes, we require all change descriptions be strictly formatted.
+ A canonical commit message consists of three parts:
+  * A short summary line describing the change. This line starts with one or
+    more keywords (found in the MAINTAINERS file) separated by commas followed
+-   by a colon and a description of the change. This line should be no more than
+-   65 characters long since version control systems usually add a prefix that
+-   causes line-wrapping for longer lines.
++   by a colon and a description of the change. This short description is
++   written in the imperative mood, and should say what happens when the patch
++   is applied. Keep it short and simple. Write it in sentence case preferably
++   not ending in a period. This line should be no more than 65 characters long
++   since version control systems usually add a prefix that causes line-wrapping
++   for longer lines.
+  * (Optional, but highly recommended) A detailed description. This describes
+    what you have done and why. If the change isn't obvious, you might want to
+    motivate why it is needed. Lines need to be wrapped to 72 characters or
+-   less.
++   less. Leave a blank line between the first short summary line and this
++   detailed description.
+  * Tags describing patch metadata. You are highly recommended to use
+    tags to acknowledge reviewers for their work. Gerrit will automatically add
+    most tags.
+-- 
+1.8.3.1
+

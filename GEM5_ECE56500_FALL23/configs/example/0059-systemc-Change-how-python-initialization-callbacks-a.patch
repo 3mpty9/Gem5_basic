@@ -1,0 +1,264 @@
+From f278b1ea3657a8cccb6ebdf73d3632257fe11e9a Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 16 Dec 2021 02:40:28 -0800
+Subject: [PATCH 059/757] systemc: Change how python initialization callbacks
+ are handled.
+
+Because the python environment may already be up and running by the time
+static initializers are run, specifically when gem5 is built as a
+library and loaded with dlopen, we can't rely on all of the objects
+declaring python initialization callbacks having been constructed by the
+time the code which would execute them runs.
+
+To address that problem, this change keeps track of whether the
+initialization has already happened when a callback is installed, and if
+so, runs the callback immediately.
+
+The original implementation also had users install callbacks by
+overriding a virtual function in the PythonInitFunc class, and then
+statically allocating an instance of that subclass so its constructor
+would be called at initialization time. Calling the function manually if
+initialization has already happened won't work in that case, because you
+can't call a virtual function from a constructor and get the behavior
+you'd want.
+
+Instead, this change makes the PythonInitFunc wrap the actual callback
+which is outside of the structure itself. Because the callback is not a
+virtual function of PythonInitFunc, we can call it in the constructor
+without issue.
+
+Also, the Callback type has to be a bare function pointer and not a
+std::function<...> because the argument it takes is a pybind11::module_
+reference. Pybind11 sets the visibility of all of its code to hidden to
+improve binary size, but unfortunately that causes problems when
+accepting one as an argument in a publically accessible lambda in g++.
+clang doesn't raise a warning, but g++ does which breaks the build. We
+could potentially disable this warning, but accepting a function pointer
+instead works just as well, since captureless lambdas can be trivially
+converted into function pointers, and they don't seem to upset g++.
+
+Change-Id: I3fb321b577090df67c7be3be0e677c2c2055d446
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54325
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/systemc/core/python.cc                         | 15 ++++-
+ src/systemc/core/python.hh                         |  7 +-
+ src/systemc/core/sc_main_python.cc                 | 15 ++---
+ src/systemc/core/sc_time_python.cc                 | 75 ++++++++++------------
+ .../tlm_core/2/quantum/global_quantum_python.cc    | 28 ++++----
+ 5 files changed, 69 insertions(+), 71 deletions(-)
+
+diff --git a/src/systemc/core/python.cc b/src/systemc/core/python.cc
+index 2283ae7..472a050 100644
+--- a/src/systemc/core/python.cc
++++ b/src/systemc/core/python.cc
+@@ -45,20 +45,31 @@ firstInitFunc()
+     return first;
+ }
+ 
++bool python_initialized = false;
++
+ void
+ systemc_pybind(pybind11::module_ &m_internal)
+ {
+     pybind11::module_ m = m_internal.def_submodule("systemc");
+     for (auto ptr = firstInitFunc(); ptr; ptr = ptr->next)
+-        ptr->run(m);
++        ptr->callback(m);
++
++    python_initialized = true;
+ }
+ gem5::EmbeddedPyBind embed_("systemc", &systemc_pybind);
+ 
+ } // anonymous namespace
+ 
+-PythonInitFunc::PythonInitFunc() : next(firstInitFunc())
++PythonInitFunc::PythonInitFunc(Callback run) :
++    callback(run), next(firstInitFunc())
+ {
+     firstInitFunc() = this;
++
++    // If the python was already initialized, run the callback immediately.
++    if (python_initialized) {
++        auto systemc_module = pybind11::module_::import("_m5.systemc");
++        callback(systemc_module);
++    }
+ }
+ 
+ } // namespace sc_gem5
+diff --git a/src/systemc/core/python.hh b/src/systemc/core/python.hh
+index 5a3f6ef..3c563db 100644
+--- a/src/systemc/core/python.hh
++++ b/src/systemc/core/python.hh
+@@ -35,11 +35,12 @@ namespace sc_gem5
+ 
+ struct PythonInitFunc
+ {
++    using Callback = void(*)(pybind11::module_ &systemc);
++    Callback callback;
++
+     PythonInitFunc *next;
+ 
+-    PythonInitFunc();
+-    ~PythonInitFunc() {}
+-    virtual void run(pybind11::module_ &systemc) = 0;
++    PythonInitFunc(Callback run);
+ };
+ 
+ } // namespace sc_gem5
+diff --git a/src/systemc/core/sc_main_python.cc b/src/systemc/core/sc_main_python.cc
+index 1697efe..8d2542e 100644
+--- a/src/systemc/core/sc_main_python.cc
++++ b/src/systemc/core/sc_main_python.cc
+@@ -92,15 +92,10 @@ sc_main_result_str()
+ // Make our sc_main wrapper available in the internal _m5 python module under
+ // the systemc submodule.
+ 
+-struct InstallScMain : public ::sc_gem5::PythonInitFunc
+-{
+-    void
+-    run(pybind11::module_ &systemc) override
+-    {
+-        systemc.def("sc_main", &sc_main);
+-        systemc.def("sc_main_result_code", &sc_main_result_code);
+-        systemc.def("sc_main_result_str", &sc_main_result_str);
+-    }
+-} installScMain;
++::sc_gem5::PythonInitFunc installScMain([](pybind11::module_ &systemc) {
++    systemc.def("sc_main", &sc_main);
++    systemc.def("sc_main_result_code", &sc_main_result_code);
++    systemc.def("sc_main_result_str", &sc_main_result_str);
++});
+ 
+ } // anonymous namespace
+diff --git a/src/systemc/core/sc_time_python.cc b/src/systemc/core/sc_time_python.cc
+index 58fa65f..be383bc 100644
+--- a/src/systemc/core/sc_time_python.cc
++++ b/src/systemc/core/sc_time_python.cc
+@@ -33,48 +33,43 @@
+ namespace
+ {
+ 
+-struct InstallScTime : public ::sc_gem5::PythonInitFunc
+-{
+-    void
+-    run(pybind11::module_ &systemc) override
+-    {
+-        pybind11::class_<sc_core::sc_time> sc_time(systemc, "sc_time");
+-        sc_time
+-            // Constructors (omitting nonstandard and deprecated)
+-            .def(pybind11::init<>())
+-            .def(pybind11::init<double, sc_core::sc_time_unit>())
+-            .def(pybind11::init<const sc_core::sc_time &>())
++::sc_gem5::PythonInitFunc installScTime([](pybind11::module_ &systemc) {
++    pybind11::class_<sc_core::sc_time> sc_time(systemc, "sc_time");
++    sc_time
++        // Constructors (omitting nonstandard and deprecated)
++        .def(pybind11::init<>())
++        .def(pybind11::init<double, sc_core::sc_time_unit>())
++        .def(pybind11::init<const sc_core::sc_time &>())
+ 
+-            // Converters.
+-            .def("value", &sc_core::sc_time::value)
+-            .def("to_double", &sc_core::sc_time::to_double)
+-            .def("to_seconds", &sc_core::sc_time::to_seconds)
+-            .def("to_string", &sc_core::sc_time::to_string)
+-            .def("__str__", &sc_core::sc_time::to_string)
++        // Converters.
++        .def("value", &sc_core::sc_time::value)
++        .def("to_double", &sc_core::sc_time::to_double)
++        .def("to_seconds", &sc_core::sc_time::to_seconds)
++        .def("to_string", &sc_core::sc_time::to_string)
++        .def("__str__", &sc_core::sc_time::to_string)
+ 
+-            // Operators.
+-            .def(pybind11::self == pybind11::self)
+-            .def(pybind11::self != pybind11::self)
+-            .def(pybind11::self < pybind11::self)
+-            .def(pybind11::self <= pybind11::self)
+-            .def(pybind11::self > pybind11::self)
+-            .def(pybind11::self >= pybind11::self)
+-            .def(pybind11::self += pybind11::self)
+-            .def(pybind11::self -= pybind11::self)
+-            .def(pybind11::self *= double())
+-            .def(pybind11::self /= double())
+-            ;
++        // Operators.
++        .def(pybind11::self == pybind11::self)
++        .def(pybind11::self != pybind11::self)
++        .def(pybind11::self < pybind11::self)
++        .def(pybind11::self <= pybind11::self)
++        .def(pybind11::self > pybind11::self)
++        .def(pybind11::self >= pybind11::self)
++        .def(pybind11::self += pybind11::self)
++        .def(pybind11::self -= pybind11::self)
++        .def(pybind11::self *= double())
++        .def(pybind11::self /= double())
++        ;
+ 
+-        pybind11::enum_<sc_core::sc_time_unit>(sc_time, "sc_time_unit")
+-            .value("SC_FS", sc_core::SC_FS)
+-            .value("SC_PS", sc_core::SC_PS)
+-            .value("SC_NS", sc_core::SC_NS)
+-            .value("SC_US", sc_core::SC_US)
+-            .value("SC_MS", sc_core::SC_MS)
+-            .value("SC_SEC", sc_core::SC_SEC)
+-            .export_values()
+-            ;
+-    }
+-} installScTime;
++    pybind11::enum_<sc_core::sc_time_unit>(sc_time, "sc_time_unit")
++        .value("SC_FS", sc_core::SC_FS)
++        .value("SC_PS", sc_core::SC_PS)
++        .value("SC_NS", sc_core::SC_NS)
++        .value("SC_US", sc_core::SC_US)
++        .value("SC_MS", sc_core::SC_MS)
++        .value("SC_SEC", sc_core::SC_SEC)
++        .export_values()
++        ;
++});
+ 
+ } // anonymous namespace
+diff --git a/src/systemc/tlm_core/2/quantum/global_quantum_python.cc b/src/systemc/tlm_core/2/quantum/global_quantum_python.cc
+index c29a232..a00db0c 100644
+--- a/src/systemc/tlm_core/2/quantum/global_quantum_python.cc
++++ b/src/systemc/tlm_core/2/quantum/global_quantum_python.cc
+@@ -31,21 +31,17 @@
+ namespace
+ {
+ 
+-struct InstallTlmGlobalQuantum : public ::sc_gem5::PythonInitFunc
+-{
+-    void
+-    run(pybind11::module_ &systemc) override
+-    {
+-        pybind11::class_<tlm::tlm_global_quantum>(
+-                systemc, "tlm_global_quantum")
+-            .def_static("instance", &tlm::tlm_global_quantum::instance,
+-                        pybind11::return_value_policy::reference)
+-            .def("set", &tlm::tlm_global_quantum::set)
+-            .def("get", &tlm::tlm_global_quantum::get)
+-            .def("compute_local_quantum",
+-                    &tlm::tlm_global_quantum::compute_local_quantum)
+-            ;
+-    }
+-} installTlmGlobalQuantum;
++::sc_gem5::PythonInitFunc installTlmGlobalQuantum(
++        [](pybind11::module_ &systemc) {
++    pybind11::class_<tlm::tlm_global_quantum>(
++            systemc, "tlm_global_quantum")
++        .def_static("instance", &tlm::tlm_global_quantum::instance,
++                    pybind11::return_value_policy::reference)
++        .def("set", &tlm::tlm_global_quantum::set)
++        .def("get", &tlm::tlm_global_quantum::get)
++        .def("compute_local_quantum",
++                &tlm::tlm_global_quantum::compute_local_quantum)
++        ;
++});
+ 
+ } // anonymous namespace
+-- 
+1.8.3.1
+

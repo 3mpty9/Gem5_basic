@@ -1,0 +1,42 @@
+From 25b046f4d432d3a23fb24cc8e33742c7254d9c44 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 10 Jan 2022 23:11:21 -0800
+Subject: [PATCH 128/757] arch-x86: Fix disassembly of fixed register macroops.
+
+These are mapped to instruction definitions like MOV_R_R, even though
+one or more of the Rs might have come from a fixed value. Because
+MOV_R_R (for instance) is only defined once, using a fixed text constant
+there won't work because that can only have one value.
+
+Instead, use a variable which will have the value of that constant so
+that the same disassembly code will work no matter what fixed value was
+used.
+
+Change-Id: Ie45181c6becce80ad44fa30fc3323757ef713d7c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55444
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa/specialize.isa | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/arch/x86/isa/specialize.isa b/src/arch/x86/isa/specialize.isa
+index 839b66d..7afdd23 100644
+--- a/src/arch/x86/isa/specialize.isa
++++ b/src/arch/x86/isa/specialize.isa
+@@ -141,6 +141,10 @@ let {{
+                 else:
+                     regString = "INTREG_R%s" % opType.reg
+                 env.addReg(regString)
++                if env.regmUsed:
++                    regString = "env.regm"
++                else:
++                    regString = "env.reg"
+                 env.addToDisassembly(
+                     "printReg(out, RegId(IntRegClass, %s), regSize);\n" %
+                     regString)
+-- 
+1.8.3.1
+

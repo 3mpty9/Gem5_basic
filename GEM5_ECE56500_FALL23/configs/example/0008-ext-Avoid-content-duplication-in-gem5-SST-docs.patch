@@ -1,0 +1,69 @@
+From 7f2079f66240afd43408d00ebdd4530535154250 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 3 Dec 2021 14:56:14 +0000
+Subject: [PATCH 008/757] ext: Avoid content duplication in gem5-SST docs
+
+A brief guide on how to run the gem5 SST example scripts
+is already provided in the README file, so there is no need
+to copy-paste it in the INSTALL file, which should cover
+the building phase only.
+
+Change-Id: I49c677f54450d97a1c8508764e45ab23b4b5fe33
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53629
+Reviewed-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/INSTALL.md | 15 +--------------
+ ext/sst/README.md  |  9 ++++++---
+ 2 files changed, 7 insertions(+), 17 deletions(-)
+
+diff --git a/ext/sst/INSTALL.md b/ext/sst/INSTALL.md
+index 46ff4f0..1034d7d 100644
+--- a/ext/sst/INSTALL.md
++++ b/ext/sst/INSTALL.md
+@@ -75,17 +75,4 @@ make
+ 
+ ### Running an example simulation
+ 
+-Running the simulation
+-
+-```sh
+-sst --add-lib-path=./ sst/example.py
+-```
+-
+-The example SST system configuration will instantiate the gem5 system
+-as specified in the gem5 system configuration located at
+-`gem5/configs/example/sst/riscv_fs.py`. This configuration will download
+-the `bbl-busybox-boot-exit` resource, which contains an m5 binary, and
+-`m5 exit` will be called upon the booting process reaching the early userspace.
+-More information about building a bootloader containing a Linux Kernel and a
+-customized workload is available at
+-[https://gem5.googlesource.com/public/gem5-resources/+/refs/heads/develop/src/riscv-boot-exit-nodisk/].
++See `README.md`
+diff --git a/ext/sst/README.md b/ext/sst/README.md
+index 8e2de1d..148adcc 100644
+--- a/ext/sst/README.md
++++ b/ext/sst/README.md
+@@ -68,11 +68,14 @@ wget http://dist.gem5.org/dist/develop/misc/riscv/bbl-busybox-boot-exit
+ Running the simulation
+ 
+ ```sh
+-sst sst/example.py
++sst --add-lib-path=./ sst/example.py
+ ```
+ 
+-`bbl-busybox-boot-exit` contains an m5 binary, and `m5 exit` will be called
+-upon the booting process reaching the early userspace.
++The example SST system configuration will instantiate the gem5 system
++as specified in the gem5 system configuration located at
++`gem5/configs/example/sst/riscv_fs.py`. This configuration will download
++the `bbl-busybox-boot-exit` resource, which contains an m5 binary, and
++`m5 exit` will be called upon the booting process reaching the early userspace.
+ More information about building a bootloader containing a Linux Kernel and a
+ customized workload is available at
+ [https://gem5.googlesource.com/public/gem5-resources/+/refs/heads/develop/src/riscv-boot-exit-nodisk/].
+-- 
+1.8.3.1
+

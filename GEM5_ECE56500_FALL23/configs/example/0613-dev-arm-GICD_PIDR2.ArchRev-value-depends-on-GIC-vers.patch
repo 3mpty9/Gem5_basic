@@ -1,0 +1,53 @@
+From 776321d2c24800fcb20886ca39d77043e40e5ac5 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Wed, 4 May 2022 16:10:06 +0100
+Subject: [PATCH 613/757] dev-arm: GICD_PIDR2.ArchRev value depends on GIC
+ version
+
+The GIC architecture specification states the GICD_PIDR2.ArchRev
+field is set to 3 for GICv3 and to 4 for GICv4. We bind this
+value to the gicv4 parameter
+
+Change-Id: I3ba34bc0b4538b4d5170915a4ee042e534f2590f
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59391
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ src/dev/arm/gic_v3_distributor.cc   | 2 +-
+ src/dev/arm/gic_v3_redistributor.cc | 5 +----
+ 2 files changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/src/dev/arm/gic_v3_distributor.cc b/src/dev/arm/gic_v3_distributor.cc
+index 8feccb6..820f8bc 100644
+--- a/src/dev/arm/gic_v3_distributor.cc
++++ b/src/dev/arm/gic_v3_distributor.cc
+@@ -88,7 +88,7 @@ Gicv3Distributor::Gicv3Distributor(Gicv3 * gic, uint32_t it_lines)
+       gicdTyper(0),
+       gicdPidr0(0x92),
+       gicdPidr1(0xb4),
+-      gicdPidr2(0x3b),
++      gicdPidr2(gic->params().gicv4 ? 0x4b : 0x3b),
+       gicdPidr3(0),
+       gicdPidr4(0x44)
+ {
+diff --git a/src/dev/arm/gic_v3_redistributor.cc b/src/dev/arm/gic_v3_redistributor.cc
+index 03e8218..e4380ef 100644
+--- a/src/dev/arm/gic_v3_redistributor.cc
++++ b/src/dev/arm/gic_v3_redistributor.cc
+@@ -193,10 +193,7 @@ Gicv3Redistributor::read(Addr addr, size_t size, bool is_secure_access)
+       }
+ 
+       case GICR_PIDR2: { // Peripheral ID2 Register
+-          uint8_t arch_rev = 0x3; // 0x3 GICv3
+-          uint8_t jedec = 0x1; // JEP code
+-          uint8_t des_1 = 0x3; // JEP106 identification code, bits[6:4]
+-          return (arch_rev << 4) | (jedec << 3) | (des_1 << 0);
++          return gic->getDistributor()->gicdPidr2;
+       }
+ 
+       case GICR_PIDR3: // Peripheral ID3 Register
+-- 
+1.8.3.1
+

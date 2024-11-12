@@ -1,0 +1,115 @@
+From f4ee1a95361dcaf71098bed6ab2648bd66ed1c4b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 10 Aug 2021 02:52:16 -0700
+Subject: [PATCH 185/757] arch: Get rid of the TheISA::NumVecElemPerVecReg
+ variable.
+
+Remove it from the arch/vecregs.hh interface. It's used internally by
+ARM, where it will remain.
+
+Change-Id: Ic319b404cbd77875c780faee66d5abdd7bfc0608
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49165
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/generic/vec_reg.hh | 4 +---
+ src/arch/mips/vecregs.hh    | 1 -
+ src/arch/null/vecregs.hh    | 1 -
+ src/arch/power/vecregs.hh   | 1 -
+ src/arch/riscv/vecregs.hh   | 1 -
+ src/arch/sparc/vecregs.hh   | 1 -
+ src/arch/x86/vecregs.hh     | 1 -
+ 7 files changed, 1 insertion(+), 9 deletions(-)
+
+diff --git a/src/arch/generic/vec_reg.hh b/src/arch/generic/vec_reg.hh
+index 34ba554..dfdc985 100644
+--- a/src/arch/generic/vec_reg.hh
++++ b/src/arch/generic/vec_reg.hh
+@@ -264,9 +264,7 @@ struct ShowParam<VecRegContainer<Sz>>
+  */
+ /** @{ */
+ using DummyVecElem = uint32_t;
+-constexpr unsigned DummyNumVecElemPerVecReg = 2;
+-using DummyVecRegContainer =
+-    VecRegContainer<DummyNumVecElemPerVecReg * sizeof(DummyVecElem)>;
++using DummyVecRegContainer = VecRegContainer<2 * sizeof(DummyVecElem)>;
+ /** @} */
+ 
+ } // namespace gem5
+diff --git a/src/arch/mips/vecregs.hh b/src/arch/mips/vecregs.hh
+index 0c8b86a..96dd881 100644
+--- a/src/arch/mips/vecregs.hh
++++ b/src/arch/mips/vecregs.hh
+@@ -42,7 +42,6 @@ namespace MipsISA
+ // Not applicable to MIPS
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to MIPS
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+diff --git a/src/arch/null/vecregs.hh b/src/arch/null/vecregs.hh
+index 81c2f0d..0476554 100644
+--- a/src/arch/null/vecregs.hh
++++ b/src/arch/null/vecregs.hh
+@@ -52,7 +52,6 @@ namespace NullISA
+ // Not applicable to null
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to null
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+diff --git a/src/arch/power/vecregs.hh b/src/arch/power/vecregs.hh
+index 9f557ce..767a4be 100644
+--- a/src/arch/power/vecregs.hh
++++ b/src/arch/power/vecregs.hh
+@@ -44,7 +44,6 @@ namespace PowerISA
+ // Not applicable to Power
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to Power
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+diff --git a/src/arch/riscv/vecregs.hh b/src/arch/riscv/vecregs.hh
+index 51fd244..8bc0656 100644
+--- a/src/arch/riscv/vecregs.hh
++++ b/src/arch/riscv/vecregs.hh
+@@ -60,7 +60,6 @@ namespace RiscvISA
+ // Not applicable to RISC-V
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to RISC-V
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+diff --git a/src/arch/sparc/vecregs.hh b/src/arch/sparc/vecregs.hh
+index bb5c038..1e4c1f9 100644
+--- a/src/arch/sparc/vecregs.hh
++++ b/src/arch/sparc/vecregs.hh
+@@ -41,7 +41,6 @@ namespace SparcISA
+ // Not applicable to SPARC
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to SPARC
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+diff --git a/src/arch/x86/vecregs.hh b/src/arch/x86/vecregs.hh
+index 578360b..d03c7c2 100644
+--- a/src/arch/x86/vecregs.hh
++++ b/src/arch/x86/vecregs.hh
+@@ -55,7 +55,6 @@ namespace X86ISA
+ // Not applicable to x86
+ using VecElem = ::gem5::DummyVecElem;
+ using VecRegContainer = ::gem5::DummyVecRegContainer;
+-constexpr unsigned NumVecElemPerVecReg = ::gem5::DummyNumVecElemPerVecReg;
+ 
+ // Not applicable to x86
+ using VecPredRegContainer = ::gem5::DummyVecPredRegContainer;
+-- 
+1.8.3.1
+

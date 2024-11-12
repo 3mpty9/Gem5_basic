@@ -1,0 +1,47 @@
+From c0d380b4d7d7d6cf6c5dd64482135b5e737ca732 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 00:23:29 -0700
+Subject: [PATCH 326/757] arch: Simplify the VecElemOperand class.
+
+Oddly, makeDecl would conditionally declare the operand, but only
+because makeRead would also declare it. Instead, make makeRead work like
+normal, and get rid of the custom makeDecl.
+
+Change-Id: I26c6f01f971778ad5075f8d3f49d9816f371f5b3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49722
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 51d1dcb..cdca6a6 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -394,12 +394,6 @@ class VecRegOperand(RegOperand):
+ class VecElemOperand(RegOperand):
+     reg_class = 'VecElemClass'
+ 
+-    def makeDecl(self):
+-        if self.is_dest and not self.is_src:
+-            return '\n\t%s %s;' % (self.ctype, self.base_name)
+-        else:
+-            return ''
+-
+     def makeRead(self, predRead):
+         c_read = f'xc->getRegOperand(this, {self.src_reg_idx})'
+ 
+@@ -408,7 +402,7 @@ class VecElemOperand(RegOperand):
+         elif self.ctype == 'double':
+             c_read = f'bitsToFloat64({c_read})'
+ 
+-        return f'\n\t{self.ctype} {self.base_name} = {c_read};\n'
++        return f'{self.base_name} = {c_read};\n'
+ 
+     def makeWrite(self, predWrite):
+         val = self.base_name
+-- 
+1.8.3.1
+

@@ -1,0 +1,33 @@
+From 150d7a03bd25b3934c8b34721631d0d5c69c0818 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 6 May 2022 13:58:35 +0100
+Subject: [PATCH 616/757] base: Fix -Werror=unused-variable in Memoizer
+
+Change-Id: I222a445121a35a4abc1a3fa2068e6c26ad7ee843
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59429
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/base/memoizer.hh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/base/memoizer.hh b/src/base/memoizer.hh
+index 454716d..219e9260 100644
+--- a/src/base/memoizer.hh
++++ b/src/base/memoizer.hh
+@@ -103,8 +103,8 @@ class Memoizer
+             // Return the cached result
+             return it->second;
+         }
+-        auto [it, emplaced] = cache.emplace(key, func(args...));
+-        return it->second;
++        auto emplaced = cache.emplace(key, func(args...));
++        return emplaced.first->second;
+     };
+ 
+     /** Clear the memoization cache */
+-- 
+1.8.3.1
+

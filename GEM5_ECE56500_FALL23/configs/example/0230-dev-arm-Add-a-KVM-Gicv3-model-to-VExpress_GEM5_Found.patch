@@ -1,0 +1,52 @@
+From 9e62fcf2bd3e14f02c22c806f5051cc51f4ad4fa Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 13 Dec 2021 15:14:44 +0000
+Subject: [PATCH 230/757] dev-arm: Add a KVM Gicv3 model to
+ VExpress_GEM5_Foundation
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: Ic5cfeeec59630253acb3ccc451553eb4eb7907e2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55615
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/arm/RealView.py | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/dev/arm/RealView.py b/src/dev/arm/RealView.py
+index 6cb28dd..8d6837e 100644
+--- a/src/dev/arm/RealView.py
++++ b/src/dev/arm/RealView.py
+@@ -73,12 +73,14 @@ from m5.objects.CfiMemory import CfiMemory
+ # emulation. Use a GIC model that automatically switches between
+ # gem5's GIC model and KVM's GIC model if KVM is available.
+ try:
+-    from m5.objects.KvmGic import MuxingKvmGicV2
++    from m5.objects.KvmGic import MuxingKvmGicV2, MuxingKvmGicV3
+     kvm_gicv2_class = MuxingKvmGicV2
++    kvm_gicv3_class = MuxingKvmGicV3
+ except ImportError:
+     # KVM support wasn't compiled into gem5. Fallback to a
+     # software-only GIC.
+     kvm_gicv2_class = Gic400
++    kvm_gicv3_class = Gicv3
+     pass
+ 
+ class AmbaPioDevice(BasicPioDevice):
+@@ -1420,9 +1422,9 @@ class VExpress_GEM5_Foundation(VExpress_GEM5_Base):
+ 
+     clcd = Pl111(pio_addr=0x1c1f0000, interrupt=ArmSPI(num=46))
+ 
+-    gic = Gicv3(dist_addr=0x2f000000, redist_addr=0x2f100000,
+-                maint_int=ArmPPI(num=25), gicv4=False,
+-                its=NULL)
++    gic = kvm_gicv3_class(dist_addr=0x2f000000, redist_addr=0x2f100000,
++                          maint_int=ArmPPI(num=25), gicv4=False,
++                          its=NULL)
+ 
+     pci_host = GenericArmPciHost(
+         conf_base=0x40000000, conf_size='256MiB', conf_device_bits=12,
+-- 
+1.8.3.1
+

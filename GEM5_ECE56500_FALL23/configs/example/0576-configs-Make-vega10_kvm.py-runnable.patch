@@ -1,0 +1,45 @@
+From adef87fb27f8c33615c19e0fddf54d5c70c53b3c Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Fri, 22 Apr 2022 13:10:49 -0500
+Subject: [PATCH 576/757] configs: Make vega10_kvm.py runnable
+
+The current script is echoing the command instead of running it (oops).
+Also change the dmesg level to 3 to hide warnings from console output.
+Level 8 should really only be used when debugging.
+
+Change-Id: I90937ef13bf598cef1f58af69da1fdc9038d1e37
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59052
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/vega10_kvm.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configs/example/gpufs/vega10_kvm.py b/configs/example/gpufs/vega10_kvm.py
+index aa3dbb2..6d16819 100644
+--- a/configs/example/gpufs/vega10_kvm.py
++++ b/configs/example/gpufs/vega10_kvm.py
+@@ -47,7 +47,7 @@ from ruby import Ruby
+ demo_runscript = '''\
+ export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+ export HSA_ENABLE_SDMA=0
+-dmesg -n8
++dmesg -n3
+ dd if=/root/roms/vega10.rom of=/dev/mem bs=1k seek=768 count=128
+ if [ ! -f /lib/modules/`uname -r`/updates/dkms/amdgpu.ko ]; then
+     echo "ERROR: Missing DKMS package for kernel `uname -r`. Exiting gem5."
+@@ -57,7 +57,7 @@ modprobe -v amdgpu ip_block_mask=0xff ppfeaturemask=0 dpm=0 audio=0
+ echo "Running {} {}"
+ echo "{}" | base64 -d > myapp
+ chmod +x myapp
+-echo ./myapp {}
++./myapp {}
+ /sbin/m5 exit
+ '''
+ 
+-- 
+1.8.3.1
+

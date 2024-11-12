@@ -1,0 +1,52 @@
+From acfa5da14c8eb49cdffff738358a692f73524659 Mon Sep 17 00:00:00 2001
+From: Mahyar Samani <msamani@ucdavis.edu>
+Date: Tue, 12 Jul 2022 15:07:39 -0700
+Subject: [PATCH 742/757] stdlib: Removing incorrect requires.
+
+This change removes call to requires for checking isa_required
+in AbstractProcessor.__init__() and
+AbstractGeneratorCore.__init__(). The previous calls would cause
+incorrect errors when running generators with any isa other than
+NULL.
+
+Change-Id: I303f1e48a7d5649bbe19e0f52ace808225a771c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61289
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/61732
+---
+ src/python/gem5/components/processors/abstract_generator_core.py | 1 -
+ src/python/gem5/components/processors/abstract_processor.py      | 2 --
+ 2 files changed, 3 deletions(-)
+
+diff --git a/src/python/gem5/components/processors/abstract_generator_core.py b/src/python/gem5/components/processors/abstract_generator_core.py
+index 111a229..48a4e81 100644
+--- a/src/python/gem5/components/processors/abstract_generator_core.py
++++ b/src/python/gem5/components/processors/abstract_generator_core.py
+@@ -54,7 +54,6 @@ class AbstractGeneratorCore(AbstractCore):
+         # TODO: Remove the CPU Type parameter. This not needed.
+         # Jira issue here: https://gem5.atlassian.net/browse/GEM5-1031
+         super().__init__(CPUTypes.TIMING)
+-        requires(isa_required=ISA.NULL)
+         self.port_end = PortTerminator()
+ 
+     @overrides(AbstractCore)
+diff --git a/src/python/gem5/components/processors/abstract_processor.py b/src/python/gem5/components/processors/abstract_processor.py
+index 74e7825..e6f6395 100644
+--- a/src/python/gem5/components/processors/abstract_processor.py
++++ b/src/python/gem5/components/processors/abstract_processor.py
+@@ -49,8 +49,6 @@ class AbstractProcessor(SubSystem):
+         assert len(set(core.get_isa() for core in cores)) == 1
+         self._isa = cores[0].get_isa()
+ 
+-        requires(isa_required=self._isa)
+-
+         self.cores = cores
+ 
+     def get_num_cores(self) -> int:
+-- 
+1.8.3.1
+

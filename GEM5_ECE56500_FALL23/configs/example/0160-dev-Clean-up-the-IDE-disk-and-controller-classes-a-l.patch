@@ -1,0 +1,235 @@
+From d9e973b6f554bd9e48fd112dd2a05c190a2c7cf9 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 15 Jan 2022 19:56:21 -0800
+Subject: [PATCH 160/757] dev: Clean up the IDE disk and controller classes a
+ little.
+
+Fix some style issues, and replace some if () panics with panic_ifs.
+
+Change-Id: Ic4fae016520e43d32f435bf3fc0ec37df25ca02a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55583
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/storage/ide_ctrl.cc | 15 +++++--------
+ src/dev/storage/ide_disk.cc | 54 ++++++++++++++++++++++-----------------------
+ src/dev/storage/ide_disk.hh | 12 ++++++----
+ 3 files changed, 41 insertions(+), 40 deletions(-)
+
+diff --git a/src/dev/storage/ide_ctrl.cc b/src/dev/storage/ide_ctrl.cc
+index 7d4ecac..701314f 100644
+--- a/src/dev/storage/ide_ctrl.cc
++++ b/src/dev/storage/ide_ctrl.cc
+@@ -50,10 +50,6 @@
+ #include "params/IdeController.hh"
+ #include "sim/byteswap.hh"
+ 
+-// clang complains about std::set being overloaded with Packet::set if
+-// we open up the entire namespace std
+-using std::string;
+-
+ namespace gem5
+ {
+ 
+@@ -65,7 +61,7 @@ enum BMIRegOffset
+     BMIDescTablePtr = 0x4
+ };
+ 
+-IdeController::Channel::Channel(string newName) : _name(newName)
++IdeController::Channel::Channel(std::string newName) : _name(newName)
+ {
+     bmiRegs.reset();
+     bmiRegs.status.dmaCap0 = 1;
+@@ -287,8 +283,8 @@ IdeController::Channel::accessBMI(Addr offset,
+                     newVal.intStatus = 0; // clear the interrupt?
+                 } else {
+                     // Assigning two bitunion fields to each other does not
+-                    // work as intended, so we need to use this temporary variable
+-                    // to get around the bug.
++                    // work as intended, so we need to use this temporary
++                    // variable to get around the bug.
+                     uint8_t tmp = oldVal.intStatus;
+                     newVal.intStatus = tmp;
+                 }
+@@ -309,8 +305,9 @@ IdeController::Channel::accessBMI(Addr offset,
+             break;
+           default:
+             if (size != sizeof(uint8_t) && size != sizeof(uint16_t) &&
+-                    size != sizeof(uint32_t))
+-                panic("IDE controller write of invalid write size: %x\n", size);
++                    size != sizeof(uint32_t)) {
++                panic("IDE controller write of invalid size: %x\n", size);
++            }
+             memcpy((uint8_t *)&bmiRegs + offset, data, size);
+         }
+     }
+diff --git a/src/dev/storage/ide_disk.cc b/src/dev/storage/ide_disk.cc
+index a7185e4..a5e52b0 100644
+--- a/src/dev/storage/ide_disk.cc
++++ b/src/dev/storage/ide_disk.cc
+@@ -538,8 +538,9 @@ IdeDisk::doDmaWrite()
+ void
+ IdeDisk::dmaWriteDone()
+ {
+-    DPRINTF(IdeDisk, "doWriteDone: curPrd byte count %d, eot %#x cmd bytes left:%d\n",
+-                curPrd.getByteCount(), curPrd.getEOT(), cmdBytesLeft);
++    DPRINTF(IdeDisk,
++            "doWriteDone: curPrd byte count %d, eot %#x cmd bytes left:%d\n",
++            curPrd.getByteCount(), curPrd.getEOT(), cmdBytesLeft);
+     // check for the EOT
+     if (curPrd.getEOT()) {
+         assert(cmdBytesLeft == 0);
+@@ -559,9 +560,9 @@ IdeDisk::readDisk(uint32_t sector, uint8_t *data)
+ {
+     uint32_t bytesRead = image->read(data, sector);
+ 
+-    if (bytesRead != SectorSize)
+-        panic("Can't read from %s. Only %d of %d read. errno=%d\n",
+-              name(), bytesRead, SectorSize, errno);
++    panic_if(bytesRead != SectorSize,
++            "Can't read from %s. Only %d of %d read. errno=%d",
++            name(), bytesRead, SectorSize, errno);
+ }
+ 
+ void
+@@ -569,9 +570,9 @@ IdeDisk::writeDisk(uint32_t sector, uint8_t *data)
+ {
+     uint32_t bytesWritten = image->write(data, sector);
+ 
+-    if (bytesWritten != SectorSize)
+-        panic("Can't write to %s. Only %d of %d written. errno=%d\n",
+-              name(), bytesWritten, SectorSize, errno);
++    panic_if(bytesWritten != SectorSize,
++            "Can't write to %s. Only %d of %d written. errno=%d",
++            name(), bytesWritten, SectorSize, errno);
+ }
+ 
+ ////
+@@ -581,11 +582,11 @@ IdeDisk::writeDisk(uint32_t sector, uint8_t *data)
+ void
+ IdeDisk::startDma(const uint32_t &prdTableBase)
+ {
+-    if (dmaState != Dma_Start)
+-        panic("Inconsistent DMA state, should be in Dma_Start!\n");
++    panic_if(dmaState != Dma_Start,
++            "Inconsistent DMA state, should be in Dma_Start!");
+ 
+-    if (devState != Transfer_Data_Dma)
+-        panic("Inconsistent device state for DMA start!\n");
++    panic_if(devState != Transfer_Data_Dma,
++            "Inconsistent device state for DMA start!");
+ 
+     // PRD base address is given by bits 31:2
+     curPrdAddr = pciToDma((Addr)(prdTableBase & ~0x3ULL));
+@@ -599,11 +600,11 @@ IdeDisk::startDma(const uint32_t &prdTableBase)
+ void
+ IdeDisk::abortDma()
+ {
+-    if (dmaState == Dma_Idle)
+-        panic("Inconsistent DMA state, should be Start or Transfer!");
++    panic_if(dmaState == Dma_Idle,
++            "Inconsistent DMA state, should be Start or Transfer!");
+ 
+-    if (devState != Transfer_Data_Dma && devState != Prepare_Data_Dma)
+-        panic("Inconsistent device state, should be Transfer or Prepare!\n");
++    panic_if(devState != Transfer_Data_Dma && devState != Prepare_Data_Dma,
++            "Inconsistent device state, should be Transfer or Prepare!");
+ 
+     updateState(ACT_CMD_ERROR);
+ }
+@@ -652,8 +653,8 @@ IdeDisk::startCommand()
+ 
+       case WDCC_READMULTI:
+       case WDCC_READ:
+-        if (!(cmdReg.drive & DRIVE_LBA_BIT))
+-            panic("Attempt to perform CHS access, only supports LBA\n");
++        panic_if(!(cmdReg.drive & DRIVE_LBA_BIT),
++                "Attempt to perform CHS access, only supports LBA");
+ 
+         if (cmdReg.sec_count == 0)
+             cmdBytes = cmdBytesLeft = (256 * SectorSize);
+@@ -670,8 +671,8 @@ IdeDisk::startCommand()
+         // Supported PIO data-out commands
+       case WDCC_WRITEMULTI:
+       case WDCC_WRITE:
+-        if (!(cmdReg.drive & DRIVE_LBA_BIT))
+-            panic("Attempt to perform CHS access, only supports LBA\n");
++        panic_if(!(cmdReg.drive & DRIVE_LBA_BIT),
++                "Attempt to perform CHS access, only supports LBA");
+ 
+         if (cmdReg.sec_count == 0)
+             cmdBytes = cmdBytesLeft = (256 * SectorSize);
+@@ -689,14 +690,15 @@ IdeDisk::startCommand()
+         dmaRead = true;  // a write to the disk is a DMA read from memory
+         [[fallthrough]];
+       case WDCC_READDMA:
+-        if (!(cmdReg.drive & DRIVE_LBA_BIT))
+-            panic("Attempt to perform CHS access, only supports LBA\n");
++        panic_if(!(cmdReg.drive & DRIVE_LBA_BIT),
++                "Attempt to perform CHS access, only supports LBA");
+ 
+         if (cmdReg.sec_count == 0)
+             cmdBytes = cmdBytesLeft = (256 * SectorSize);
+         else
+             cmdBytes = cmdBytesLeft = (cmdReg.sec_count * SectorSize);
+-        DPRINTF(IdeDisk, "Setting cmdBytesLeft to %d in readdma\n", cmdBytesLeft);
++        DPRINTF(IdeDisk, "Setting cmdBytesLeft to %d in readdma\n",
++                cmdBytesLeft);
+ 
+         curSector = getLBABase();
+ 
+@@ -728,8 +730,7 @@ void
+ IdeDisk::intrPost()
+ {
+     DPRINTF(IdeDisk, "Posting Interrupt\n");
+-    if (intrPending)
+-        panic("Attempt to post an interrupt with one pending\n");
++    panic_if(intrPending, "Attempt to post an interrupt with one pending");
+ 
+     intrPending = true;
+ 
+@@ -743,8 +744,7 @@ void
+ IdeDisk::intrClear()
+ {
+     DPRINTF(IdeDisk, "Clearing Interrupt\n");
+-    if (!intrPending)
+-        panic("Attempt to clear a non-pending interrupt\n");
++    panic_if(!intrPending, "Attempt to clear a non-pending interrupt");
+ 
+     intrPending = false;
+ 
+diff --git a/src/dev/storage/ide_disk.hh b/src/dev/storage/ide_disk.hh
+index 95eec24..96bbd4a 100644
+--- a/src/dev/storage/ide_disk.hh
++++ b/src/dev/storage/ide_disk.hh
+@@ -355,7 +355,8 @@ class IdeDisk : public SimObject
+     bool isIENSet() { return nIENBit; }
+     bool isDEVSelect();
+ 
+-    void setComplete()
++    void
++    setComplete()
+     {
+         // clear out the status byte
+         status = 0;
+@@ -365,10 +366,13 @@ class IdeDisk : public SimObject
+         status |= STATUS_SEEK_BIT;
+     }
+ 
+-    uint32_t getLBABase()
++    uint32_t
++    getLBABase()
+     {
+-        return  (Addr)(((cmdReg.head & 0xf) << 24) | (cmdReg.cyl_high << 16) |
+-                       (cmdReg.cyl_low << 8) | (cmdReg.sec_num));
++        return ((cmdReg.head & 0xf) << 24) |
++               (cmdReg.cyl_high << 16) |
++               (cmdReg.cyl_low << 8) |
++               (cmdReg.sec_num);
+     }
+ 
+     inline Addr pciToDma(Addr pciAddr);
+-- 
+1.8.3.1
+

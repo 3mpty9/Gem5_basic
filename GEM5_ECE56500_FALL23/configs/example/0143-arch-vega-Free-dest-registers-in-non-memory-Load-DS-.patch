@@ -1,0 +1,83 @@
+From 0cb64ce9f02d58525a8db81c9cf9a0eda3e62f10 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 11 Jan 2022 11:14:12 -0600
+Subject: [PATCH 143/757] arch-vega: Free dest registers in non-memory Load DS
+ insts
+
+Ported from https://gem5-review.googlesource.com/c/public/gem5/+/48019:
+
+Certain DS insts are classfied as Loads, but don't actually go through
+the memory pipeline. However, any instruction classified as a load
+marks its destination registers as free in the memory pipeline.
+
+Because these instructions didn't use the memory pipeline, they
+never freed their destination registers, which led to a deadlock.
+
+This patch explicitly calls the function used to free the destination
+registers in the execute() method of those Load instructions that
+don't use the memory pipeline.
+
+Change-Id: I8231217a79661ca6acc837b2ab4931b946049a1a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55463
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/amdgpu/vega/insts/instructions.cc | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/src/arch/amdgpu/vega/insts/instructions.cc b/src/arch/amdgpu/vega/insts/instructions.cc
+index 7d55624..bd7ef70 100644
+--- a/src/arch/amdgpu/vega/insts/instructions.cc
++++ b/src/arch/amdgpu/vega/insts/instructions.cc
+@@ -35467,6 +35467,15 @@ namespace VegaISA
+         }
+ 
+         vdst.write();
++
++        /**
++         * This is needed because we treat this instruction as a load
++         * but it's not an actual memory request.
++         * Without this, the destination register never gets marked as
++         * free, leading to a  possible deadlock
++         */
++        wf->computeUnit->vrf[wf->simdId]->
++            scheduleWriteOperandsFromLoad(wf, gpuDynInst);
+     } // execute
+     // --- Inst_DS__DS_PERMUTE_B32 class methods ---
+ 
+@@ -35541,6 +35550,15 @@ namespace VegaISA
+         }
+ 
+         vdst.write();
++
++        /**
++         * This is needed because we treat this instruction as a load
++         * but it's not an actual memory request.
++         * Without this, the destination register never gets marked as
++         * free, leading to a  possible deadlock
++         */
++        wf->computeUnit->vrf[wf->simdId]->
++            scheduleWriteOperandsFromLoad(wf, gpuDynInst);
+     } // execute
+     // --- Inst_DS__DS_BPERMUTE_B32 class methods ---
+ 
+@@ -35615,6 +35633,15 @@ namespace VegaISA
+         }
+ 
+         vdst.write();
++
++        /**
++         * This is needed because we treat this instruction as a load
++         * but it's not an actual memory request.
++         * Without this, the destination register never gets marked as
++         * free, leading to a  possible deadlock
++         */
++        wf->computeUnit->vrf[wf->simdId]->
++            scheduleWriteOperandsFromLoad(wf, gpuDynInst);
+     } // execute
+ 
+     // --- Inst_DS__DS_ADD_U64 class methods ---
+-- 
+1.8.3.1
+

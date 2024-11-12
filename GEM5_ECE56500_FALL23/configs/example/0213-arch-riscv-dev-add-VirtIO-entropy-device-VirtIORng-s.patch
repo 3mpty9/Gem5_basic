@@ -1,0 +1,451 @@
+From df69a56670c621fa229075e9a410117b8b6e60df Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Fri, 14 Jan 2022 03:21:50 +0000
+Subject: [PATCH 213/757] arch-riscv, dev: add VirtIO entropy device(VirtIORng)
+ support
+
+Systemd, which is used by many main stream Linux distributions,
+will lead to slow boot if entropy is low. On X86 platforms,
+this problem can be alleviated by enabling RDRAND instructions.
+However, RISC-V doesn't have similar instructions. For QEMU/KVM,
+this problem can be solved by passing randomness from the host
+via virtio_rng. But gem5 doesn't have VirtIORng support now.
+
+Some user report that the boot time of riscv-ubuntu-run.py is
+too long. To alleviate this problem, this patch add VirtIORng
+device support for gem5.
+
+Change-Id: Id93b5703161701212fd6683837034cb0cff590c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55483
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56245
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ configs/example/riscv/fs_linux.py                |  12 +++
+ src/dev/riscv/HiFive.py                          |   2 +
+ src/dev/virtio/SConscript                        |   3 +
+ src/dev/virtio/VirtIORng.py                      |  50 ++++++++++
+ src/dev/virtio/rng.cc                            | 112 +++++++++++++++++++++++
+ src/dev/virtio/rng.hh                            | 106 +++++++++++++++++++++
+ src/python/gem5/components/boards/riscv_board.py |  23 ++++-
+ 7 files changed, 307 insertions(+), 1 deletion(-)
+ create mode 100644 src/dev/virtio/VirtIORng.py
+ create mode 100644 src/dev/virtio/rng.cc
+ create mode 100644 src/dev/virtio/rng.hh
+
+diff --git a/configs/example/riscv/fs_linux.py b/configs/example/riscv/fs_linux.py
+index 2947c1e..570ef22 100644
+--- a/configs/example/riscv/fs_linux.py
++++ b/configs/example/riscv/fs_linux.py
+@@ -75,6 +75,7 @@ from common import Options
+ #                               linux kernel payload)
+ # --disk-image (optional):      Path to disk image file. Not needed if using
+ #                               ramfs (might run into issues though).
++# --virtio-rng (optional):      Enable VirtIO entropy source device
+ # --command-line (optional):    Specify to override default.
+ # --dtb-filename (optional):    Path to DTB file. Auto-generated if empty.
+ # --bare-metal (boolean):       Use baremetal Riscv (default False). Use this
+@@ -129,6 +130,8 @@ parser.add_argument("--bare-metal", action="store_true",
+ parser.add_argument("--dtb-filename", action="store", type=str,
+     help="Specifies device tree blob file to use with device-tree-"\
+         "enabled kernels")
++parser.add_argument("--virtio-rng", action="store_true",
++    help="Enable VirtIORng device")
+ 
+ # ---------------------------- Parse Options --------------------------- #
+ args = parser.parse_args()
+@@ -177,6 +180,15 @@ if args.disk_image:
+         pio_addr=0x10008000
+     )
+ 
++# VirtIORng
++if args.virtio_rng:
++    system.platform.rng = RiscvMmioVirtIO(
++        vio=VirtIORng(),
++        interrupt_id=0x8,
++        pio_size=4096,
++        pio_addr=0x10007000
++    )
++
+ system.bridge = Bridge(delay='50ns')
+ system.bridge.mem_side_port = system.iobus.cpu_side_ports
+ system.bridge.cpu_side_port = system.membus.mem_side_ports
+diff --git a/src/dev/riscv/HiFive.py b/src/dev/riscv/HiFive.py
+index 2923b88..a76e456 100755
+--- a/src/dev/riscv/HiFive.py
++++ b/src/dev/riscv/HiFive.py
+@@ -126,6 +126,8 @@ class HiFive(Platform):
+         devices = [self.uart]
+         if hasattr(self, "disk"):
+             devices.append(self.disk)
++        if hasattr(self, "rng"):
++            devices.append(self.rng)
+         return devices
+ 
+     def _on_chip_ranges(self):
+diff --git a/src/dev/virtio/SConscript b/src/dev/virtio/SConscript
+index bf083e7..b00679c 100644
+--- a/src/dev/virtio/SConscript
++++ b/src/dev/virtio/SConscript
+@@ -44,6 +44,7 @@ SimObject('VirtIO.py', sim_objects=[
+     'VirtIODeviceBase', 'VirtIODummyDevice', 'PciVirtIO'])
+ SimObject('VirtIOConsole.py', sim_objects=['VirtIOConsole'])
+ SimObject('VirtIOBlock.py', sim_objects=['VirtIOBlock'])
++SimObject('VirtIORng.py', sim_objects=['VirtIORng'])
+ SimObject('VirtIO9P.py', sim_objects=[
+     'VirtIO9PBase', 'VirtIO9PProxy', 'VirtIO9PDiod', 'VirtIO9PSocket'])
+ 
+@@ -52,8 +53,10 @@ Source('pci.cc')
+ Source('console.cc')
+ Source('block.cc')
+ Source('fs9p.cc')
++Source('rng.cc')
+ 
+ DebugFlag('VIO', 'VirtIO base functionality')
++DebugFlag('VIORng', 'VirtIO entropy source device ')
+ DebugFlag('VIOIface', 'VirtIO transport')
+ DebugFlag('VIOConsole', 'VirtIO console device')
+ DebugFlag('VIOBlock', 'VirtIO block device')
+diff --git a/src/dev/virtio/VirtIORng.py b/src/dev/virtio/VirtIORng.py
+new file mode 100644
+index 0000000..54848ee
+--- /dev/null
++++ b/src/dev/virtio/VirtIORng.py
+@@ -0,0 +1,50 @@
++# -*- mode:python -*-
++
++# Copyright (c) 2022  Institute of Computing Technology, Chinese
++#                     Academy of Sciences
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++from m5.params import *
++from m5.proxy import *
++from m5.objects.VirtIO import VirtIODeviceBase
++
++class VirtIORng(VirtIODeviceBase):
++    type = 'VirtIORng'
++    cxx_header = 'dev/virtio/rng.hh'
++    cxx_class = 'gem5::VirtIORng'
++
++    qSize = Param.Unsigned(16, "Request queue size")
++
++    entropy_source = Param.String("/dev/random", "The source of entropy")
+diff --git a/src/dev/virtio/rng.cc b/src/dev/virtio/rng.cc
+new file mode 100644
+index 0000000..50a747c
+--- /dev/null
++++ b/src/dev/virtio/rng.cc
+@@ -0,0 +1,112 @@
++/*
++ * Copyright (c) 2022  Institute of Computing Technology, Chinese Academy
++ *                     of Sciences
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#include "dev/virtio/rng.hh"
++
++#include <fcntl.h>
++#include <unistd.h>
++
++#include "debug/VIORng.hh"
++#include "params/VirtIORng.hh"
++#include "sim/system.hh"
++
++namespace gem5
++{
++
++VirtIORng::VirtIORng(const Params &params)
++    : VirtIODeviceBase(params, ID_RNG, 0, 0),
++      qReq(params.system->physProxy, byteOrder, params.qSize,
++           params.entropy_source, *this)
++{
++    registerQueue(qReq);
++}
++
++VirtIORng::~VirtIORng()
++{
++}
++
++VirtIORng::RngQueue::RngQueue(PortProxy &proxy, ByteOrder bo,
++    uint16_t size, const std::string &rng_file_path,
++    VirtIORng &_parent)
++    : VirtQueue(proxy, bo, size), parent(_parent), dist(0,255)
++{
++    rng_fd = open(rng_file_path.c_str(), O_RDONLY);
++    if (rng_fd < 0) {
++        DPRINTF(VIORng, "error when open entropy source: %s\n",
++                rng_file_path.c_str());
++    }
++}
++
++void
++VirtIORng::readConfig(PacketPtr pkt, Addr cfgOffset)
++{
++    // There are no configuration for RNG device
++    pkt->makeResponse();
++}
++
++void
++VirtIORng::RngQueue::trySend()
++{
++    DPRINTF(VIORng, "try send\n");
++
++    VirtDescriptor *d;
++    while ((d = consumeDescriptor())) {
++        DPRINTF(VIORng, "Got descriptor (len: %i)\n", d->size());
++        size_t len = 0;
++        while (len < d->size()) {
++            uint8_t byte = 0;
++            bool rng_read_success = false;
++            if (rng_fd >= 0) {
++                ssize_t result = read(rng_fd, &byte, sizeof(uint8_t));
++                rng_read_success = (result > 0);
++            }
++            if (!rng_read_success) {
++                // fallback to C++ std rng generator
++                byte = dist(rd_device);
++            }
++            d->chainWrite(len, &byte, sizeof(uint8_t));
++            ++len;
++        }
++
++        // Tell the guest that we are done with this descriptor.
++        produceDescriptor(d, len);
++        parent.kick();
++    }
++}
++
++} // namespace gem5
+diff --git a/src/dev/virtio/rng.hh b/src/dev/virtio/rng.hh
+new file mode 100644
+index 0000000..50a3723
+--- /dev/null
++++ b/src/dev/virtio/rng.hh
+@@ -0,0 +1,106 @@
++/*
++ * Copyright (c) 2022  Institute of Computing Technology, Chinese Academy
++ *                     of Sciences
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met: redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer;
++ * redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution;
++ * neither the name of the copyright holders nor the names of its
++ * contributors may be used to endorse or promote products derived from
++ * this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ */
++
++#ifndef __DEV_VIRTIO_RNG_HH__
++#define __DEV_VIRTIO_RNG_HH__
++
++#include <random>
++
++#include "base/compiler.hh"
++#include "dev/virtio/base.hh"
++
++namespace gem5
++{
++
++struct VirtIORngParams;
++
++/**
++ * VirtIO Rng
++ *
++ * @see https://github.com/rustyrussell/virtio-spec
++ * @see http://docs.oasis-open.org/virtio/virtio/v1.0/virtio-v1.0.html
++ */
++class VirtIORng : public VirtIODeviceBase
++{
++  public:
++    typedef VirtIORngParams Params;
++    VirtIORng(const Params &params);
++    virtual ~VirtIORng();
++
++    void readConfig(PacketPtr pkt, Addr cfgOffset);
++
++  protected:
++    /** VirtIO device ID */
++    static const DeviceId ID_RNG = 0x04;
++
++  protected:
++    /**
++     * Virtqueue for data going from the host to the guest.
++     */
++    class RngQueue
++        : public VirtQueue
++    {
++      public:
++        RngQueue(PortProxy &proxy, ByteOrder bo,
++                uint16_t size, const std::string &rng_file_path,
++                VirtIORng &_parent);
++        virtual ~RngQueue() {}
++
++        void onNotify() { trySend(); }
++
++        /** Try to send data pending data from the terminal. */
++        void trySend();
++
++        std::string name() const { return parent.name() + ".qRecv"; }
++
++      protected:
++        VirtIORng &parent;
++      private:
++        // system's special file for generating random number
++        int rng_fd;
++        // fallback random number generator
++        std::random_device rd_device;
++        std::uniform_int_distribution<int> dist;
++    };
++    /** Receive queue for port 0 */
++    RngQueue qReq;
++};
++
++} // namespace gem5
++
++#endif // __DEV_VIRTIO_RNG_HH__
+diff --git a/src/python/gem5/components/boards/riscv_board.py b/src/python/gem5/components/boards/riscv_board.py
+index 7c5b547..7dfa9db 100644
+--- a/src/python/gem5/components/boards/riscv_board.py
++++ b/src/python/gem5/components/boards/riscv_board.py
+@@ -54,6 +54,7 @@ from m5.objects import (
+     RawDiskImage,
+     RiscvMmioVirtIO,
+     VirtIOBlock,
++    VirtIORng,
+     Frequency,
+     Port,
+ )
+@@ -119,10 +120,18 @@ class RiscvBoard(AbstractBoard, KernelDiskWorkload):
+             pio_addr=0x10008000,
+         )
+ 
++        # The virtio rng
++        self.rng = RiscvMmioVirtIO(
++            vio=VirtIORng(),
++            interrupt_id=0x8,
++            pio_size=4096,
++            pio_addr=0x10007000,
++        )
++
+         # Note: This overrides the platform's code because the platform isn't
+         # general enough.
+         self._on_chip_devices = [self.platform.clint, self.platform.plic]
+-        self._off_chip_devices = [self.platform.uart, self.disk]
++        self._off_chip_devices = [self.platform.uart, self.disk, self.rng]
+ 
+     def _setup_io_devices(self) -> None:
+         """Connect the I/O devices to the I/O bus"""
+@@ -337,6 +346,18 @@ class RiscvBoard(AbstractBoard, KernelDiskWorkload):
+         disk_node.appendCompatible(["virtio,mmio"])
+         soc_node.append(disk_node)
+ 
++        # VirtIO MMIO rng node
++        rng = self.rng
++        rng_node = rng.generateBasicPioDeviceNode(
++            soc_state, "virtio_mmio", rng.pio_addr, rng.pio_size
++        )
++        rng_node.append(FdtPropertyWords("interrupts", [rng.interrupt_id]))
++        rng_node.append(
++            FdtPropertyWords("interrupt-parent", soc_state.phandle(plic))
++        )
++        rng_node.appendCompatible(["virtio,mmio"])
++        soc_node.append(rng_node)
++
+         root.append(soc_node)
+ 
+         fdt = Fdt()
+-- 
+1.8.3.1
+

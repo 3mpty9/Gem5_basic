@@ -1,0 +1,41 @@
+From 78a9e772caa60909f2c129f7165078adfb56905b Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 14 Feb 2022 14:57:52 -0800
+Subject: [PATCH 423/757] tests,ext: Fix so ex/include regex are applied after
+ defaults
+
+The seldom used '--include-tags' and '--exclude-tags' flags allows a
+testing user to remove and include tags from the search used by TestLib
+to select tests. For example, by default the 'quick' tag is included as
+part of the search of tests to run. The '--exclude-tags' flag could then
+be used to remove the 'quick' tags from the search.
+
+The TestLib framework was applying the regex these flags input before
+the default flags. This meant if the user wished to remove a flag, it
+was impossible. This is now applied after.
+
+Change-Id: I569e0f8d6093ff5e5cdc76faff89c15e75ff297a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56830
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/testlib/main.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ext/testlib/main.py b/ext/testlib/main.py
+index 6087a8e..b9d8e93 100644
+--- a/ext/testlib/main.py
++++ b/ext/testlib/main.py
+@@ -125,7 +125,7 @@ def filter_with_config_tags(loaded_library):
+     if tags is None:
+         tags = tuple()
+ 
+-    filters = list(itertools.chain(tags, final_tags))
++    filters = list(itertools.chain(final_tags, tags))
+     string = 'Filtering suites with tags as follows:\n'
+     filter_string = '\t\n'.join((str(f) for f in filters))
+     log.test_log.trace(string + filter_string)
+-- 
+1.8.3.1
+

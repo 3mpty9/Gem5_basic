@@ -1,0 +1,48 @@
+From 0544944b470b3183f378c4e820a44160bb5d14f7 Mon Sep 17 00:00:00 2001
+From: Franklin He <franklinh@google.com>
+Date: Fri, 21 Jan 2022 06:08:35 +0000
+Subject: [PATCH 161/757] systemc: Fixed ctor ordering for sc_fifo.hh
+
+This fixes a constructor ordering issue and lets the
+headers compile with `-Wreorder` enabled
+
+Test: Compiled SystemC headers with `-Wreorder`
+Change-Id: I88703b464f8940dd973c2102f1cd0da757b17985
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55664
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Matthias Jung <jungma@eit.uni-kl.de>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/systemc/ext/channel/sc_fifo.hh | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/src/systemc/ext/channel/sc_fifo.hh b/src/systemc/ext/channel/sc_fifo.hh
+index 5d3dab4..2f0a4f4 100644
+--- a/src/systemc/ext/channel/sc_fifo.hh
++++ b/src/systemc/ext/channel/sc_fifo.hh
+@@ -53,15 +53,16 @@ class sc_fifo : public sc_fifo_in_if<T>,
+     explicit sc_fifo(int size=16) :
+             sc_fifo_in_if<T>(), sc_fifo_out_if<T>(),
+             sc_prim_channel(sc_gen_unique_name("fifo")),
++            _reader(NULL), _writer(NULL),
+             _size(size), _num_free(size), _num_available(0),
+-            _readsHappened(false), _writesHappened(false),
+-            _reader(NULL), _writer(NULL)
++            _readsHappened(false), _writesHappened(false)
+     {}
+     explicit sc_fifo(const char *name, int size=16) :
+             sc_fifo_in_if<T>(), sc_fifo_out_if<T>(),
+-            sc_prim_channel(name), _size(size), _num_free(size),
+-            _num_available(0), _readsHappened(false), _writesHappened(false),
+-            _reader(NULL), _writer(NULL)
++            sc_prim_channel(name),
++            _reader(NULL), _writer(NULL),
++            _size(size), _num_free(size), _num_available(0),
++            _readsHappened(false), _writesHappened(false)
+     {}
+     virtual ~sc_fifo() {}
+ 
+-- 
+1.8.3.1
+

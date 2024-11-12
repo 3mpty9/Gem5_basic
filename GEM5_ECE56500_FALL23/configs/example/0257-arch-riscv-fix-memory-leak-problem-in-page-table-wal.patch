@@ -1,0 +1,48 @@
+From 211c7df04509e14395841045709e7ebf7a7fea67 Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Mon, 24 Jan 2022 08:32:36 +0000
+Subject: [PATCH 257/757] arch-riscv: fix memory leak problem in page table
+ walker
+
+Valgrind detects memory leak problems in RISC-V's page table
+walker(`Walker::WalkerState::stepWalk()`). In some situation,
+the response packet is not freed. This patch partially fix
+these memory leak problems.
+
+Change-Id: I86d4c69c3c502bd92856a3d8863bfa1722a94512
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56609
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Ayaz Akram <yazakram@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/pagetable_walker.cc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/arch/riscv/pagetable_walker.cc b/src/arch/riscv/pagetable_walker.cc
+index 81d1eb2..cbd5bd2 100644
+--- a/src/arch/riscv/pagetable_walker.cc
++++ b/src/arch/riscv/pagetable_walker.cc
+@@ -426,6 +426,10 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
+         //If we didn't return, we're setting up another read.
+         RequestPtr request = std::make_shared<Request>(
+             nextRead, oldRead->getSize(), flags, walker->requestorId);
++
++        delete oldRead;
++        oldRead = nullptr;
++
+         read = new Packet(request, MemCmd::ReadReq);
+         read->allocate();
+ 
+@@ -501,6 +505,8 @@ Walker::WalkerState::recvPacket(PacketPtr pkt)
+         }
+         sendPackets();
+     } else {
++        delete pkt;
++
+         sendPackets();
+     }
+     if (inflight == 0 && read == NULL && writes.size() == 0) {
+-- 
+1.8.3.1
+

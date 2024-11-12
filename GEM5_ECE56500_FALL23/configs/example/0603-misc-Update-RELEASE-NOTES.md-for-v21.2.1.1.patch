@@ -1,0 +1,30 @@
+From e4fae58da6c044b6efec62392ff99f343ce67947 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 28 Apr 2022 19:04:37 -0700
+Subject: [PATCH 603/757] misc: Update RELEASE-NOTES.md for v21.2.1.1
+
+Change-Id: I35e511a33fb4fd0327188602174ccb906efbb0eb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59271
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ RELEASE-NOTES.md | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/RELEASE-NOTES.md b/RELEASE-NOTES.md
+index 156494b..5d569b4 100644
+--- a/RELEASE-NOTES.md
++++ b/RELEASE-NOTES.md
+@@ -1,3 +1,8 @@
++# Version 21.2.1.1
++
++**[HOTFIX]** In order to ensure v21 of gem5 remains compatible with future changes, the gem5 stdlib downloader has been updated to obtain the resources.json file from <https://resources.gem5.org/resources.json>.
++As this domain is under the gem5 project control, unlike the previous googlesource URL, we can ensure longer-term stability.
++The fix also ensures the downloader can parse plain-text JSON and base64 encoding of the resources.json file.
+ 
+ # Version 21.2.1.0
+ 
+-- 
+1.8.3.1
+

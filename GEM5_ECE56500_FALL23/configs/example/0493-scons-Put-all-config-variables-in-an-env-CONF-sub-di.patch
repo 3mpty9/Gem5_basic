@@ -1,0 +1,1714 @@
+From e6c0ba97db4b9d64ad7b9bdfd29a57cef7aa02ef Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 15 Feb 2022 22:23:43 -0800
+Subject: [PATCH 493/757] scons: Put all config variables in an env['CONF']
+ sub-dict.
+
+This makes what are configuration and what are internal SCons variables
+explicit and separate, and makes it unnecessary to call out what
+variables to export to C++.
+
+These variables will also be plumbed into and out of kconfiglib in later
+changes.
+
+Change-Id: Iaf5e098d7404af06285c421dbdf8ef4171b3f001
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56892
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct                                         | 27 ++++++++++----------
+ site_scons/gem5_scons/builders/config_file.py      |  2 +-
+ src/SConscript                                     | 16 +++++-------
+ src/arch/SConscript                                | 11 ++++----
+ src/arch/amdgpu/common/SConscript                  |  4 +--
+ src/arch/amdgpu/gcn3/SConscript                    |  4 +--
+ src/arch/amdgpu/vega/SConscript                    |  4 +--
+ src/arch/arm/SConscript                            | 15 ++++++-----
+ src/arch/arm/fastmodel/CortexA76/SConscript        |  2 +-
+ src/arch/arm/fastmodel/CortexR52/SConscript        |  2 +-
+ src/arch/arm/fastmodel/GIC/SConscript              |  2 +-
+ src/arch/arm/fastmodel/PL330_DMAC/SConscript       |  2 +-
+ src/arch/arm/fastmodel/SConscript                  | 19 +++++++-------
+ src/arch/arm/fastmodel/iris/SConscript             |  2 +-
+ src/arch/arm/fastmodel/reset_controller/SConscript |  2 +-
+ src/arch/arm/kvm/SConscript                        |  2 +-
+ src/arch/mips/SConscript                           |  9 +++----
+ src/arch/power/SConscript                          |  9 +++----
+ src/arch/riscv/SConscript                          | 11 ++++----
+ src/arch/sparc/SConscript                          |  9 +++----
+ src/arch/x86/SConscript                            |  9 +++----
+ src/arch/x86/bare_metal/SConscript                 |  5 +---
+ src/arch/x86/kvm/SConscript                        |  3 ++-
+ src/base/SConscript                                | 12 +++------
+ src/base/SConsopts                                 | 29 +++++++++++-----------
+ src/base/stats/SConscript                          |  9 +++----
+ src/base/stats/SConsopts                           |  8 +++---
+ src/cpu/SConscript                                 |  7 +++---
+ src/cpu/kvm/SConscript                             |  3 ++-
+ src/cpu/kvm/SConsopts                              | 21 ++++++----------
+ src/cpu/minor/SConscript                           |  2 +-
+ src/cpu/o3/SConscript                              |  2 +-
+ src/cpu/o3/probe/SConscript                        |  9 +++----
+ src/cpu/pred/SConscript                            |  2 +-
+ src/cpu/simple/SConscript                          |  2 +-
+ src/cpu/simple/probes/SConscript                   |  2 +-
+ src/cpu/testers/directedtest/SConscript            |  2 +-
+ .../testers/garnet_synthetic_traffic/SConscript    |  2 +-
+ src/cpu/testers/gpu_ruby_test/SConscript           |  4 +--
+ src/cpu/testers/rubytest/SConscript                |  2 +-
+ src/cpu/testers/traffic_gen/SConscript             |  7 +++---
+ src/cpu/trace/SConscript                           |  7 +++---
+ src/dev/SConscript                                 |  2 +-
+ src/dev/amdgpu/SConscript                          |  2 +-
+ src/dev/arm/SConscript                             |  2 +-
+ src/dev/hsa/SConscript                             |  2 +-
+ src/dev/i2c/SConscript                             |  2 +-
+ src/dev/net/SConscript                             |  2 +-
+ src/dev/net/SConsopts                              |  6 ++---
+ src/dev/ps2/SConscript                             |  2 +-
+ src/dev/serial/SConscript                          |  2 +-
+ src/dev/storage/SConscript                         |  2 +-
+ src/dev/virtio/SConscript                          |  2 +-
+ src/gpu-compute/SConscript                         |  2 +-
+ src/kern/SConscript                                |  2 +-
+ src/mem/SConscript                                 |  2 +-
+ src/mem/probes/SConscript                          |  5 ++--
+ src/mem/ruby/SConscript                            |  2 +-
+ src/mem/ruby/common/SConscript                     |  5 ++--
+ src/mem/ruby/network/SConscript                    |  2 +-
+ src/mem/ruby/network/fault_model/SConscript        |  2 +-
+ src/mem/ruby/network/garnet/SConscript             |  2 +-
+ src/mem/ruby/network/simple/SConscript             |  2 +-
+ src/mem/ruby/profiler/SConscript                   |  2 +-
+ src/mem/ruby/protocol/SConscript                   |  8 +++---
+ src/mem/ruby/slicc_interface/SConscript            |  2 +-
+ src/mem/ruby/structures/SConscript                 |  2 +-
+ src/mem/ruby/system/SConscript                     | 14 +++++------
+ src/proto/SConscript                               | 16 ++++--------
+ src/proto/SConsopts                                | 11 +++++---
+ src/sim/SConscript                                 |  2 +-
+ src/systemc/SConscript                             |  2 +-
+ src/systemc/SConsopts                              |  2 ++
+ src/systemc/channel/SConscript                     |  2 +-
+ src/systemc/core/SConscript                        |  2 +-
+ src/systemc/dt/SConscript                          |  2 +-
+ src/systemc/dt/bit/SConscript                      |  2 +-
+ src/systemc/dt/fx/SConscript                       |  2 +-
+ src/systemc/dt/int/SConscript                      |  2 +-
+ src/systemc/dt/misc/SConscript                     |  2 +-
+ src/systemc/python/SConscript                      |  2 +-
+ src/systemc/tests/SConscript                       |  2 +-
+ src/systemc/tlm_bridge/SConscript                  |  2 +-
+ src/systemc/tlm_core/2/generic_payload/SConscript  |  2 +-
+ src/systemc/tlm_core/2/quantum/SConscript          |  2 +-
+ src/systemc/tlm_utils/SConscript                   |  2 +-
+ src/systemc/utils/SConscript                       |  2 +-
+ 87 files changed, 211 insertions(+), 233 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index beecd03..0bd879a 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -630,10 +630,8 @@ for variant_path in variant_paths:
+ 
+     Export('extras_dir_list')
+ 
+-    # Sticky variables that should be exported to #defines in config/*.hh
+-    # (see src/SConscript).
+-    export_vars = []
+-    Export('export_vars')
++    # Variables which were determined with Configure.
++    env['CONF'] = {}
+ 
+     # Walk the tree and execute all SConsopts scripts that wil add to the
+     # above variables
+@@ -671,19 +669,22 @@ Build variables for {dir}:
+     # Save sticky variable settings back to current variables file
+     sticky_vars.Save(current_vars_file, env)
+ 
++    # Pull all the sticky variables into the CONF dict.
++    env['CONF'].update({key: env[key] for key in sticky_vars.keys()})
++
+     # Do this after we save setting back, or else we'll tack on an
+     # extra 'qdo' every time we run scons.
+-    if env['BATCH']:
+-        env['CC']     = env['BATCH_CMD'] + ' ' + env['CC']
+-        env['CXX']    = env['BATCH_CMD'] + ' ' + env['CXX']
+-        env['AS']     = env['BATCH_CMD'] + ' ' + env['AS']
+-        env['AR']     = env['BATCH_CMD'] + ' ' + env['AR']
+-        env['RANLIB'] = env['BATCH_CMD'] + ' ' + env['RANLIB']
++    if env['CONF']['BATCH']:
++        env['CC']     = env['CONF']['BATCH_CMD'] + ' ' + env['CC']
++        env['CXX']    = env['CONF']['BATCH_CMD'] + ' ' + env['CXX']
++        env['AS']     = env['CONF']['BATCH_CMD'] + ' ' + env['AS']
++        env['AR']     = env['CONF']['BATCH_CMD'] + ' ' + env['AR']
++        env['RANLIB'] = env['CONF']['BATCH_CMD'] + ' ' + env['RANLIB']
+ 
+     # Cache build files in the supplied directory.
+-    if env['M5_BUILD_CACHE']:
+-        print('Using build cache located at', env['M5_BUILD_CACHE'])
+-        CacheDir(env['M5_BUILD_CACHE'])
++    if env['CONF']['M5_BUILD_CACHE']:
++        print('Using build cache located at', env['CONF']['M5_BUILD_CACHE'])
++        CacheDir(env['CONF']['M5_BUILD_CACHE'])
+ 
+ 
+     env.Append(CCFLAGS='$CCFLAGS_EXTRA')
+diff --git a/site_scons/gem5_scons/builders/config_file.py b/site_scons/gem5_scons/builders/config_file.py
+index 458c731..191cc40 100755
+--- a/site_scons/gem5_scons/builders/config_file.py
++++ b/site_scons/gem5_scons/builders/config_file.py
+@@ -67,7 +67,7 @@ def ConfigFile(env):
+         variable = str(target[0])
+         # True target is config header file
+         target = env.Dir('config').File(variable.lower() + '.hh')
+-        val = env[variable]
++        val = env['CONF'][variable]
+         if isinstance(val, bool):
+             # Force value to 0/1
+             val = int(val)
+diff --git a/src/SConscript b/src/SConscript
+index 5dd84ce..c1b00f0 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -57,17 +57,13 @@ Export(SourceFilter.factories)
+ 
+ Import('*')
+ 
+-if env['USE_EFENCE']:
++if env['CONF']['USE_EFENCE']:
+     env.Append(LIBS=['efence'])
+ 
+ # Children need to see the environment
+ Export('env')
+ 
+-all_export_vars = set()
+-all_export_vars.update(export_vars)
+-all_export_vars.update(sticky_vars.keys())
+-
+-build_env = [(opt, env[opt]) for opt in all_export_vars]
++build_env = list(env['CONF'].items())
+ 
+ from code_formatter import code_formatter
+ 
+@@ -264,7 +260,7 @@ cxx_file.add_emitter('.proto', protoc_emitter)
+ def ProtoBuf(source, tags=None, add_tags=None):
+     '''Add a Protocol Buffer to build'''
+ 
+-    if not env['HAVE_PROTOC'] or not env['HAVE_PROTOBUF']:
++    if not env['HAVE_PROTOC'] or not env['CONF']['HAVE_PROTOBUF']:
+         error('Got protobuf to build, but lacks support!')
+ 
+     '''Specify the source file, and any tags'''
+@@ -558,12 +554,12 @@ for extra_dir in extras_dir_list:
+             build_dir = os.path.join(env['BUILDDIR'], root[prefix_len:])
+             SConscript(os.path.join(root, 'SConscript'), variant_dir=build_dir)
+ 
+-for opt in all_export_vars:
++for opt in env['CONF'].keys():
+     env.ConfigFile(opt)
+ 
+ def makeTheISA(source, target, env):
+     isas = sorted(set(env.Split('${ALL_ISAS}')))
+-    target_isa = env['TARGET_ISA']
++    target_isa = env['CONF']['TARGET_ISA']
+     is_null_isa = '1' if (target_isa.lower() == 'null') else '0'
+ 
+     def namespace(isa):
+@@ -586,7 +582,7 @@ env.Command('config/the_isa.hh', [],
+             MakeAction(makeTheISA, Transform("CFG ISA", 0)))
+ 
+ def makeTheGPUISA(source, target, env):
+-    gpu_isa = env['TARGET_GPU_ISA']
++    gpu_isa = env['CONF']['TARGET_GPU_ISA']
+ 
+     if gpu_isa:
+         namespace = gpu_isa[0].upper() + gpu_isa[1:].lower() + 'ISA'
+diff --git a/src/arch/SConscript b/src/arch/SConscript
+index 2321b9a..1fe9815 100644
+--- a/src/arch/SConscript
++++ b/src/arch/SConscript
+@@ -56,18 +56,18 @@ Import('*')
+ #
+ #################################################################
+ 
+-env.TagImplies(env.subst('${TARGET_ISA} isa'), 'gem5 lib')
++env.TagImplies(env.subst('${CONF["TARGET_ISA"]} isa'), 'gem5 lib')
+ 
+ env.SwitchingHeaders(
+     Split('''
+         isa.hh
+         vecregs.hh
+         '''),
+-    env.subst('${TARGET_ISA}'))
++    env.subst('${CONF["TARGET_ISA"]}'))
+ 
+ amdgpu_isa = ['gcn3', 'vega']
+ 
+-if env['BUILD_GPU']:
++if env['CONF']['BUILD_GPU']:
+     env.SwitchingHeaders(
+         Split('''
+             gpu_decoder.hh
+@@ -75,8 +75,9 @@ if env['BUILD_GPU']:
+             gpu_registers.hh
+             gpu_types.hh
+             '''),
+-        '{}'.format('amdgpu/' if env['TARGET_GPU_ISA'] in amdgpu_isa else '')+
+-        env.subst('${TARGET_GPU_ISA}'))
++        '{}'.format('amdgpu/' if
++            env['CONF']['TARGET_GPU_ISA'] in amdgpu_isa else '') +
++        env.subst('${CONF["TARGET_GPU_ISA"]}'))
+ 
+ #################################################################
+ #
+diff --git a/src/arch/amdgpu/common/SConscript b/src/arch/amdgpu/common/SConscript
+index 2e49e7a..ffa5fcb 100644
+--- a/src/arch/amdgpu/common/SConscript
++++ b/src/arch/amdgpu/common/SConscript
+@@ -31,10 +31,10 @@ import sys
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+-if env['TARGET_GPU_ISA'] == 'gcn3' or env['TARGET_GPU_ISA'] == 'vega':
++if env['CONF']['TARGET_GPU_ISA'] in ('gcn3', 'vega'):
+     SimObject('X86GPUTLB.py', sim_objects=['X86GPUTLB', 'TLBCoalescer'])
+ 
+     Source('tlb.cc')
+diff --git a/src/arch/amdgpu/gcn3/SConscript b/src/arch/amdgpu/gcn3/SConscript
+index 6b20648..732d526 100644
+--- a/src/arch/amdgpu/gcn3/SConscript
++++ b/src/arch/amdgpu/gcn3/SConscript
+@@ -33,10 +33,10 @@ import sys
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+-if env['TARGET_GPU_ISA'] == 'gcn3':
++if env['CONF']['TARGET_GPU_ISA'] == 'gcn3':
+     Source('decoder.cc')
+     Source('insts/gpu_static_inst.cc')
+     Source('insts/instructions.cc')
+diff --git a/src/arch/amdgpu/vega/SConscript b/src/arch/amdgpu/vega/SConscript
+index c825758..9c6a01b 100644
+--- a/src/arch/amdgpu/vega/SConscript
++++ b/src/arch/amdgpu/vega/SConscript
+@@ -33,7 +33,7 @@ import sys
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+ SimObject('VegaGPUTLB.py', sim_objects=['VegaPagetableWalker',
+@@ -48,7 +48,7 @@ Source('tlb_coalescer.cc')
+ 
+ DebugFlag('GPUPTWalker', 'Debug flag for GPU page table walker')
+ 
+-if env['TARGET_GPU_ISA'] == 'vega':
++if env['CONF']['TARGET_GPU_ISA'] == 'vega':
+     Source('decoder.cc')
+     Source('insts/gpu_static_inst.cc')
+     Source('insts/instructions.cc')
+diff --git a/src/arch/arm/SConscript b/src/arch/arm/SConscript
+index a00ba8d..71f9196 100644
+--- a/src/arch/arm/SConscript
++++ b/src/arch/arm/SConscript
+@@ -61,7 +61,7 @@ Source('insts/vfp.cc', tags='arm isa')
+ Source('insts/fplib.cc', tags='arm isa')
+ Source('insts/crypto.cc', tags='arm isa')
+ Source('insts/tme64.cc', tags='arm isa')
+-if env['PROTOCOL'] == 'MESI_Three_Level_HTM':
++if env['CONF']['PROTOCOL'] == 'MESI_Three_Level_HTM':
+     Source('insts/tme64ruby.cc', tags='arm isa')
+ else:
+     Source('insts/tme64classic.cc', tags='arm isa')
+@@ -113,13 +113,12 @@ SimObject('ArmTLB.py', sim_objects=['ArmTLB'], enums=['ArmLookupLevel'],
+ SimObject('ArmPMU.py', sim_objects=['ArmPMU'], tags='arm isa')
+ 
+ SimObject('ArmCPU.py', sim_objects=[], tags='arm isa')
+-if env['TARGET_ISA'] == 'arm':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='arm isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='arm isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='arm isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='arm isa')
+-    SimObject('O3Checker.py', sim_objects=[], tags='arm isa')
+-    SimObject('MinorCPU.py', sim_objects=[], tags='arm isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='arm isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='arm isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='arm isa')
++SimObject('O3CPU.py', sim_objects=[], tags='arm isa')
++SimObject('O3Checker.py', sim_objects=[], tags='arm isa')
++SimObject('MinorCPU.py', sim_objects=[], tags='arm isa')
+ 
+ DebugFlag('Arm', tags='arm isa')
+ DebugFlag('ArmTme', 'Transactional Memory Extension', tags='arm isa')
+diff --git a/src/arch/arm/fastmodel/CortexA76/SConscript b/src/arch/arm/fastmodel/CortexA76/SConscript
+index 016f613..7b18318 100644
+--- a/src/arch/arm/fastmodel/CortexA76/SConscript
++++ b/src/arch/arm/fastmodel/CortexA76/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ protocol_dir = Dir('..').Dir('protocol')
+diff --git a/src/arch/arm/fastmodel/CortexR52/SConscript b/src/arch/arm/fastmodel/CortexR52/SConscript
+index c1dc1fe..a1d308b 100644
+--- a/src/arch/arm/fastmodel/CortexR52/SConscript
++++ b/src/arch/arm/fastmodel/CortexR52/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ protocol_dir = Dir('..').Dir('protocol')
+diff --git a/src/arch/arm/fastmodel/GIC/SConscript b/src/arch/arm/fastmodel/GIC/SConscript
+index 2a95145..cff18e5 100644
+--- a/src/arch/arm/fastmodel/GIC/SConscript
++++ b/src/arch/arm/fastmodel/GIC/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ protocol_dir = Dir('..').Dir('protocol')
+diff --git a/src/arch/arm/fastmodel/PL330_DMAC/SConscript b/src/arch/arm/fastmodel/PL330_DMAC/SConscript
+index 3e41e05..8527133 100644
+--- a/src/arch/arm/fastmodel/PL330_DMAC/SConscript
++++ b/src/arch/arm/fastmodel/PL330_DMAC/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ protocol_dir = Dir('..').Dir('protocol')
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index 32faa3c..cbb2c15 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -46,13 +46,13 @@ from gem5_scons import Transform, warning, error
+ 
+ import os.path
+ 
+-if env['USE_ARM_FASTMODEL']:
+-    if not env['USE_SYSTEMC']:
++if env['CONF']['USE_ARM_FASTMODEL']:
++    if not env['CONF']['USE_SYSTEMC']:
+         warning('ARM Fast Models require systemc support')
+-        env['USE_ARM_FASTMODEL'] = False
++        env['CONF']['USE_ARM_FASTMODEL'] = False
+         Return()
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ 
+@@ -60,7 +60,7 @@ systemc_home = Dir('#/src/systemc/ext/systemc_home')
+ env['ENV']['SYSTEMC_HOME'] = systemc_home.abspath
+ 
+ def extract_var(name):
+-    if name not in env:
++    if name not in env['CONF']:
+         error('Error: %s is not set' % name)
+     print('%s = %s' % (name, env[name]))
+     # Make sure the value of this variable shows up as an environment variable
+@@ -77,7 +77,7 @@ maxcore_home = Dir(maxcore_home)
+ armlmd_license_file = File(armlmd_license_file)
+ 
+ 
+-pvlib_flavor = env['PVLIB_FLAVOR']
++pvlib_flavor = env['CONF']['PVLIB_FLAVOR']
+ pvlib_lib_dir = pvlib_home.Dir('lib').Dir(pvlib_flavor)
+ 
+ simulation_engine_name = 'libMAXCOREInitSimulationEngine.3.so'
+@@ -254,7 +254,7 @@ class ProjectFileParser(Grammar):
+         t[0] = t[1]
+ 
+ 
+-license_count = int(env['ARMLMD_LICENSE_COUNT'])
++license_count = int(env['CONF']['ARMLMD_LICENSE_COUNT'])
+ arm_licenses = list((Value(object()) for i in range(license_count)))
+ license_cycle = cycle(arm_licenses)
+ 
+@@ -348,8 +348,9 @@ class ArmFastModelComponent(object):
+         # Simgen also puts required share library under the project folder.
+         self.rpaths = [simgen_dir, project_file_dir]
+         self.log = gen_dir.File('build_%s.log' % tlc)
+-        self.simgen_cmd = env.subst('${SIMGEN} -p %s --configuration %s -b ' +
+-            '--verbose off --num-build-cpus 100 --build-dir %s >%s') % \
++        self.simgen_cmd = env.subst('${CONF["SIMGEN"]} -p %s '
++            '--configuration %s -b --verbose off --num-build-cpus 100 '
++            '--build-dir %s >%s') % \
+             (shlex.quote(project_file.srcnode().abspath),
+              shlex.quote(config_name),
+              shlex.quote(simgen_dir.abspath),
+diff --git a/src/arch/arm/fastmodel/iris/SConscript b/src/arch/arm/fastmodel/iris/SConscript
+index 6635ca0..1908d72 100644
+--- a/src/arch/arm/fastmodel/iris/SConscript
++++ b/src/arch/arm/fastmodel/iris/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ SimObject('Iris.py', sim_objects=[
+diff --git a/src/arch/arm/fastmodel/reset_controller/SConscript b/src/arch/arm/fastmodel/reset_controller/SConscript
+index 3230e5d..b6f7852 100644
+--- a/src/arch/arm/fastmodel/reset_controller/SConscript
++++ b/src/arch/arm/fastmodel/reset_controller/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_ARM_FASTMODEL']:
++if not env['CONF']['USE_ARM_FASTMODEL']:
+     Return()
+ 
+ SimObject('FastModelResetControllerExample.py', sim_objects=[
+diff --git a/src/arch/arm/kvm/SConscript b/src/arch/arm/kvm/SConscript
+index f25ee96..131c457 100644
+--- a/src/arch/arm/kvm/SConscript
++++ b/src/arch/arm/kvm/SConscript
+@@ -40,7 +40,7 @@ Import('*')
+ import platform
+ host_isa = platform.machine()
+ 
+-if not (env['USE_KVM'] and env['KVM_ISA'] == 'arm'):
++if not (env['CONF']['USE_KVM'] and env['CONF']['KVM_ISA'] == 'arm'):
+     Return()
+ 
+ SimObject('KvmGic.py',
+diff --git a/src/arch/mips/SConscript b/src/arch/mips/SConscript
+index 4f09e49..c93260a 100644
+--- a/src/arch/mips/SConscript
++++ b/src/arch/mips/SConscript
+@@ -52,11 +52,10 @@ SimObject('MipsSeWorkload.py', sim_objects=['MipsSEWorkload', 'MipsEmuLinux'],
+ SimObject('MipsTLB.py', sim_objects=['MipsTLB'], tags='mips isa')
+ 
+ SimObject('MipsCPU.py', sim_objects=[], tags='mips isa')
+-if env['TARGET_ISA'] == 'mips':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='mips isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='mips isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='mips isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='mips isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='mips isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='mips isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='mips isa')
++SimObject('O3CPU.py', sim_objects=[], tags='mips isa')
+ 
+ DebugFlag('MipsPRA', tags='mips isa')
+ 
+diff --git a/src/arch/power/SConscript b/src/arch/power/SConscript
+index b20a4c9..ab96d49 100644
+--- a/src/arch/power/SConscript
++++ b/src/arch/power/SConscript
+@@ -56,11 +56,10 @@ SimObject('PowerSeWorkload.py', sim_objects=[
+ SimObject('PowerTLB.py', sim_objects=['PowerTLB'], tags='power isa')
+ 
+ SimObject('PowerCPU.py', sim_objects=[], tags='power isa')
+-if env['TARGET_ISA'] == 'power':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='power isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='power isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='power isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='power isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='power isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='power isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='power isa')
++SimObject('O3CPU.py', sim_objects=[], tags='power isa')
+ 
+ DebugFlag('Power', tags='power isa')
+ 
+diff --git a/src/arch/riscv/SConscript b/src/arch/riscv/SConscript
+index 66a983a..a9664f4 100644
+--- a/src/arch/riscv/SConscript
++++ b/src/arch/riscv/SConscript
+@@ -75,12 +75,11 @@ SimObject('RiscvTLB.py', sim_objects=['RiscvPagetableWalker', 'RiscvTLB'],
+     tags='riscv isa')
+ 
+ SimObject('RiscvCPU.py', sim_objects=[], tags='riscv isa')
+-if env['TARGET_ISA'] == 'riscv':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='riscv isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='riscv isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='riscv isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='riscv isa')
+-    SimObject('MinorCPU.py', sim_objects=[], tags='riscv isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='riscv isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='riscv isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='riscv isa')
++SimObject('O3CPU.py', sim_objects=[], tags='riscv isa')
++SimObject('MinorCPU.py', sim_objects=[], tags='riscv isa')
+ 
+ DebugFlag('RiscvMisc', tags='riscv isa')
+ DebugFlag('PMP', tags='riscv isa')
+diff --git a/src/arch/sparc/SConscript b/src/arch/sparc/SConscript
+index fe3a037..71770b3 100644
+--- a/src/arch/sparc/SConscript
++++ b/src/arch/sparc/SConscript
+@@ -57,11 +57,10 @@ SimObject('SparcSeWorkload.py', sim_objects=[
+ SimObject('SparcTLB.py', sim_objects=['SparcTLB'], tags='sparc isa')
+ 
+ SimObject('SparcCPU.py', sim_objects=[], tags='sparc isa')
+-if env['TARGET_ISA'] == 'sparc':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='sparc isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='sparc isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='sparc isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='sparc isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='sparc isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='sparc isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='sparc isa')
++SimObject('O3CPU.py', sim_objects=[], tags='sparc isa')
+ 
+ DebugFlag('Sparc', "Generic SPARC ISA stuff", tags='sparc isa')
+ DebugFlag('RegisterWindows', "Register window manipulation", tags='sparc isa')
+diff --git a/src/arch/x86/SConscript b/src/arch/x86/SConscript
+index 8c957dd..9eeefd7 100644
+--- a/src/arch/x86/SConscript
++++ b/src/arch/x86/SConscript
+@@ -74,11 +74,10 @@ SimObject('X86TLB.py', sim_objects=['X86PagetableWalker', 'X86TLB'],
+     tags='x86 isa')
+ 
+ SimObject('X86CPU.py', sim_objects=[], tags='x86 isa')
+-if env['TARGET_ISA'] == 'x86':
+-    SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='x86 isa')
+-    SimObject('TimingSimpleCPU.py', sim_objects=[], tags='x86 isa')
+-    SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='x86 isa')
+-    SimObject('O3CPU.py', sim_objects=[], tags='x86 isa')
++SimObject('AtomicSimpleCPU.py', sim_objects=[], tags='x86 isa')
++SimObject('TimingSimpleCPU.py', sim_objects=[], tags='x86 isa')
++SimObject('NonCachingSimpleCPU.py', sim_objects=[], tags='x86 isa')
++SimObject('O3CPU.py', sim_objects=[], tags='x86 isa')
+ 
+ DebugFlag('LocalApic', "Local APIC debugging", tags='x86 isa')
+ DebugFlag('X86', "Generic X86 ISA debugging", tags='x86 isa')
+diff --git a/src/arch/x86/bare_metal/SConscript b/src/arch/x86/bare_metal/SConscript
+index 04e8feb..d271c15 100644
+--- a/src/arch/x86/bare_metal/SConscript
++++ b/src/arch/x86/bare_metal/SConscript
+@@ -25,7 +25,4 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'x86':
+-    Return()
+-
+-Source('workload.cc')
++Source('workload.cc', tags='x86 isa')
+diff --git a/src/arch/x86/kvm/SConscript b/src/arch/x86/kvm/SConscript
+index 0b3d3c8..5dba1cb 100644
+--- a/src/arch/x86/kvm/SConscript
++++ b/src/arch/x86/kvm/SConscript
+@@ -37,7 +37,8 @@
+ 
+ Import('*')
+ 
+-if not env['USE_KVM'] or env['TARGET_ISA'] != env['KVM_ISA']:
++if not env['CONF']['USE_KVM'] or \
++        env['CONF']['TARGET_ISA'] != env['CONF']['KVM_ISA']:
+     Return()
+ 
+ SimObject('X86KvmCPU.py', sim_objects=['X86KvmCPU'], tags='x86 isa')
+diff --git a/src/base/SConscript b/src/base/SConscript
+index 574a64f..99d4bee 100644
+--- a/src/base/SConscript
++++ b/src/base/SConscript
+@@ -42,14 +42,10 @@ GTest('cprintf.test', 'cprintf.test.cc')
+ Executable('cprintftime', 'cprintftime.cc', 'cprintf.cc')
+ Source('debug.cc', add_tags=['gem5 trace', 'gem5 events'])
+ GTest('debug.test', 'debug.test.cc', 'debug.cc')
+-if env['HAVE_FENV']:
+-    Source('fenv.cc')
+-else:
+-    warning("No IEEE FP rounding mode control.\n"
+-            "FP results may deviate slightly from other platforms.")
+-if env['HAVE_PNG']:
++Source('fenv.cc', tags='fenv')
++if env['CONF']['HAVE_PNG']:
+     SourceLib('png')
+-    Source('pngwriter.cc')
++Source('pngwriter.cc', tags='png')
+ Source('fiber.cc')
+ GTest('fiber.test', 'fiber.test.cc', 'fiber.cc')
+ GTest('flags.test', 'flags.test.cc')
+@@ -70,7 +66,7 @@ Source('pixel.cc')
+ GTest('pixel.test', 'pixel.test.cc', 'pixel.cc')
+ Source('pollevent.cc')
+ Source('random.cc')
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     Source('remote_gdb.cc')
+ Source('socket.cc')
+ GTest('socket.test', 'socket.test.cc', 'socket.cc')
+diff --git a/src/base/SConsopts b/src/base/SConsopts
+index 5c8d5f7..8e06612 100644
+--- a/src/base/SConsopts
++++ b/src/base/SConsopts
+@@ -31,30 +31,35 @@ import gem5_scons
+ 
+ with gem5_scons.Configure(main) as conf:
+     # Check for <fenv.h> (C99 FP environment control)
+-    conf.env['HAVE_FENV'] = conf.CheckHeader('fenv.h', '<>')
++    conf.env['CONF']['HAVE_FENV'] = conf.CheckHeader('fenv.h', '<>')
+ 
+-    if not conf.env['HAVE_FENV']:
++    if conf.env['CONF']['HAVE_FENV']:
++        conf.env.TagImplies('fenv', 'gem5 lib')
++    else:
+         warning("Header file <fenv.h> not found.\n"
+                 "This host has no IEEE FP rounding mode control.")
+ 
+     # Check for <png.h> (libpng library needed if wanting to dump
+     # frame buffer image in png format)
+-    conf.env['HAVE_PNG'] = conf.CheckHeader('png.h', '<>')
++    conf.env['CONF']['HAVE_PNG'] = conf.CheckHeader('png.h', '<>')
+ 
+-    if not conf.env['HAVE_PNG']:
++    if conf.env['CONF']['HAVE_PNG']:
++        conf.env.TagImplies('png', 'gem5 lib')
++    else:
+         warning("Header file <png.h> not found.\n"
+                 "This host has no libpng library.\n"
+                 "Disabling support for PNG framebuffers.")
+ 
+-    have_posix_clock = \
++    conf.env['CONF']['HAVE_POSIX_CLOCK'] = \
+         conf.CheckLibWithHeader([None, 'rt'], 'time.h', 'C',
+                                 'clock_nanosleep(0,0,NULL,NULL);')
+-    if not have_posix_clock:
++    if not conf.env['CONF']['HAVE_POSIX_CLOCK']:
+         warning("Can't find library for POSIX clocks.")
+ 
+     # Valgrind gets much less confused if you tell it when you're using
+     # alternative stacks.
+-    conf.env['HAVE_VALGRIND'] = conf.CheckCHeader('valgrind/valgrind.h')
++    conf.env['CONF']['HAVE_VALGRIND'] = \
++            conf.CheckCHeader('valgrind/valgrind.h')
+ 
+ 
+ # Check if the compiler supports the [[gnu::deprecated]] attribute
+@@ -64,20 +69,16 @@ werror_env.Append(CCFLAGS=['-Werror'])
+ with gem5_scons.Configure(werror_env) as conf:
+ 
+     # Store result in the main environment
+-    main['HAVE_DEPRECATED_NAMESPACE'] = conf.TryCompile('''
++    main['CONF']['HAVE_DEPRECATED_NAMESPACE'] = conf.TryCompile('''
+         int main() {return 0;}
+         namespace [[gnu::deprecated("Test namespace deprecation")]]
+         test_deprecated_namespace {}
+     ''', '.cc')
+ 
+-    if not main['HAVE_DEPRECATED_NAMESPACE']:
++    if not main['CONF']['HAVE_DEPRECATED_NAMESPACE']:
+         warning("Deprecated namespaces are not supported by this compiler.\n"
+                 "Please make sure to check the mailing list for deprecation "
+                 "announcements.")
+ 
+ sticky_vars.Add(BoolVariable('USE_POSIX_CLOCK', 'Use POSIX Clocks',
+-                             have_posix_clock))
+-
+-
+-export_vars.extend([
+-        'HAVE_FENV', 'HAVE_PNG', 'HAVE_VALGRIND', 'HAVE_DEPRECATED_NAMESPACE'])
++                             '${CONF["HAVE_POSIX_CLOCK"]}'))
+diff --git a/src/base/stats/SConscript b/src/base/stats/SConscript
+index f81bd24..0599d50 100644
+--- a/src/base/stats/SConscript
++++ b/src/base/stats/SConscript
+@@ -34,11 +34,10 @@ Source('info.cc')
+ Source('storage.cc')
+ Source('text.cc')
+ 
+-if env['HAVE_HDF5']:
+-    if env['GCC']:
+-        Source('hdf5.cc', append={'CXXFLAGS': '-Wno-deprecated-copy'})
+-    else:
+-        Source('hdf5.cc')
++if env['GCC']:
++    Source('hdf5.cc', append={'CXXFLAGS': '-Wno-deprecated-copy'}, tags='hdf5')
++else:
++    Source('hdf5.cc', tags='hdf5')
+ 
+ GTest('group.test', 'group.test.cc', 'group.cc', 'info.cc',
+     with_tag('gem5 trace'))
+diff --git a/src/base/stats/SConsopts b/src/base/stats/SConsopts
+index 0869a83..ce0e880 100644
+--- a/src/base/stats/SConsopts
++++ b/src/base/stats/SConsopts
+@@ -41,13 +41,13 @@ with gem5_scons.Configure(main) as conf:
+     # include path and library path provided by pkg-config. We perform
+     # this check even if there isn't a pkg-config configuration for hdf5
+     # since some installations don't use pkg-config.
+-    conf.env['HAVE_HDF5'] = \
++    conf.env['CONF']['HAVE_HDF5'] = \
+             conf.CheckLibWithHeader('hdf5', 'hdf5.h', 'C',
+                                     'H5Fcreate("", 0, 0, 0);') and \
+             conf.CheckLibWithHeader('hdf5_cpp', 'H5Cpp.h', 'C++',
+                                     'H5::H5File("", 0);')
+ 
+-    if not conf.env['HAVE_HDF5']:
++    if conf.env['CONF']['HAVE_HDF5']:
++        conf.env.TagImplies('hdf5', 'gem5 lib')
++    else:
+         warning("Couldn't find HDF5 C++ libraries. Disabling HDF5 support.")
+-
+-export_vars.append('HAVE_HDF5')
+diff --git a/src/cpu/SConscript b/src/cpu/SConscript
+index 4dcec7c..fad601e 100644
+--- a/src/cpu/SConscript
++++ b/src/cpu/SConscript
+@@ -85,13 +85,12 @@ Source('pc_event.cc')
+ SimObject('FuncUnit.py', sim_objects=['OpDesc', 'FUDesc'], enums=['OpClass'])
+ SimObject('StaticInstFlags.py', enums=['StaticInstFlags'])
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ # Only build the protobuf instructions tracer if we have protobuf support.
+-if env['HAVE_PROTOBUF']:
+-    SimObject('InstPBTrace.py', sim_objects=['InstPBTrace'])
+-    Source('inst_pb_trace.cc')
++SimObject('InstPBTrace.py', sim_objects=['InstPBTrace'], tags='protobuf')
++Source('inst_pb_trace.cc', tags='protobuf')
+ 
+ SimObject('CheckerCPU.py', sim_objects=['CheckerCPU'])
+ 
+diff --git a/src/cpu/kvm/SConscript b/src/cpu/kvm/SConscript
+index c8ade6e..2a87c76 100644
+--- a/src/cpu/kvm/SConscript
++++ b/src/cpu/kvm/SConscript
+@@ -37,7 +37,8 @@
+ 
+ Import('*')
+ 
+-if not env['USE_KVM'] or env['TARGET_ISA'] != env['KVM_ISA']:
++if not env['CONF']['USE_KVM'] or \
++        env['CONF']['TARGET_ISA'] != env['CONF']['KVM_ISA']:
+     Return()
+ 
+ SimObject('KvmVM.py', sim_objects=['KvmVM'])
+diff --git a/src/cpu/kvm/SConsopts b/src/cpu/kvm/SConsopts
+index 31f56c5..3bb549f 100644
+--- a/src/cpu/kvm/SConsopts
++++ b/src/cpu/kvm/SConsopts
+@@ -42,7 +42,7 @@ with gem5_scons.Configure(main) as conf:
+     # the types as a fall back.
+     # The default value of KVM_ISA should serialize to a string in the
+     # C++ header and test False in Scons/Python.
+-    conf.env['KVM_ISA'] = ''
++    conf.env['CONF']['KVM_ISA'] = ''
+     if not conf.CheckHeader('linux/kvm.h', '<>'):
+         print("Info: Compatible header file <linux/kvm.h> not found, "
+               "disabling KVM support.")
+@@ -52,33 +52,28 @@ with gem5_scons.Configure(main) as conf:
+     elif host_isa == 'x86_64':
+         if conf.CheckTypeSize('struct kvm_xsave',
+                 '#include <linux/kvm.h>') != 0:
+-            conf.env['KVM_ISA'] = 'x86'
++            conf.env['CONF']['KVM_ISA'] = 'x86'
+         else:
+             warning("KVM on x86 requires xsave support in kernel headers.")
+     elif host_isa in ('armv7l', 'aarch64'):
+-        conf.env['KVM_ISA'] = 'arm'
++        conf.env['CONF']['KVM_ISA'] = 'arm'
+     else:
+         warning("Failed to determine host ISA.")
+ 
+-    if conf.env['KVM_ISA']:
++    if conf.env['CONF']['KVM_ISA']:
+         # Check if the exclude_host attribute is available. We want this to
+         # get accurate instruction counts in KVM.
+-        conf.env['HAVE_PERF_ATTR_EXCLUDE_HOST'] = conf.CheckMember(
++        conf.env['CONF']['HAVE_PERF_ATTR_EXCLUDE_HOST'] = conf.CheckMember(
+             'linux/perf_event.h', 'struct perf_event_attr', 'exclude_host')
+ 
+         # Warn about missing optional functionality
+-        if not conf.env['HAVE_PERF_ATTR_EXCLUDE_HOST']:
++        if not conf.env['CONF']['HAVE_PERF_ATTR_EXCLUDE_HOST']:
+             warning("perf_event headers lack support for the exclude_host "
+                     "attribute. KVM instruction counts will be inaccurate.")
+ 
+-        export_vars.append('HAVE_PERF_ATTR_EXCLUDE_HOST')
+-
+-if main['KVM_ISA']:
++if main['CONF']['KVM_ISA']:
+     sticky_vars.Add(BoolVariable('USE_KVM',
+                 'Enable hardware virtualized (KVM) CPU models', True))
+ else:
+-    main['USE_KVM'] = False
+-    export_vars.append('USE_KVM')
++    main['CONF']['USE_KVM'] = False
+     warning("Can not enable KVM, host seems to lack KVM support")
+-
+-export_vars.append('KVM_ISA')
+diff --git a/src/cpu/minor/SConscript b/src/cpu/minor/SConscript
+index db4b1bf..cd1b8e3 100644
+--- a/src/cpu/minor/SConscript
++++ b/src/cpu/minor/SConscript
+@@ -40,7 +40,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('BaseMinorCPU.py', sim_objects=[
+         'MinorOpClass', 'MinorOpClassSet', 'MinorFUTiming', 'MinorFU',
+         'MinorFUPool', 'BaseMinorCPU'],
+diff --git a/src/cpu/o3/SConscript b/src/cpu/o3/SConscript
+index a0bebb2..e255d89 100755
+--- a/src/cpu/o3/SConscript
++++ b/src/cpu/o3/SConscript
+@@ -30,7 +30,7 @@ import sys
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('FUPool.py', sim_objects=['FUPool'])
+     SimObject('FuncUnitConfig.py', sim_objects=[])
+     SimObject('BaseO3CPU.py', sim_objects=['BaseO3CPU'], enums=[
+diff --git a/src/cpu/o3/probe/SConscript b/src/cpu/o3/probe/SConscript
+index d7098ad..b2bbb3e 100644
+--- a/src/cpu/o3/probe/SConscript
++++ b/src/cpu/o3/probe/SConscript
+@@ -37,12 +37,11 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('SimpleTrace.py', sim_objects=['SimpleTrace'])
+     Source('simple_trace.cc')
+     DebugFlag('SimpleTrace')
+ 
+-    if env['HAVE_PROTOBUF']:
+-        SimObject('ElasticTrace.py', sim_objects=['ElasticTrace'])
+-        Source('elastic_trace.cc')
+-        DebugFlag('ElasticTrace')
++    SimObject('ElasticTrace.py', sim_objects=['ElasticTrace'], tags='protobuf')
++    Source('elastic_trace.cc', tags='protobuf')
++    DebugFlag('ElasticTrace', tags='protobuf')
+diff --git a/src/cpu/pred/SConscript b/src/cpu/pred/SConscript
+index ee25b0c..0437bda 100644
+--- a/src/cpu/pred/SConscript
++++ b/src/cpu/pred/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('BranchPredictor.py', sim_objects=[
+diff --git a/src/cpu/simple/SConscript b/src/cpu/simple/SConscript
+index 5a66e8d..66e43d4 100644
+--- a/src/cpu/simple/SConscript
++++ b/src/cpu/simple/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('BaseAtomicSimpleCPU.py', sim_objects=['BaseAtomicSimpleCPU'])
+     Source('atomic.cc')
+ 
+diff --git a/src/cpu/simple/probes/SConscript b/src/cpu/simple/probes/SConscript
+index 1c8abdb..8b1aa9a 100644
+--- a/src/cpu/simple/probes/SConscript
++++ b/src/cpu/simple/probes/SConscript
+@@ -28,6 +28,6 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('SimPoint.py', sim_objects=['SimPoint'])
+     Source('simpoint.cc')
+diff --git a/src/cpu/testers/directedtest/SConscript b/src/cpu/testers/directedtest/SConscript
+index e6453f9..6787648 100644
+--- a/src/cpu/testers/directedtest/SConscript
++++ b/src/cpu/testers/directedtest/SConscript
+@@ -35,7 +35,7 @@ Import('*')
+ # When this dependency is removed, the ruby tester should be compiled
+ # independently from Ruby
+ #
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('RubyDirectedTester.py', sim_objects=[
+diff --git a/src/cpu/testers/garnet_synthetic_traffic/SConscript b/src/cpu/testers/garnet_synthetic_traffic/SConscript
+index b1f7c8d..14f4abd 100644
+--- a/src/cpu/testers/garnet_synthetic_traffic/SConscript
++++ b/src/cpu/testers/garnet_synthetic_traffic/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('GarnetSyntheticTraffic.py', sim_objects=['GarnetSyntheticTraffic'])
+diff --git a/src/cpu/testers/gpu_ruby_test/SConscript b/src/cpu/testers/gpu_ruby_test/SConscript
+index 88215cc..0231649 100644
+--- a/src/cpu/testers/gpu_ruby_test/SConscript
++++ b/src/cpu/testers/gpu_ruby_test/SConscript
+@@ -31,10 +31,10 @@
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('ProtocolTester.py', sim_objects=['ProtocolTester'])
+diff --git a/src/cpu/testers/rubytest/SConscript b/src/cpu/testers/rubytest/SConscript
+index 87c38cc..cc76d2b 100644
+--- a/src/cpu/testers/rubytest/SConscript
++++ b/src/cpu/testers/rubytest/SConscript
+@@ -35,7 +35,7 @@ Import('*')
+ # When this dependency is removed, the ruby tester should be compiled
+ # independently from Ruby
+ #
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('RubyTester.py', sim_objects=['RubyTester'])
+diff --git a/src/cpu/testers/traffic_gen/SConscript b/src/cpu/testers/traffic_gen/SConscript
+index 3ac7872..098bd7b 100644
+--- a/src/cpu/testers/traffic_gen/SConscript
++++ b/src/cpu/testers/traffic_gen/SConscript
+@@ -65,8 +65,7 @@ if env['USE_PYTHON']:
+ 
+ # Only build the traffic generator if we have support for protobuf as the
+ # tracing relies on it
+-if env['HAVE_PROTOBUF']:
+-    SimObject('TrafficGen.py', sim_objects=['TrafficGen'])
+-    Source('trace_gen.cc')
+-    Source('traffic_gen.cc')
++SimObject('TrafficGen.py', sim_objects=['TrafficGen'], tags='protobuf')
++Source('trace_gen.cc', tags='protobuf')
++Source('traffic_gen.cc', tags='protobuf')
+ 
+diff --git a/src/cpu/trace/SConscript b/src/cpu/trace/SConscript
+index 27d5fbe..ad77009 100644
+--- a/src/cpu/trace/SConscript
++++ b/src/cpu/trace/SConscript
+@@ -1,12 +1,11 @@
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ # Only build TraceCPU if we have support for protobuf as TraceCPU relies on it
+-if env['HAVE_PROTOBUF']:
+-    SimObject('TraceCPU.py', sim_objects=['TraceCPU'])
+-    Source('trace_cpu.cc')
++SimObject('TraceCPU.py', sim_objects=['TraceCPU'], tags='protobuf')
++Source('trace_cpu.cc', tags='protobuf')
+ 
+ DebugFlag('TraceCPUData')
+ DebugFlag('TraceCPUInst')
+diff --git a/src/dev/SConscript b/src/dev/SConscript
+index 755ddb5..bc2fe98 100644
+--- a/src/dev/SConscript
++++ b/src/dev/SConscript
+@@ -44,7 +44,7 @@ DebugFlag('DMA')
+ SimObject('Platform.py', sim_objects=['Platform'])
+ Source('platform.cc')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('BadDevice.py', sim_objects=['BadDevice'])
+diff --git a/src/dev/amdgpu/SConscript b/src/dev/amdgpu/SConscript
+index 2dc73a7..bece7c3 100644
+--- a/src/dev/amdgpu/SConscript
++++ b/src/dev/amdgpu/SConscript
+@@ -29,7 +29,7 @@
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+ # Controllers
+diff --git a/src/dev/arm/SConscript b/src/dev/arm/SConscript
+index e59dc94..f7e9c76 100644
+--- a/src/dev/arm/SConscript
++++ b/src/dev/arm/SConscript
+@@ -63,7 +63,7 @@ SimObject('EnergyCtrl.py', sim_objects=['EnergyCtrl'], tags='arm isa')
+ SimObject('NoMali.py', sim_objects=['NoMaliGpu', 'CustomNoMaliGpu'],
+     enums=['NoMaliGpuType'], tags='arm isa')
+ SimObject('VirtIOMMIO.py', sim_objects=['MmioVirtIO'], tags='arm isa')
+-if env['USE_ARM_FASTMODEL']:
++if env['CONF']['USE_ARM_FASTMODEL']:
+     SimObject('VExpressFastmodel.py', sim_objects=[], tags='arm isa')
+ 
+ Source('a9scu.cc', tags='arm isa')
+diff --git a/src/dev/hsa/SConscript b/src/dev/hsa/SConscript
+index c1d3ed4..c53ddd3 100644
+--- a/src/dev/hsa/SConscript
++++ b/src/dev/hsa/SConscript
+@@ -31,7 +31,7 @@
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+ SimObject('HSADevice.py', sim_objects=['HSAPacketProcessor'])
+diff --git a/src/dev/i2c/SConscript b/src/dev/i2c/SConscript
+index 71f7fce..808caa9 100644
+--- a/src/dev/i2c/SConscript
++++ b/src/dev/i2c/SConscript
+@@ -37,7 +37,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('I2C.py', sim_objects=['I2CDevice', 'I2CBus'])
+diff --git a/src/dev/net/SConscript b/src/dev/net/SConscript
+index 4ba68cc..cd28510 100644
+--- a/src/dev/net/SConscript
++++ b/src/dev/net/SConscript
+@@ -44,7 +44,7 @@ SimObject('Ethernet.py', sim_objects=[
+     'EtherLink', 'DistEtherLink', 'EtherBus', 'EtherSwitch', 'EtherTapBase',
+     'EtherTapStub', 'EtherDump', 'EtherDevice', 'IGbE', 'EtherDevBase',
+     'NSGigE', 'Sinic'] +
+-    (['EtherTap'] if env['HAVE_TUNTAP'] else []))
++    (['EtherTap'] if env['CONF']['HAVE_TUNTAP'] else []))
+ 
+ # Basic Ethernet infrastructure
+ Source('etherbus.cc')
+diff --git a/src/dev/net/SConsopts b/src/dev/net/SConsopts
+index 874c06e..2af5ceb 100644
+--- a/src/dev/net/SConsopts
++++ b/src/dev/net/SConsopts
+@@ -29,9 +29,7 @@ import gem5_scons
+ 
+ with gem5_scons.Configure(main) as conf:
+     # Check if the TUN/TAP driver is available.
+-    conf.env['HAVE_TUNTAP'] = conf.CheckHeader('linux/if_tun.h', '<>')
++    conf.env['CONF']['HAVE_TUNTAP'] = conf.CheckHeader('linux/if_tun.h', '<>')
+ 
+-if not main['HAVE_TUNTAP']:
++if not main['CONF']['HAVE_TUNTAP']:
+     print("Info: Compatible header file <linux/if_tun.h> not found.")
+-
+-export_vars.append('HAVE_TUNTAP')
+diff --git a/src/dev/ps2/SConscript b/src/dev/ps2/SConscript
+index 303d25f..aa9d1fd 100644
+--- a/src/dev/ps2/SConscript
++++ b/src/dev/ps2/SConscript
+@@ -37,7 +37,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('PS2.py', sim_objects=[
+diff --git a/src/dev/serial/SConscript b/src/dev/serial/SConscript
+index 1f5823d..a862def 100644
+--- a/src/dev/serial/SConscript
++++ b/src/dev/serial/SConscript
+@@ -40,7 +40,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('Serial.py', sim_objects=['SerialDevice', 'SerialNullDevice'])
+diff --git a/src/dev/storage/SConscript b/src/dev/storage/SConscript
+index 27abf2d..615e1bf 100644
+--- a/src/dev/storage/SConscript
++++ b/src/dev/storage/SConscript
+@@ -40,7 +40,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ # Controllers
+diff --git a/src/dev/virtio/SConscript b/src/dev/virtio/SConscript
+index b00679c..e004da6 100644
+--- a/src/dev/virtio/SConscript
++++ b/src/dev/virtio/SConscript
+@@ -37,7 +37,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ SimObject('VirtIO.py', sim_objects=[
+diff --git a/src/gpu-compute/SConscript b/src/gpu-compute/SConscript
+index c6404bc..81f02d8 100644
+--- a/src/gpu-compute/SConscript
++++ b/src/gpu-compute/SConscript
+@@ -31,7 +31,7 @@
+ 
+ Import('*')
+ 
+-if not env['BUILD_GPU']:
++if not env['CONF']['BUILD_GPU']:
+     Return()
+ 
+ SimObject('GPU.py', sim_objects=[
+diff --git a/src/kern/SConscript b/src/kern/SConscript
+index 3d5872b..7ccff2a 100644
+--- a/src/kern/SConscript
++++ b/src/kern/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['TARGET_ISA'] == 'null':
++if env['CONF']['TARGET_ISA'] == 'null':
+     Return()
+ 
+ Source('linux/events.cc')
+diff --git a/src/mem/SConscript b/src/mem/SConscript
+index e07942e..7283dcf 100644
+--- a/src/mem/SConscript
++++ b/src/mem/SConscript
+@@ -97,7 +97,7 @@ Source('port_terminator.cc')
+ 
+ GTest('translation_gen.test', 'translation_gen.test.cc')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     Source('translating_port_proxy.cc')
+     Source('se_translating_port_proxy.cc')
+     Source('page_table.cc')
+diff --git a/src/mem/probes/SConscript b/src/mem/probes/SConscript
+index 6df807f..0498b11 100644
+--- a/src/mem/probes/SConscript
++++ b/src/mem/probes/SConscript
+@@ -47,6 +47,5 @@ SimObject('MemFootprintProbe.py', sim_objects=['MemFootprintProbe'])
+ Source('mem_footprint.cc')
+ 
+ # Packet tracing requires protobuf support
+-if env['HAVE_PROTOBUF']:
+-    SimObject('MemTraceProbe.py', sim_objects=['MemTraceProbe'])
+-    Source('mem_trace.cc')
++SimObject('MemTraceProbe.py', sim_objects=['MemTraceProbe'], tags='protobuf')
++Source('mem_trace.cc', tags='protobuf')
+diff --git a/src/mem/ruby/SConscript b/src/mem/ruby/SConscript
+index b3ea716..b8f5584 100644
+--- a/src/mem/ruby/SConscript
++++ b/src/mem/ruby/SConscript
+@@ -37,7 +37,7 @@ from gem5_scons import Transform
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ DebugFlag('ProtocolTrace')
+diff --git a/src/mem/ruby/common/SConscript b/src/mem/ruby/common/SConscript
+index 60cbe92..9f683cb 100644
+--- a/src/mem/ruby/common/SConscript
++++ b/src/mem/ruby/common/SConscript
+@@ -28,10 +28,11 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+-env.Append(CPPDEFINES={'NUMBER_BITS_PER_SET': env['NUMBER_BITS_PER_SET']})
++env.Append(CPPDEFINES={'NUMBER_BITS_PER_SET':
++    env['CONF']['NUMBER_BITS_PER_SET']})
+ 
+ Source('Address.cc')
+ Source('BoolVec.cc')
+diff --git a/src/mem/ruby/network/SConscript b/src/mem/ruby/network/SConscript
+index a1ea977..b5a4e79 100644
+--- a/src/mem/ruby/network/SConscript
++++ b/src/mem/ruby/network/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('BasicLink.py', sim_objects=[
+diff --git a/src/mem/ruby/network/fault_model/SConscript b/src/mem/ruby/network/fault_model/SConscript
+index 3aff28e..701b59a 100644
+--- a/src/mem/ruby/network/fault_model/SConscript
++++ b/src/mem/ruby/network/fault_model/SConscript
+@@ -33,7 +33,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('FaultModel.py', sim_objects=['FaultModel'])
+diff --git a/src/mem/ruby/network/garnet/SConscript b/src/mem/ruby/network/garnet/SConscript
+index af6e758..9e6e19e 100644
+--- a/src/mem/ruby/network/garnet/SConscript
++++ b/src/mem/ruby/network/garnet/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('GarnetLink.py', enums=['CDCType'], sim_objects=[
+diff --git a/src/mem/ruby/network/simple/SConscript b/src/mem/ruby/network/simple/SConscript
+index 92e1ff6..97055f5 100644
+--- a/src/mem/ruby/network/simple/SConscript
++++ b/src/mem/ruby/network/simple/SConscript
+@@ -40,7 +40,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('SimpleLink.py', sim_objects=['SimpleExtLink', 'SimpleIntLink'])
+diff --git a/src/mem/ruby/profiler/SConscript b/src/mem/ruby/profiler/SConscript
+index 424c53e..0c493e9 100644
+--- a/src/mem/ruby/profiler/SConscript
++++ b/src/mem/ruby/profiler/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ Source('AccessTraceForAddress.cc')
+diff --git a/src/mem/ruby/protocol/SConscript b/src/mem/ruby/protocol/SConscript
+index a71a8b2..238ce2f 100644
+--- a/src/mem/ruby/protocol/SConscript
++++ b/src/mem/ruby/protocol/SConscript
+@@ -36,7 +36,7 @@ from gem5_scons import Transform
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ output_dir = Dir('.')
+@@ -69,7 +69,7 @@ def slicc_emitter(target, source, env):
+     slicc = SLICC(filepath, protocol_base.abspath, verbose=False)
+     slicc.process()
+     slicc.writeCodeFiles(output_dir.abspath, slicc_includes)
+-    if env['SLICC_HTML']:
++    if env['CONF']['SLICC_HTML']:
+         slicc.writeHTMLFiles(html_dir.abspath)
+ 
+     target.extend([output_dir.File(f) for f in sorted(slicc.files())])
+@@ -82,13 +82,13 @@ def slicc_action(target, source, env):
+     slicc = SLICC(filepath, protocol_base.abspath, verbose=True)
+     slicc.process()
+     slicc.writeCodeFiles(output_dir.abspath, slicc_includes)
+-    if env['SLICC_HTML']:
++    if env['CONF']['SLICC_HTML']:
+         slicc.writeHTMLFiles(html_dir.abspath)
+ 
+ slicc_builder = Builder(action=MakeAction(slicc_action, Transform("SLICC")),
+                         emitter=slicc_emitter)
+ 
+-protocol = env['PROTOCOL']
++protocol = env['CONF']['PROTOCOL']
+ protocol_dir = None
+ for path in env['PROTOCOL_DIRS']:
+     if os.path.exists(path.File("%s.slicc" % protocol).abspath):
+diff --git a/src/mem/ruby/slicc_interface/SConscript b/src/mem/ruby/slicc_interface/SConscript
+index 612af3a..47dd49d 100644
+--- a/src/mem/ruby/slicc_interface/SConscript
++++ b/src/mem/ruby/slicc_interface/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('Controller.py', sim_objects=['RubyController'])
+diff --git a/src/mem/ruby/structures/SConscript b/src/mem/ruby/structures/SConscript
+index 086406d..0e99b3e 100644
+--- a/src/mem/ruby/structures/SConscript
++++ b/src/mem/ruby/structures/SConscript
+@@ -28,7 +28,7 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+ SimObject('RubyCache.py', sim_objects=['RubyCache'])
+diff --git a/src/mem/ruby/system/SConscript b/src/mem/ruby/system/SConscript
+index 2b4a804..c0b85bb 100644
+--- a/src/mem/ruby/system/SConscript
++++ b/src/mem/ruby/system/SConscript
+@@ -40,31 +40,31 @@
+ 
+ Import('*')
+ 
+-if env['PROTOCOL'] == 'None':
++if env['CONF']['PROTOCOL'] == 'None':
+     Return()
+ 
+-env.Append(CPPDEFINES=['PROTOCOL_' + env['PROTOCOL']])
++env.Append(CPPDEFINES=['PROTOCOL_' + env['CONF']['PROTOCOL']])
+ 
+-if env['PROTOCOL'] in env['NEED_PARTIAL_FUNC_READS']:
++if env['CONF']['PROTOCOL'] in env['NEED_PARTIAL_FUNC_READS']:
+     env.Append(CPPDEFINES=['PARTIAL_FUNC_READS'])
+ 
+-if env['BUILD_GPU']:
++if env['CONF']['BUILD_GPU']:
+     SimObject('GPUCoalescer.py', sim_objects=['RubyGPUCoalescer'])
+ SimObject('RubySystem.py', sim_objects=['RubySystem'])
+ SimObject('Sequencer.py', sim_objects=[
+     'RubyPort', 'RubyPortProxy', 'RubySequencer', 'RubyHTMSequencer',
+     'DMASequencer'])
+-if env['BUILD_GPU']:
++if env['CONF']['BUILD_GPU']:
+     SimObject('VIPERCoalescer.py', sim_objects=['VIPERCoalescer'])
+ 
+ Source('CacheRecorder.cc')
+ Source('DMASequencer.cc')
+-if env['BUILD_GPU']:
++if env['CONF']['BUILD_GPU']:
+     Source('GPUCoalescer.cc')
+ Source('HTMSequencer.cc')
+ Source('RubyPort.cc')
+ Source('RubyPortProxy.cc')
+ Source('RubySystem.cc')
+ Source('Sequencer.cc')
+-if env['BUILD_GPU']:
++if env['CONF']['BUILD_GPU']:
+     Source('VIPERCoalescer.cc')
+diff --git a/src/proto/SConscript b/src/proto/SConscript
+index 09589a9..42a1a4c 100644
+--- a/src/proto/SConscript
++++ b/src/proto/SConscript
+@@ -38,14 +38,8 @@
+ Import('*')
+ 
+ # Only build if we have protobuf support
+-if env['HAVE_PROTOBUF']:
+-    ProtoBuf('inst_dep_record.proto')
+-    ProtoBuf('packet.proto')
+-    ProtoBuf('inst.proto')
+-    Source('protobuf.cc')
+-    Source('protoio.cc')
+-
+-    # protoc relies on the fact that undefined preprocessor symbols are
+-    # explanded to 0 but since we use -Wundef they end up generating
+-    # warnings.
+-    env.Append(CCFLAGS='-DPROTOBUF_INLINE_NOT_IN_HEADERS=0')
++ProtoBuf('inst_dep_record.proto', tags='protobuf')
++ProtoBuf('packet.proto', tags='protobuf')
++ProtoBuf('inst.proto', tags='protobuf')
++Source('protobuf.cc', tags='protobuf')
++Source('protoio.cc', tags='protobuf')
+diff --git a/src/proto/SConsopts b/src/proto/SConsopts
+index 946d361..6b5b25d 100644
+--- a/src/proto/SConsopts
++++ b/src/proto/SConsopts
+@@ -65,13 +65,18 @@ with gem5_scons.Configure(main) as conf:
+     # automatically added to the LIBS environment variable. After
+     # this, we can use the HAVE_PROTOBUF flag to determine if we have
+     # got both protoc and libprotobuf available.
+-    conf.env['HAVE_PROTOBUF'] = conf.env['HAVE_PROTOC'] and \
++    conf.env['CONF']['HAVE_PROTOBUF'] = conf.env['HAVE_PROTOC'] and \
+         conf.CheckLibWithHeader('protobuf', 'google/protobuf/message.h',
+                                 'C++', 'GOOGLE_PROTOBUF_VERIFY_VERSION;')
+ 
+ # If we have the compiler but not the library, print another warning.
+-if main['HAVE_PROTOC'] and not main['HAVE_PROTOBUF']:
++if main['HAVE_PROTOC'] and not main['CONF']['HAVE_PROTOBUF']:
+     warning('Did not find protocol buffer library and/or headers.\n'
+             'Please install libprotobuf-dev for tracing support.')
+ 
+-export_vars.append('HAVE_PROTOBUF')
++if main['CONF']['HAVE_PROTOBUF']:
++    main.TagImplies('protobuf', 'gem5 lib')
++    # protoc relies on the fact that undefined preprocessor symbols are
++    # explanded to 0 but since we use -Wundef they end up generating
++    # warnings.
++    main.Append(CCFLAGS='-DPROTOBUF_INLINE_NOT_IN_HEADERS=0')
+diff --git a/src/sim/SConscript b/src/sim/SConscript
+index 72797b7..cfeca46 100644
+--- a/src/sim/SConscript
++++ b/src/sim/SConscript
+@@ -104,7 +104,7 @@ GTest('proxy_ptr.test', 'proxy_ptr.test.cc')
+ GTest('serialize.test', 'serialize.test.cc', with_tag('gem5 serialize'))
+ GTest('serialize_handlers.test', 'serialize_handlers.test.cc')
+ 
+-if env['TARGET_ISA'] != 'null':
++if env['CONF']['TARGET_ISA'] != 'null':
+     SimObject('InstTracer.py', sim_objects=['InstTracer'])
+     SimObject('Process.py', sim_objects=['Process', 'EmulatedDriver'])
+     Source('faults.cc')
+diff --git a/src/systemc/SConscript b/src/systemc/SConscript
+index 57cb1d9..06bdb50 100644
+--- a/src/systemc/SConscript
++++ b/src/systemc/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_SYSTEMC']:
++if not env['CONF']['USE_SYSTEMC']:
+     Return()
+ 
+ env.UseSystemcCheck(warn=True)
+diff --git a/src/systemc/SConsopts b/src/systemc/SConsopts
+index 7f59955..e870288 100644
+--- a/src/systemc/SConsopts
++++ b/src/systemc/SConsopts
+@@ -44,5 +44,7 @@ def use_systemc_check(env, warn=False):
+ 
+ main.AddMethod(use_systemc_check, 'UseSystemcCheck')
+ 
++main['CONF']['USE_SYSTEMC'] = main.UseSystemcCheck()
++
+ sticky_vars.Add(BoolVariable('USE_SYSTEMC', 'Enable SystemC API support',
+                              main.UseSystemcCheck()))
+diff --git a/src/systemc/channel/SConscript b/src/systemc/channel/SConscript
+index 97e9d29..b9de66c 100644
+--- a/src/systemc/channel/SConscript
++++ b/src/systemc/channel/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('messages.cc')
+     Source('sc_clock.cc')
+     Source('sc_event_queue.cc')
+diff --git a/src/systemc/core/SConscript b/src/systemc/core/SConscript
+index b439fbe..2b88111 100644
+--- a/src/systemc/core/SConscript
++++ b/src/systemc/core/SConscript
+@@ -27,7 +27,7 @@ import gem5_scons
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     SimObject('SystemC.py', sim_objects=[
+         'SystemC_Kernel', 'SystemC_ScObject', 'SystemC_ScModule'])
+ 
+diff --git a/src/systemc/dt/SConscript b/src/systemc/dt/SConscript
+index cccacbe..012551c 100644
+--- a/src/systemc/dt/SConscript
++++ b/src/systemc/dt/SConscript
+@@ -25,5 +25,5 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('sc_mempool.cc')
+diff --git a/src/systemc/dt/bit/SConscript b/src/systemc/dt/bit/SConscript
+index 3c00dcf..a21e9e6 100644
+--- a/src/systemc/dt/bit/SConscript
++++ b/src/systemc/dt/bit/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('messages.cc')
+     Source('sc_bit.cc')
+     Source('sc_bv_base.cc')
+diff --git a/src/systemc/dt/fx/SConscript b/src/systemc/dt/fx/SConscript
+index f849138..2cf4134 100644
+--- a/src/systemc/dt/fx/SConscript
++++ b/src/systemc/dt/fx/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('messages.cc')
+     Source('sc_fxcast_switch.cc')
+     Source('sc_fxdefs.cc')
+diff --git a/src/systemc/dt/int/SConscript b/src/systemc/dt/int/SConscript
+index 10b3560..c76c90d 100644
+--- a/src/systemc/dt/int/SConscript
++++ b/src/systemc/dt/int/SConscript
+@@ -27,7 +27,7 @@ Import('*')
+ 
+ from gem5_scons.util import compareVersions
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     if env['GCC'] and compareVersions(env['CXXVERSION'], '10.0') >= 0:
+         disable_false_positives = {
+             "CCFLAGS": [ "-Wno-array-bounds",
+diff --git a/src/systemc/dt/misc/SConscript b/src/systemc/dt/misc/SConscript
+index 6f3fe46..aef013d 100644
+--- a/src/systemc/dt/misc/SConscript
++++ b/src/systemc/dt/misc/SConscript
+@@ -25,6 +25,6 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('sc_concatref.cc')
+     Source('sc_value_base.cc')
+diff --git a/src/systemc/python/SConscript b/src/systemc/python/SConscript
+index 26e72e4..1995862 100644
+--- a/src/systemc/python/SConscript
++++ b/src/systemc/python/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_SYSTEMC'] or not env['USE_PYTHON']:
++if not env['CONF']['USE_SYSTEMC'] or not env['USE_PYTHON']:
+     Return()
+ 
+ PySource('m5', 'systemc.py')
+diff --git a/src/systemc/tests/SConscript b/src/systemc/tests/SConscript
+index fb916d2..63114f8 100644
+--- a/src/systemc/tests/SConscript
++++ b/src/systemc/tests/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC'] and GetOption('with_systemc_tests'):
++if env['CONF']['USE_SYSTEMC'] and GetOption('with_systemc_tests'):
+ 
+     from gem5_scons import Transform
+ 
+diff --git a/src/systemc/tlm_bridge/SConscript b/src/systemc/tlm_bridge/SConscript
+index 7aba370..87616bb 100644
+--- a/src/systemc/tlm_bridge/SConscript
++++ b/src/systemc/tlm_bridge/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['USE_SYSTEMC']:
++if not env['CONF']['USE_SYSTEMC']:
+     Return()
+ 
+ SimObject('TlmBridge.py', sim_objects=[
+diff --git a/src/systemc/tlm_core/2/generic_payload/SConscript b/src/systemc/tlm_core/2/generic_payload/SConscript
+index 5c00fa6..0620074 100644
+--- a/src/systemc/tlm_core/2/generic_payload/SConscript
++++ b/src/systemc/tlm_core/2/generic_payload/SConscript
+@@ -25,6 +25,6 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('gp.cc')
+     Source('phase.cc')
+diff --git a/src/systemc/tlm_core/2/quantum/SConscript b/src/systemc/tlm_core/2/quantum/SConscript
+index 7a34326..0ed4588 100644
+--- a/src/systemc/tlm_core/2/quantum/SConscript
++++ b/src/systemc/tlm_core/2/quantum/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('global_quantum.cc')
+     if env['USE_PYTHON']:
+         Source('global_quantum_python.cc')
+diff --git a/src/systemc/tlm_utils/SConscript b/src/systemc/tlm_utils/SConscript
+index f2e9715..64ca99a 100644
+--- a/src/systemc/tlm_utils/SConscript
++++ b/src/systemc/tlm_utils/SConscript
+@@ -25,6 +25,6 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('convenience_socket_bases.cc')
+     Source('instance_specific_extensions.cc')
+diff --git a/src/systemc/utils/SConscript b/src/systemc/utils/SConscript
+index 0ac56d3..9c54af0 100644
+--- a/src/systemc/utils/SConscript
++++ b/src/systemc/utils/SConscript
+@@ -25,7 +25,7 @@
+ 
+ Import('*')
+ 
+-if env['USE_SYSTEMC']:
++if env['CONF']['USE_SYSTEMC']:
+     Source('functions.cc')
+     Source('messages.cc')
+     Source('report.cc')
+-- 
+1.8.3.1
+

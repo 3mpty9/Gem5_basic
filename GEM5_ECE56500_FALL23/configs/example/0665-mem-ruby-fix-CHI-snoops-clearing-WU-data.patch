@@ -1,0 +1,65 @@
+From 612f242359dd28a3fe48628f766f03dabf03f3ab Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Mon, 16 May 2022 17:50:18 -0500
+Subject: [PATCH 665/757] mem-ruby: fix CHI snoops clearing WU data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When just forwarding a WU request, the controller waits until the WU is
+acked from downstream before sending the ack upstream. This
+prevents snoops clearing valid WU data.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+This was more likely to happen with shared exclusive caches, e.g:
+assume core C1 and C2 with private L1/L2 and a shared exclusive L3.
+C1 has as dirty copy of the line while C2 issues a WriteUnique request
+to that line. The line state is RU in the L3, so the L3 will just
+forward the request to the HNF, so:
+- C2 issues WU to L3 cache
+- L3 acks the WU, allowing C2 to send the data, while concurrently
+  forwarding the WU to the HNF.
+- L3 receives data from C2
+- HNF sends invalidating snoops upstream because line is RU
+- The snoop hazards with the pending WU at the L3 and invalidates
+  the data previously received. This causes an assertion to fail when
+  we resume handling the WU.
+
+Change-Id: I51e457e0bdb648c0fff3f702b7d2c95dcf431dc5
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59990
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 13 +++----------
+ 1 file changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 7208fc2..9c59bf2 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -842,16 +842,9 @@ action(Initiate_WriteUnique_PartialWrite, desc="") {
+ }
+ 
+ action(Initiate_WriteUnique_Forward, desc="") {
+-  if (comp_wu) {
+-    tbe.actions.push(Event:SendDBIDResp_WU);
+-    tbe.actions.pushNB(Event:WriteFEPipe);
+-    tbe.actions.pushNB(Event:SendWriteUnique);
+-    tbe.actions.pushNB(Event:SendComp_WU);
+-  } else {
+-    tbe.actions.push(Event:SendCompDBIDResp_WU);
+-    tbe.actions.pushNB(Event:WriteFEPipe);
+-    tbe.actions.pushNB(Event:SendWriteUnique);
+-  }
++  tbe.actions.push(Event:WriteFEPipe);
++  tbe.actions.push(Event:SendWriteUnique);
++  tbe.actions.push(Event:SendCompDBIDResp_WU);
+   tbe.actions.push(Event:WriteBEPipe);
+   tbe.actions.push(Event:SendWUData);
+   tbe.dataToBeInvalid := true;
+-- 
+1.8.3.1
+

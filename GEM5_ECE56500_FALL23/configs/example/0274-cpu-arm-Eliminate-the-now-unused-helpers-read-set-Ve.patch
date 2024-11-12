@@ -1,0 +1,55 @@
+From 5c3a6a4e13ff3d0dd238e4adabb422224fb23353 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:30:26 -0700
+Subject: [PATCH 274/757] cpu,arm: Eliminate the now unused helpers
+ (read|set)VecPredReg.
+
+Change-Id: I27533d7ff97cb7a08db6234c0dd73d5327cf06b2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49702
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/thread_context.hh | 19 -------------------
+ 1 file changed, 19 deletions(-)
+
+diff --git a/src/cpu/thread_context.hh b/src/cpu/thread_context.hh
+index 5e1c5ad..cbbd11c 100644
+--- a/src/cpu/thread_context.hh
++++ b/src/cpu/thread_context.hh
+@@ -231,19 +231,6 @@ class ThreadContext : public PCEventScope
+         return getReg(reg);
+     }
+ 
+-    TheISA::VecPredRegContainer
+-    readVecPredReg(const RegId &reg) const
+-    {
+-        TheISA::VecPredRegContainer val;
+-        getReg(reg, &val);
+-        return val;
+-    }
+-    TheISA::VecPredRegContainer&
+-    getWritableVecPredReg(const RegId& reg)
+-    {
+-        return *(TheISA::VecPredRegContainer *)getWritableReg(reg);
+-    }
+-
+     RegVal
+     readCCReg(RegIndex reg_idx) const
+     {
+@@ -275,12 +262,6 @@ class ThreadContext : public PCEventScope
+     }
+ 
+     void
+-    setVecPredReg(const RegId &reg, const TheISA::VecPredRegContainer &val)
+-    {
+-        setReg(reg, &val);
+-    }
+-
+-    void
+     setCCReg(RegIndex reg_idx, RegVal val)
+     {
+         setReg(RegId(CCRegClass, reg_idx), val);
+-- 
+1.8.3.1
+

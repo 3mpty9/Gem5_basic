@@ -1,0 +1,50 @@
+From 8756f57aa1733c05c996dab2faec6c040edfd5f1 Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Wed, 30 Mar 2022 07:43:11 +0000
+Subject: [PATCH 519/757] scons: fix build failed caused by Non-ASCII directory
+ path
+
+This path fix build failed when gem5's path contains Non-ASCII
+characters.
+
+build_tools/marshal.py embed "abspath" and "modpath" into the
+generated c++ file. However, if either of them contains Non-ASCII
+characters, marshal.py will throw an exception.
+
+This can be fixed if we set a suitable $LANG for gem5py. For
+example, we can simply set $LANG=en_US.UTF-8 in src/SConscript
+to fix this.
+
+This patch fixes this bug by passing the host's $LANG environment
+variable to gem5py. Because for users who may use Non-ASCII
+characters, their $LANG is generally set to their native language
+(e.g. zh_CN.UTF-8, en_US.UTF-8, etc.), which contains Non-ASCII
+characters. Also, it is more reasonable to use the host $LANG than
+to directly hard-code the $LANG used by gem5py into a language
+that supports non-ASCII characters.
+
+Change-Id: Ia0343cbd6995af3a9e43bf217ad3f186d5633fed
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58369
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ site_scons/gem5_scons/defaults.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/site_scons/gem5_scons/defaults.py b/site_scons/gem5_scons/defaults.py
+index 4382937..7a24589 100644
+--- a/site_scons/gem5_scons/defaults.py
++++ b/site_scons/gem5_scons/defaults.py
+@@ -48,7 +48,7 @@ def EnvDefaults(env):
+                      'LIBRARY_PATH', 'PATH', 'PKG_CONFIG_PATH', 'PROTOC',
+                      'PYTHONPATH', 'RANLIB', 'TERM', 'PYTHON_CONFIG',
+                      'CCFLAGS_EXTRA', 'GEM5PY_CCFLAGS_EXTRA',
+-                     'GEM5PY_LINKFLAGS_EXTRA', 'LINKFLAGS_EXTRA'])
++                     'GEM5PY_LINKFLAGS_EXTRA', 'LINKFLAGS_EXTRA', 'LANG'])
+ 
+     use_prefixes = [
+         "ASAN_",           # address sanitizer symbolizer path and settings
+-- 
+1.8.3.1
+

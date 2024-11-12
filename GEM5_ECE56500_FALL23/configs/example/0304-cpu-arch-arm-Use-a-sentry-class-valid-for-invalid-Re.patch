@@ -1,0 +1,91 @@
+From ec4d6c0daf5bafb0d66d86e5a3d2c54c7643133b Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 14 Aug 2021 02:50:25 -0700
+Subject: [PATCH 304/757] cpu,arch-arm: Use a sentry class valid for invalid
+ RegIds.
+
+The default constructor for RegId would initialize it with the
+IntRegClass and register index 0. This is arbitrary and
+indistinguishable from a real ID to the first integer register.
+
+Instead, add a new class type constant InvalidRegClass, and use that to
+initialize an otherwise uninitialized RegId.
+
+Also, fill out some enums that needed to handle that value to silence
+compiler warnings.
+
+Change-Id: I3b58559f41adc1da5f661121225dbd389230e3af
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49710
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.hh   | 4 +++-
+ src/cpu/o3/regfile.cc | 2 ++
+ src/cpu/reg_class.hh  | 7 ++++---
+ 3 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/arm/isa.hh b/src/arch/arm/isa.hh
+index 341346a..b054210 100644
+--- a/src/arch/arm/isa.hh
++++ b/src/arch/arm/isa.hh
+@@ -666,8 +666,10 @@ namespace ArmISA
+                 return RegId(CCRegClass, flattenCCIndex(regId.index()));
+               case MiscRegClass:
+                 return RegId(MiscRegClass, flattenMiscIndex(regId.index()));
++              case InvalidRegClass:
++                return RegId();
+             }
+-            return RegId();
++            panic("Unrecognized register class %d.", regId.classValue());
+         }
+ 
+         int
+diff --git a/src/cpu/o3/regfile.cc b/src/cpu/o3/regfile.cc
+index 4fa79dd..3fc7035 100644
+--- a/src/cpu/o3/regfile.cc
++++ b/src/cpu/o3/regfile.cc
+@@ -189,6 +189,8 @@ PhysRegFile::getRegIds(RegClassType cls)
+         return std::make_pair(ccRegIds.begin(), ccRegIds.end());
+       case MiscRegClass:
+         return std::make_pair(miscRegIds.begin(), miscRegIds.end());
++      case InvalidRegClass:
++        panic("Tried to get register IDs for the invalid class.");
+     }
+     /* There is no way to make an empty iterator */
+     return std::make_pair(PhysIds::iterator(),
+diff --git a/src/cpu/reg_class.hh b/src/cpu/reg_class.hh
+index ed1683a..e368bc4 100644
+--- a/src/cpu/reg_class.hh
++++ b/src/cpu/reg_class.hh
+@@ -63,7 +63,8 @@ enum RegClassType
+     VecElemClass,
+     VecPredRegClass,
+     CCRegClass,         ///< Condition-code register
+-    MiscRegClass        ///< Control (misc) register
++    MiscRegClass,       ///< Control (misc) register
++    InvalidRegClass = -1
+ };
+ 
+ class RegId;
+@@ -136,7 +137,7 @@ class RegId
+     friend struct std::hash<RegId>;
+ 
+   public:
+-    RegId() : RegId(IntRegClass, 0) {}
++    RegId() : RegId(InvalidRegClass, 0) {}
+ 
+     explicit RegId(RegClassType reg_class, RegIndex reg_idx)
+         : regClass(reg_class), regIdx(reg_idx), numPinnedWrites(0)
+@@ -235,7 +236,7 @@ class PhysRegId : private RegId
+     bool pinned;
+ 
+   public:
+-    explicit PhysRegId() : RegId(IntRegClass, -1), flatIdx(-1),
++    explicit PhysRegId() : RegId(InvalidRegClass, -1), flatIdx(-1),
+                            numPinnedWritesToComplete(0)
+     {}
+ 
+-- 
+1.8.3.1
+

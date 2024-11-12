@@ -1,0 +1,124 @@
+From 412ae3f8df9a970a0651f13f7b341a7caea92ce3 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 24 Feb 2022 02:15:52 -0800
+Subject: [PATCH 311/757] cpu,sim: Don't tie ThreadContext contextId to the CPU
+ ID.
+
+The contextId is generally treated as (and should be) an opaque index
+into the System objects threadContext array. When forcing it to
+particular values, that introduces gaps in the threadContext array which
+trips up other code which is expecting the array to have only valid
+entries.
+
+Change-Id: I4997e989b436a3008f65f348722dfb843b2f110a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57089
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+---
+ src/cpu/base.cc   |  9 ++-------
+ src/sim/system.cc | 27 +++++++--------------------
+ src/sim/system.hh |  5 ++---
+ 3 files changed, 11 insertions(+), 30 deletions(-)
+
+diff --git a/src/cpu/base.cc b/src/cpu/base.cc
+index 741ee2d..5e8b7c1 100644
+--- a/src/cpu/base.cc
++++ b/src/cpu/base.cc
+@@ -431,15 +431,10 @@ BaseCPU::registerThreadContexts()
+              "per thread (%i)\n",
+              name(), interrupts.size(), numThreads);
+ 
+-    ThreadID size = threadContexts.size();
+-    for (ThreadID tid = 0; tid < size; ++tid) {
++    for (ThreadID tid = 0; tid < threadContexts.size(); ++tid) {
+         ThreadContext *tc = threadContexts[tid];
+ 
+-        if (system->multiThread) {
+-            system->registerThreadContext(tc);
+-        } else {
+-            system->registerThreadContext(tc, _cpuId);
+-        }
++        system->registerThreadContext(tc);
+ 
+         if (!FullSystem)
+             tc->getProcessPtr()->assignThreadContext(tc->contextId());
+diff --git a/src/sim/system.cc b/src/sim/system.cc
+index db8f44c..d5e5e3f 100644
+--- a/src/sim/system.cc
++++ b/src/sim/system.cc
+@@ -95,31 +95,18 @@ System::Threads::Thread::quiesce() const
+ }
+ 
+ void
+-System::Threads::insert(ThreadContext *tc, ContextID id)
++System::Threads::insert(ThreadContext *tc)
+ {
+-    if (id == InvalidContextID) {
+-        for (id = 0; id < size(); id++) {
+-            if (!threads[id].context)
+-                break;
+-        }
+-    }
+-
++    ContextID id = size();
+     tc->setContextId(id);
+ 
+-    if (id >= size())
+-        threads.resize(id + 1);
+-
+-    fatal_if(threads[id].context,
+-            "Cannot have two thread contexts with the same id (%d).", id);
+-
+-    auto *sys = tc->getSystemPtr();
+-
+-    auto &t = thread(id);
++    auto &t = threads.emplace_back();
+     t.context = tc;
+     // Look up this thread again on resume, in case the threads vector has
+     // been reallocated.
+     t.resumeEvent = new EventFunctionWrapper(
+-            [this, id](){ thread(id).resume(); }, sys->name());
++            [this, id](){ thread(id).resume(); },
++            tc->getSystemPtr()->name());
+ }
+ 
+ void
+@@ -258,9 +245,9 @@ System::setMemoryMode(enums::MemoryMode mode)
+ }
+ 
+ void
+-System::registerThreadContext(ThreadContext *tc, ContextID assigned)
++System::registerThreadContext(ThreadContext *tc)
+ {
+-    threads.insert(tc, assigned);
++    threads.insert(tc);
+ 
+     workload->registerThreadContext(tc);
+ 
+diff --git a/src/sim/system.hh b/src/sim/system.hh
+index 7dcd1aa..bb855e0 100644
+--- a/src/sim/system.hh
++++ b/src/sim/system.hh
+@@ -144,7 +144,7 @@ class System : public SimObject, public PCEventScope
+             return threads[id];
+         }
+ 
+-        void insert(ThreadContext *tc, ContextID id=InvalidContextID);
++        void insert(ThreadContext *tc);
+         void replace(ThreadContext *tc, ContextID id);
+ 
+         friend class System;
+@@ -578,8 +578,7 @@ class System : public SimObject, public PCEventScope
+ 
+   public:
+ 
+-    void registerThreadContext(
+-            ThreadContext *tc, ContextID assigned=InvalidContextID);
++    void registerThreadContext(ThreadContext *tc);
+     void replaceThreadContext(ThreadContext *tc, ContextID context_id);
+ 
+     void serialize(CheckpointOut &cp) const override;
+-- 
+1.8.3.1
+

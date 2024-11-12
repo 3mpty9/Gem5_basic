@@ -1,0 +1,600 @@
+From bab3ce1661af68b1f803ca56d2a2447bd1501831 Mon Sep 17 00:00:00 2001
+From: Tiago Muck <tiago.muck@arm.com>
+Date: Tue, 21 May 2019 18:38:52 -0500
+Subject: [PATCH 149/757] configs,mem-ruby: SimpleNetwork physical channels
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Setting the physical_vnets_channels parameter enables the emulation of
+the bandwidth impact of having multiple physical channels for each
+virtual network. This is implemented by computing bandwidth in a
+per-vnet/channel basis within Throttle objects. The size of the
+message buffers are also scaled according to this setting (when buffer
+are not unlimited).
+
+The physical_vnets_bandwidth can be used to override the channel width
+set for each link and assign different widths for each virtual network.
+
+The --simple-physical-channels option can be used with the generic
+configuration scripts to automatically assign a single physical channel
+to each virtual network defined in the protocol.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: Ia8c9ec8651405eac8710d3f4d67f637a8054a76b
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41854
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/network/Network.py                   |   7 ++
+ src/mem/ruby/network/simple/SimpleNetwork.cc |  23 ++++
+ src/mem/ruby/network/simple/SimpleNetwork.hh |   3 +-
+ src/mem/ruby/network/simple/SimpleNetwork.py |  51 ++++++--
+ src/mem/ruby/network/simple/Switch.cc        |  22 +++-
+ src/mem/ruby/network/simple/Throttle.cc      | 167 ++++++++++++++++++++-------
+ src/mem/ruby/network/simple/Throttle.hh      |  35 +++++-
+ 7 files changed, 250 insertions(+), 58 deletions(-)
+
+diff --git a/configs/network/Network.py b/configs/network/Network.py
+index 91f0076..e5a86f6 100644
+--- a/configs/network/Network.py
++++ b/configs/network/Network.py
+@@ -80,6 +80,10 @@ def define_options(parser):
+         "--garnet-deadlock-threshold", action="store",
+         type=int, default=50000,
+         help="network-level deadlock threshold.")
++    parser.add_argument("--simple-physical-channels", action="store_true",
++        default=False,
++        help="""SimpleNetwork links uses a separate physical
++            channel for each virtual network""")
+ 
+ def create_network(options, ruby):
+ 
+@@ -187,6 +191,9 @@ def init_network(options, network, InterfaceClass):
+             extLink.int_cred_bridge = int_cred_bridges
+ 
+     if options.network == "simple":
++        if options.simple_physical_channels:
++            network.physical_vnets_channels = \
++                [1] * int(network.number_of_virtual_networks)
+         network.setup_buffers()
+ 
+     if InterfaceClass != None:
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.cc b/src/mem/ruby/network/simple/SimpleNetwork.cc
+index 38d9f79..c11dd22 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.cc
++++ b/src/mem/ruby/network/simple/SimpleNetwork.cc
+@@ -74,6 +74,23 @@ SimpleNetwork::SimpleNetwork(const Params &p)
+ 
+     m_int_link_buffers = p.int_link_buffers;
+     m_num_connected_buffers = 0;
++
++    const std::vector<int> &physical_vnets_channels =
++        p.physical_vnets_channels;
++    const std::vector<int> &physical_vnets_bandwidth =
++        p.physical_vnets_bandwidth;
++    bool physical_vnets = physical_vnets_channels.size() > 0;
++    int vnets = p.number_of_virtual_networks;
++
++    fatal_if(physical_vnets && (physical_vnets_channels.size() != vnets),
++        "physical_vnets_channels must provide channel count for all vnets");
++
++    fatal_if(!physical_vnets && (physical_vnets_bandwidth.size() != 0),
++        "physical_vnets_bandwidth also requires physical_vnets_channels");
++
++    fatal_if((physical_vnets_bandwidth.size() != vnets) &&
++             (physical_vnets_bandwidth.size() != 0),
++        "physical_vnets_bandwidth must provide BW for all vnets");
+ }
+ 
+ void
+@@ -100,6 +117,12 @@ SimpleNetwork::makeExtOutLink(SwitchID src, NodeID global_dest,
+ 
+     SimpleExtLink *simple_link = safe_cast<SimpleExtLink*>(link);
+ 
++    // some destinations don't use all vnets, but Switch requires the size
++    // output buffer list to match the number of vnets
++    int num_vnets = params().number_of_virtual_networks;
++    gem5_assert(num_vnets >= m_fromNetQueues[local_dest].size());
++    m_fromNetQueues[local_dest].resize(num_vnets, nullptr);
++
+     m_switches[src]->addOutPort(m_fromNetQueues[local_dest],
+                                 routing_table_entry[0], simple_link->m_latency,
+                                 simple_link->m_bw_multiplier);
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.hh b/src/mem/ruby/network/simple/SimpleNetwork.hh
+index 4c003a7..464ab8b 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.hh
++++ b/src/mem/ruby/network/simple/SimpleNetwork.hh
+@@ -61,7 +61,8 @@ class Switch;
+ class SimpleNetwork : public Network
+ {
+   public:
+-    typedef SimpleNetworkParams Params;
++    PARAMS(SimpleNetwork);
++
+     SimpleNetwork(const Params &p);
+     ~SimpleNetwork() = default;
+ 
+diff --git a/src/mem/ruby/network/simple/SimpleNetwork.py b/src/mem/ruby/network/simple/SimpleNetwork.py
+index cfd95f7..68974cc 100644
+--- a/src/mem/ruby/network/simple/SimpleNetwork.py
++++ b/src/mem/ruby/network/simple/SimpleNetwork.py
+@@ -1,3 +1,15 @@
++# Copyright (c) 2021 ARM Limited
++# All rights reserved.
++#
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Copyright (c) 2009 Advanced Micro Devices, Inc.
+ # All rights reserved.
+ #
+@@ -37,11 +49,32 @@ class SimpleNetwork(RubyNetwork):
+     cxx_class = 'gem5::ruby::SimpleNetwork'
+ 
+     buffer_size = Param.Int(0,
+-        "default buffer size; 0 indicates infinite buffering");
+-    endpoint_bandwidth = Param.Int(1000, "bandwidth adjustment factor");
+-    adaptive_routing = Param.Bool(False, "enable adaptive routing");
++        "default buffer size; 0 indicates infinite buffering")
++    endpoint_bandwidth = Param.Int(1000, "bandwidth adjustment factor")
++    adaptive_routing = Param.Bool(False, "enable adaptive routing")
+     int_link_buffers = VectorParam.MessageBuffer("Buffers for int_links")
+ 
++    physical_vnets_channels = VectorParam.Int([],
++        "Set to emulate multiple channels for each vnet."
++        "If not set, all vnets share the same physical channel.")
++
++    physical_vnets_bandwidth = VectorParam.Int([],
++        "Assign a different link bandwidth factor for each vnet channels."
++        "Only valid when physical_vnets_channels is set. This overrides the"
++        "bandwidth_factor parameter set for the  individual links.")
++
++    def vnet_buffer_size(self, vnet):
++        """
++        Gets the size of the message buffers associated to a vnet
++        If physical_vnets_channels is set we just multiply the size of the
++        buffers as SimpleNetwork does not actually creates multiple physical
++        channels per vnet.
++        """
++        if len(self.physical_vnets_channels) == 0:
++            return self.buffer_size
++        else:
++            return self.buffer_size * self.physical_vnets_channels[vnet]
++
+     def setup_buffers(self):
+         # Note that all SimpleNetwork MessageBuffers are currently ordered
+         network_buffers = []
+@@ -49,8 +82,10 @@ class SimpleNetwork(RubyNetwork):
+             # The network needs number_of_virtual_networks buffers per
+             # int_link port
+             for i in range(int(self.number_of_virtual_networks)):
+-                network_buffers.append(MessageBuffer(ordered = True))
+-                network_buffers.append(MessageBuffer(ordered = True))
++                network_buffers.append(MessageBuffer(ordered = True,
++                                     buffer_size = self.vnet_buffer_size(i)))
++                network_buffers.append(MessageBuffer(ordered = True,
++                                     buffer_size = self.vnet_buffer_size(i)))
+         self.int_link_buffers = network_buffers
+ 
+         # Also add buffers for all router-link connections
+@@ -61,14 +96,16 @@ class SimpleNetwork(RubyNetwork):
+             for link in self.int_links:
+                 if link.dst_node == router:
+                     for i in range(int(self.number_of_virtual_networks)):
+-                        router_buffers.append(MessageBuffer(ordered = True))
++                        router_buffers.append(MessageBuffer(ordered = True,
++                                     buffer_size = self.vnet_buffer_size(i)))
+ 
+             # Add message buffers to routers for each external link connection
+             for link in self.ext_links:
+                 # Routers can only be int_nodes on ext_links
+                 if link.int_node in self.routers:
+                     for i in range(int(self.number_of_virtual_networks)):
+-                        router_buffers.append(MessageBuffer(ordered = True))
++                        router_buffers.append(MessageBuffer(ordered = True,
++                                     buffer_size = self.vnet_buffer_size(i)))
+             router.port_buffers = router_buffers
+ 
+ class Switch(BasicRouter):
+diff --git a/src/mem/ruby/network/simple/Switch.cc b/src/mem/ruby/network/simple/Switch.cc
+index 668ea89..e1600ea 100644
+--- a/src/mem/ruby/network/simple/Switch.cc
++++ b/src/mem/ruby/network/simple/Switch.cc
+@@ -85,10 +85,26 @@ Switch::addOutPort(const std::vector<MessageBuffer*>& out,
+                    const NetDest& routing_table_entry,
+                    Cycles link_latency, int bw_multiplier)
+ {
++    const std::vector<int> &physical_vnets_channels =
++        m_network_ptr->params().physical_vnets_channels;
++
+     // Create a throttle
+-    throttles.emplace_back(m_id, m_network_ptr->params().ruby_system,
+-        throttles.size(), link_latency, bw_multiplier,
+-        m_network_ptr->getEndpointBandwidth(), this);
++    if (physical_vnets_channels.size() > 0 && !out.empty()) {
++        // Assign a different bandwith for each vnet channel if specified by
++        // physical_vnets_bandwidth, otherwise all channels use bw_multiplier
++        std::vector<int> physical_vnets_bandwidth =
++            m_network_ptr->params().physical_vnets_bandwidth;
++        physical_vnets_bandwidth.resize(out.size(), bw_multiplier);
++
++        throttles.emplace_back(m_id, m_network_ptr->params().ruby_system,
++            throttles.size(), link_latency,
++            physical_vnets_channels, physical_vnets_bandwidth,
++            m_network_ptr->getEndpointBandwidth(), this);
++    } else {
++        throttles.emplace_back(m_id, m_network_ptr->params().ruby_system,
++            throttles.size(), link_latency, bw_multiplier,
++            m_network_ptr->getEndpointBandwidth(), this);
++    }
+ 
+     // Create one buffer per vnet (these are intermediaryQueues)
+     std::vector<MessageBuffer*> intermediateBuffers;
+diff --git a/src/mem/ruby/network/simple/Throttle.cc b/src/mem/ruby/network/simple/Throttle.cc
+index 20d269f..65c930c 100644
+--- a/src/mem/ruby/network/simple/Throttle.cc
++++ b/src/mem/ruby/network/simple/Throttle.cc
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
+  * All rights reserved.
+  *
+@@ -53,18 +65,14 @@ const int PRIORITY_SWITCH_LIMIT = 128;
+ static int network_message_to_size(Message* net_msg_ptr);
+ 
+ Throttle::Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
+-                   int link_bandwidth_multiplier, int endpoint_bandwidth,
+-                   Switch *em)
++                   int endpoint_bandwidth, Switch *em)
+     : Consumer(em),
+       m_switch_id(sID), m_switch(em), m_node(node),
+-      m_ruby_system(rs),
++      m_physical_vnets(false), m_ruby_system(rs),
+       throttleStats(em, node)
+ {
+     m_vnets = 0;
+ 
+-    assert(link_bandwidth_multiplier > 0);
+-    m_link_bandwidth_multiplier = link_bandwidth_multiplier;
+-
+     m_link_latency = link_latency;
+     m_endpoint_bandwidth = endpoint_bandwidth;
+ 
+@@ -72,6 +80,33 @@ Throttle::Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
+     m_link_utilization_proxy = 0;
+ }
+ 
++Throttle::Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
++                   int link_bandwidth_multiplier, int endpoint_bandwidth,
++                   Switch *em)
++    : Throttle(sID, rs, node, link_latency, endpoint_bandwidth, em)
++{
++    gem5_assert(link_bandwidth_multiplier > 0);
++    m_link_bandwidth_multiplier.push_back(link_bandwidth_multiplier);
++}
++
++Throttle::Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
++                   const std::vector<int> &vnet_channels,
++                   const std::vector<int> &vnet_bandwidth_multiplier,
++                   int endpoint_bandwidth, Switch *em)
++    : Throttle(sID, rs, node, link_latency, endpoint_bandwidth, em)
++{
++    m_physical_vnets = true;
++    for (auto link_bandwidth_multiplier : vnet_bandwidth_multiplier){
++        gem5_assert(link_bandwidth_multiplier > 0);
++        m_link_bandwidth_multiplier.push_back(link_bandwidth_multiplier);
++    }
++    for (auto channels : vnet_channels){
++        gem5_assert(channels > 0);
++        m_vnet_channels.push_back(channels);
++    }
++    gem5_assert(m_link_bandwidth_multiplier.size() == m_vnet_channels.size());
++}
++
+ void
+ Throttle::addLinks(const std::vector<MessageBuffer*>& in_vec,
+                    const std::vector<MessageBuffer*>& out_vec)
+@@ -82,8 +117,7 @@ Throttle::addLinks(const std::vector<MessageBuffer*>& in_vec,
+         MessageBuffer *in_ptr = in_vec[vnet];
+         MessageBuffer *out_ptr = out_vec[vnet];
+ 
+-        m_vnets++;
+-        m_units_remaining.push_back(0);
++        m_units_remaining.emplace_back(getChannelCnt(vnet),0);
+         m_in.push_back(in_ptr);
+         m_out.push_back(out_ptr);
+ 
+@@ -92,34 +126,73 @@ Throttle::addLinks(const std::vector<MessageBuffer*>& in_vec,
+         std::string desc = "[Queue to Throttle " +
+             std::to_string(m_switch_id) + " " + std::to_string(m_node) + "]";
+     }
++
++    m_vnets = in_vec.size();
++
++    gem5_assert(m_physical_vnets ?
++           (m_link_bandwidth_multiplier.size() == m_vnets) :
++           (m_link_bandwidth_multiplier.size() == 1));
++}
++
++int
++Throttle::getLinkBandwidth(int vnet) const
++{
++    int bw = m_physical_vnets ?
++                m_link_bandwidth_multiplier[vnet] :
++                m_link_bandwidth_multiplier[0];
++    gem5_assert(bw > 0);
++    return m_endpoint_bandwidth * bw;
++}
++
++int
++Throttle::getTotalLinkBandwidth() const
++{
++    int sum = getLinkBandwidth(0) * getChannelCnt(0);
++    if (m_physical_vnets) {
++        for (unsigned i = 1; i < m_vnets; ++i)
++            sum += getLinkBandwidth(i) * getChannelCnt(i);
++    }
++    return sum;
++}
++
++int
++Throttle::getChannelCnt(int vnet) const
++{
++    return m_physical_vnets ? m_vnet_channels[vnet] : 1;
+ }
+ 
+ void
+-Throttle::operateVnet(int vnet, int &bw_remaining, bool &schedule_wakeup,
++Throttle::operateVnet(int vnet, int channel, int &total_bw_remaining,
++                      bool &schedule_wakeup,
+                       MessageBuffer *in, MessageBuffer *out)
+ {
+     if (out == nullptr || in == nullptr) {
+         return;
+     }
+ 
+-    assert(m_units_remaining[vnet] >= 0);
++    int &units_remaining = m_units_remaining[vnet][channel];
++
++    gem5_assert(units_remaining >= 0);
+     Tick current_time = m_switch->clockEdge();
+ 
+-    while (bw_remaining > 0 && (in->isReady(current_time) ||
+-                                m_units_remaining[vnet] > 0) &&
++    int bw_remaining = m_physical_vnets ?
++                getLinkBandwidth(vnet) : total_bw_remaining;
++
++    auto hasPendingWork = [&]{ return in->isReady(current_time) ||
++                                      units_remaining > 0; };
++    while ((bw_remaining > 0) && hasPendingWork() &&
+            out->areNSlotsAvailable(1, current_time)) {
+         // See if we are done transferring the previous message on
+         // this virtual network
+-        if (m_units_remaining[vnet] == 0 && in->isReady(current_time)) {
++        if (units_remaining == 0 && in->isReady(current_time)) {
+             // Find the size of the message we are moving
+             MsgPtr msg_ptr = in->peekMsgPtr();
+             Message *net_msg_ptr = msg_ptr.get();
+-            m_units_remaining[vnet] +=
+-                network_message_to_size(net_msg_ptr);
++            units_remaining = network_message_to_size(net_msg_ptr);
+ 
+             DPRINTF(RubyNetwork, "throttle: %d my bw %d bw spent "
+                     "enqueueing net msg %d time: %lld.\n",
+-                    m_node, getLinkBandwidth(), m_units_remaining[vnet],
++                    m_node, getLinkBandwidth(vnet), units_remaining,
+                     m_ruby_system->curCycle());
+ 
+             // Move the message
+@@ -134,18 +207,23 @@ Throttle::operateVnet(int vnet, int &bw_remaining, bool &schedule_wakeup,
+         }
+ 
+         // Calculate the amount of bandwidth we spent on this message
+-        int diff = m_units_remaining[vnet] - bw_remaining;
+-        m_units_remaining[vnet] = std::max(0, diff);
+-        bw_remaining = std::max(0, -diff);
++        int spent = std::min(units_remaining, bw_remaining);
++        units_remaining -= spent;
++        bw_remaining -= spent;
++        total_bw_remaining -= spent;
+     }
+ 
+-    if (bw_remaining > 0 && (in->isReady(current_time) ||
+-                             m_units_remaining[vnet] > 0) &&
+-        !out->areNSlotsAvailable(1, current_time)) {
+-        DPRINTF(RubyNetwork, "vnet: %d", vnet);
+-
+-        // schedule me to wakeup again because I'm waiting for my
+-        // output queue to become available
++    gem5_assert(units_remaining >= 0);
++    gem5_assert(bw_remaining >= 0);
++    gem5_assert(total_bw_remaining >= 0);
++
++    // Make sure to continue work next cycle if
++    //  - we ran out of bandwith and still have stuff to do
++    //  - we had something to do but output queue was unavailable
++    if (hasPendingWork()) {
++        gem5_assert((bw_remaining == 0) ||
++                    !out->areNSlotsAvailable(1, current_time));
++        DPRINTF(RubyNetwork, "vnet: %d set schedule_wakeup\n", vnet);
+         schedule_wakeup = true;
+     }
+ }
+@@ -154,8 +232,8 @@ void
+ Throttle::wakeup()
+ {
+     // Limits the number of message sent to a limited number of bytes/cycle.
+-    assert(getLinkBandwidth() > 0);
+-    int bw_remaining = getLinkBandwidth();
++    assert(getTotalLinkBandwidth() > 0);
++    int bw_remaining = getTotalLinkBandwidth();
+ 
+     m_wakeups_wo_switch++;
+     bool schedule_wakeup = false;
+@@ -172,13 +250,17 @@ Throttle::wakeup()
+ 
+     if (iteration_direction) {
+         for (int vnet = 0; vnet < m_vnets; ++vnet) {
+-            operateVnet(vnet, bw_remaining, schedule_wakeup,
+-                        m_in[vnet], m_out[vnet]);
++            for (int channel = 0; channel < getChannelCnt(vnet); ++channel) {
++                operateVnet(vnet, channel, bw_remaining, schedule_wakeup,
++                            m_in[vnet], m_out[vnet]);
++            }
+         }
+     } else {
+         for (int vnet = m_vnets-1; vnet >= 0; --vnet) {
+-            operateVnet(vnet, bw_remaining, schedule_wakeup,
+-                        m_in[vnet], m_out[vnet]);
++            for (int channel = 0; channel < getChannelCnt(vnet); ++channel) {
++                operateVnet(vnet, channel, bw_remaining, schedule_wakeup,
++                            m_in[vnet], m_out[vnet]);
++            }
+         }
+     }
+ 
+@@ -187,19 +269,13 @@ Throttle::wakeup()
+     // assert(bw_remaining != getLinkBandwidth());
+ 
+     // Record that we used some or all of the link bandwidth this cycle
+-    double ratio = 1.0 - (double(bw_remaining) / double(getLinkBandwidth()));
++    double ratio = 1.0 - (double(bw_remaining) /
++                         double(getTotalLinkBandwidth()));
+ 
+     // If ratio = 0, we used no bandwidth, if ratio = 1, we used all
+     m_link_utilization_proxy += ratio;
+ 
+-    if (bw_remaining > 0 && !schedule_wakeup) {
+-        // We have extra bandwidth and our output buffer was
+-        // available, so we must not have anything else to do until
+-        // another message arrives.
+-        DPRINTF(RubyNetwork, "%s not scheduled again\n", *this);
+-    } else {
+-        DPRINTF(RubyNetwork, "%s scheduled again\n", *this);
+-
++    if (schedule_wakeup) {
+         // We are out of bandwidth for this cycle, so wakeup next
+         // cycle and continue
+         scheduleEvent(Cycles(1));
+@@ -251,7 +327,14 @@ Throttle::collateStats()
+ void
+ Throttle::print(std::ostream& out) const
+ {
+-    ccprintf(out,  "[%i bw: %i]", m_node, getLinkBandwidth());
++    ccprintf(out,  "[%i bw:", m_node);
++    if (m_physical_vnets) {
++        for (unsigned i = 0; i < m_vnets; ++i)
++            ccprintf(out,  " vnet%d=%i", i, getLinkBandwidth(i));
++    } else {
++        ccprintf(out,  " %i", getTotalLinkBandwidth());
++    }
++    ccprintf(out,  "]");
+ }
+ 
+ int
+diff --git a/src/mem/ruby/network/simple/Throttle.hh b/src/mem/ruby/network/simple/Throttle.hh
+index 6689407..1ec6d65 100644
+--- a/src/mem/ruby/network/simple/Throttle.hh
++++ b/src/mem/ruby/network/simple/Throttle.hh
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
+  * All rights reserved.
+  *
+@@ -57,10 +69,17 @@ class Switch;
+ 
+ class Throttle : public Consumer
+ {
++  private:
++    Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
++             int endpoint_bandwidth, Switch *em);
+   public:
+     Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
+              int link_bandwidth_multiplier, int endpoint_bandwidth,
+              Switch *em);
++    Throttle(int sID, RubySystem *rs, NodeID node, Cycles link_latency,
++             const std::vector<int> &vnet_channels,
++             const std::vector<int> &vnet_bandwidth_multiplier,
++             int endpoint_bandwidth, Switch *em);
+     ~Throttle() {}
+ 
+     std::string name()
+@@ -76,8 +95,11 @@ class Throttle : public Consumer
+     const statistics::Vector & getMsgCount(unsigned int type) const
+     { return *(throttleStats.m_msg_counts[type]); }
+ 
+-    int getLinkBandwidth() const
+-    { return m_endpoint_bandwidth * m_link_bandwidth_multiplier; }
++    int getLinkBandwidth(int vnet) const;
++
++    int getTotalLinkBandwidth() const;
++
++    int getChannelCnt(int vnet) const;
+ 
+     Cycles getLatency() const { return m_link_latency; }
+ 
+@@ -89,7 +111,8 @@ class Throttle : public Consumer
+   private:
+     void init(NodeID node, Cycles link_latency, int link_bandwidth_multiplier,
+               int endpoint_bandwidth);
+-    void operateVnet(int vnet, int &bw_remainin, bool &schedule_wakeup,
++    void operateVnet(int vnet, int channel, int &total_bw_remaining,
++                     bool &schedule_wakeup,
+                      MessageBuffer *in, MessageBuffer *out);
+ 
+     // Private copy constructor and assignment operator
+@@ -99,13 +122,15 @@ class Throttle : public Consumer
+     std::vector<MessageBuffer*> m_in;
+     std::vector<MessageBuffer*> m_out;
+     unsigned int m_vnets;
+-    std::vector<int> m_units_remaining;
++    std::vector<std::vector<int>> m_units_remaining;
+ 
+     const int m_switch_id;
+     Switch *m_switch;
+     NodeID m_node;
+ 
+-    int m_link_bandwidth_multiplier;
++    bool m_physical_vnets;
++    std::vector<int> m_link_bandwidth_multiplier;
++    std::vector<int> m_vnet_channels;
+     Cycles m_link_latency;
+     int m_wakeups_wo_switch;
+     int m_endpoint_bandwidth;
+-- 
+1.8.3.1
+

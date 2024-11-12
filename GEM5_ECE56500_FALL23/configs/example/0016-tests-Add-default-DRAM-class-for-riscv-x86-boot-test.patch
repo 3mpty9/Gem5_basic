@@ -1,0 +1,51 @@
+From 10dcd717161c64c5ac5b11a764c91c468592bb8f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 9 Dec 2021 00:02:36 -0800
+Subject: [PATCH 016/757] tests: Add default DRAM class for riscv/x86 boot
+ tests
+
+These scripts can be quite useful for running quick boot tests. However,
+having to specify the DRAM each time is laborious. A sensible default
+has therefore been set.
+
+Change-Id: I2714b479853f686246383411a46a98494ba617da
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53848
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/configs/riscv_boot_exit_run.py | 3 ++-
+ tests/gem5/configs/x86_boot_exit_run.py   | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/tests/gem5/configs/riscv_boot_exit_run.py b/tests/gem5/configs/riscv_boot_exit_run.py
+index 38f57d8..cf6d0f7 100644
+--- a/tests/gem5/configs/riscv_boot_exit_run.py
++++ b/tests/gem5/configs/riscv_boot_exit_run.py
+@@ -80,7 +80,8 @@ parser.add_argument(
+     "-d",
+     "--dram-class",
+     type=str,
+-    required=True,
++    required=False,
++    default="DualChannelDDR3_1600",
+     help="The python class for the memory interface to use"
+ )
+ 
+diff --git a/tests/gem5/configs/x86_boot_exit_run.py b/tests/gem5/configs/x86_boot_exit_run.py
+index 96d1dad..217a823 100644
+--- a/tests/gem5/configs/x86_boot_exit_run.py
++++ b/tests/gem5/configs/x86_boot_exit_run.py
+@@ -78,7 +78,8 @@ parser.add_argument(
+     "-d",
+     "--dram-class",
+     type=str,
+-    required=True,
++    required=False,
++    default="DualChannelDDR3_1600",
+     help="The python class for the memory interface to use"
+ )
+ parser.add_argument(
+-- 
+1.8.3.1
+

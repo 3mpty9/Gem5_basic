@@ -1,0 +1,82 @@
+From 949e071cec4bb37675a8fb63e8a356b65adc9e42 Mon Sep 17 00:00:00 2001
+From: Srikant Bharadwaj <srikant.bharadwaj@amd.com>
+Date: Thu, 24 Mar 2022 21:06:53 -0400
+Subject: [PATCH 592/757] configs: Python 3.2+ requires additional flag for
+ makedirs
+
+makedirs requires and additional flag for makedirs to ignore
+error when the directory exists. This change enables overwriting
+on existing output directories for a simulation.
+https://docs.python.org/3/library/os.html
+
+Change-Id: I1c7329ded1f5eef2c882e3224457e1d991d074fd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58190
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/common/FSConfig.py         |  3 +--
+ configs/common/FileSystemConfig.py | 12 +++++-------
+ 2 files changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/configs/common/FSConfig.py b/configs/common/FSConfig.py
+index a7ba815..febe146 100644
+--- a/configs/common/FSConfig.py
++++ b/configs/common/FSConfig.py
+@@ -74,8 +74,7 @@ def attach_9p(parent, bus):
+     viodir = os.path.realpath(os.path.join(m5.options.outdir, '9p'))
+     viopci.vio.root = os.path.join(viodir, 'share')
+     viopci.vio.socketPath = os.path.join(viodir, 'socket')
+-    if not os.path.exists(viopci.vio.root):
+-        os.makedirs(viopci.vio.root)
++    os.makedirs(viopci.vio.root, exist_ok=True)
+     if os.path.exists(viopci.vio.socketPath):
+         os.remove(viopci.vio.socketPath)
+     parent.viopci = viopci
+diff --git a/configs/common/FileSystemConfig.py b/configs/common/FileSystemConfig.py
+index 66a6315..f60bf23 100644
+--- a/configs/common/FileSystemConfig.py
++++ b/configs/common/FileSystemConfig.py
+@@ -140,7 +140,7 @@ def config_filesystem(system, options = None):
+ 
+     # Set up /sys/devices/system/cpu
+     cpudir = joinpath(sysdir, 'devices', 'system', 'cpu')
+-    makedirs(cpudir)
++    makedirs(cpudir, exist_ok=True)
+ 
+     file_append((cpudir, 'online'), '0-%d' % (len(cpus) - 1))
+     file_append((cpudir, 'possible'), '0-%d' % (len(cpus) - 1))
+@@ -168,7 +168,7 @@ def register_node(cpu_list, mem, node_number):
+                            'system', 'node')
+ 
+     nodedir = joinpath(nodebasedir,'node%d' % node_number)
+-    makedirs(nodedir)
++    makedirs(nodedir, exist_ok=True)
+ 
+     file_append((nodedir, 'cpumap'), hex_mask(cpu_list))
+     file_append((nodedir, 'meminfo'),
+@@ -180,10 +180,8 @@ def register_cpu(physical_package_id, core_siblings,
+     cpudir = joinpath(m5.options.outdir, 'fs',  'sys', 'devices', 'system',
+                       'cpu', 'cpu%d' % core_id)
+ 
+-    if not isdir(joinpath(cpudir, 'topology')):
+-        makedirs(joinpath(cpudir, 'topology'))
+-    if not isdir(joinpath(cpudir, 'cache')):
+-        makedirs(joinpath(cpudir, 'cache'))
++    makedirs(joinpath(cpudir, 'topology'), exist_ok=True)
++    makedirs(joinpath(cpudir, 'cache'))
+ 
+     file_append((cpudir, 'online'), '1')
+     file_append((cpudir, 'topology', 'physical_package_id'),
+@@ -204,7 +202,7 @@ def register_cache(level, idu_type, size, line_size, assoc, cpus):
+         while isdir(joinpath(cachedir, 'index%d' % j)):
+             j += 1
+         indexdir = joinpath(cachedir, 'index%d' % j)
+-        makedirs(indexdir)
++        makedirs(indexdir, exist_ok=True)
+ 
+         file_append((indexdir, 'level'), level)
+         file_append((indexdir, 'type'), idu_type)
+-- 
+1.8.3.1
+

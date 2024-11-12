@@ -1,0 +1,28 @@
+From 985dd1ea9d5483964192f5a29e7513492c6e158e Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Mon, 23 May 2022 11:15:18 +0100
+Subject: [PATCH 645/757] tests: Enable DVM in realview64-o3-dual-ruby.py
+
+Change-Id: I3b4cec279e620ee416c3ecb34e45eec1d34b0166
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59871
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/configs/realview64-o3-dual-ruby.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tests/gem5/configs/realview64-o3-dual-ruby.py b/tests/gem5/configs/realview64-o3-dual-ruby.py
+index 09f8284..83c38e2 100644
+--- a/tests/gem5/configs/realview64-o3-dual-ruby.py
++++ b/tests/gem5/configs/realview64-o3-dual-ruby.py
+@@ -40,4 +40,5 @@ root = LinuxArmFSSystem(mem_mode='timing',
+                         mem_class=DDR3_1600_8x8,
+                         cpu_class=O3CPU,
+                         num_cpus=2,
++                        enable_dvm=True,
+                         use_ruby=True).create_root()
+-- 
+1.8.3.1
+

@@ -1,0 +1,285 @@
+From 76c04665570e3748506b2af4eabf0b94e75d43b3 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 20:23:42 -0700
+Subject: [PATCH 309/757] cpu-o3: Use an array to hold rename maps in
+ UnifiedRenameMap.
+
+Change-Id: I3ae1d6ecb103d2b877aba36050cd7b148742b503
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49715
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/o3/rename.cc     |  12 ++---
+ src/cpu/o3/rename_map.cc |  31 ++++++-----
+ src/cpu/o3/rename_map.hh | 131 +++++++++++------------------------------------
+ 3 files changed, 54 insertions(+), 120 deletions(-)
+
+diff --git a/src/cpu/o3/rename.cc b/src/cpu/o3/rename.cc
+index e2b2d14..2ff428b 100644
+--- a/src/cpu/o3/rename.cc
++++ b/src/cpu/o3/rename.cc
+@@ -1250,12 +1250,12 @@ Rename::readFreeEntries(ThreadID tid)
+             freeEntries[tid].lqEntries,
+             freeEntries[tid].sqEntries,
+             renameMap[tid]->numFreeEntries(),
+-            renameMap[tid]->numFreeIntEntries(),
+-            renameMap[tid]->numFreeFloatEntries(),
+-            renameMap[tid]->numFreeVecEntries(),
+-            renameMap[tid]->numFreeVecElemEntries(),
+-            renameMap[tid]->numFreePredEntries(),
+-            renameMap[tid]->numFreeCCEntries());
++            renameMap[tid]->numFreeEntries(IntRegClass),
++            renameMap[tid]->numFreeEntries(FloatRegClass),
++            renameMap[tid]->numFreeEntries(VecRegClass),
++            renameMap[tid]->numFreeEntries(VecElemClass),
++            renameMap[tid]->numFreeEntries(VecPredRegClass),
++            renameMap[tid]->numFreeEntries(CCRegClass));
+ 
+     DPRINTF(Rename, "[tid:%i] %i instructions not yet in ROB\n",
+             tid, instsInProgress[tid]);
+diff --git a/src/cpu/o3/rename_map.cc b/src/cpu/o3/rename_map.cc
+index 7a18ab5..d665b6a 100644
+--- a/src/cpu/o3/rename_map.cc
++++ b/src/cpu/o3/rename_map.cc
+@@ -115,23 +115,30 @@ UnifiedRenameMap::init(const BaseISA::RegClasses &regClasses,
+ {
+     regFile = _regFile;
+ 
+-    intMap.init(regClasses.at(IntRegClass), &(freeList->intList));
+-    floatMap.init(regClasses.at(FloatRegClass), &(freeList->floatList));
+-    vecMap.init(regClasses.at(VecRegClass), &(freeList->vecList));
+-    vecElemMap.init(regClasses.at(VecElemClass), &(freeList->vecElemList));
+-    predMap.init(regClasses.at(VecPredRegClass), &(freeList->predList));
+-    ccMap.init(regClasses.at(CCRegClass), &(freeList->ccList));
++    renameMaps[IntRegClass].init(regClasses.at(IntRegClass),
++            &(freeList->intList));
++    renameMaps[FloatRegClass].init(regClasses.at(FloatRegClass),
++            &(freeList->floatList));
++    renameMaps[VecRegClass].init(regClasses.at(VecRegClass),
++            &(freeList->vecList));
++    renameMaps[VecElemClass].init(regClasses.at(VecElemClass),
++            &(freeList->vecElemList));
++    renameMaps[VecPredRegClass].init(regClasses.at(VecPredRegClass),
++            &(freeList->predList));
++    renameMaps[CCRegClass].init(regClasses.at(CCRegClass),
++            &(freeList->ccList));
+ }
+ 
+ bool
+ UnifiedRenameMap::canRename(DynInstPtr inst) const
+ {
+-    return inst->numDestRegs(IntRegClass) <= intMap.numFreeEntries() &&
+-        inst->numDestRegs(FloatRegClass) <= floatMap.numFreeEntries() &&
+-        inst->numDestRegs(VecRegClass) <= vecMap.numFreeEntries() &&
+-        inst->numDestRegs(VecElemClass) <= vecElemMap.numFreeEntries() &&
+-        inst->numDestRegs(VecPredRegClass) <= predMap.numFreeEntries() &&
+-        inst->numDestRegs(CCRegClass) <= ccMap.numFreeEntries();
++    for (int i = 0; i < renameMaps.size(); i++) {
++        if (inst->numDestRegs((RegClassType)i) >
++                renameMaps[i].numFreeEntries()) {
++            return false;
++        }
++    }
++    return true;
+ }
+ 
+ } // namespace o3
+diff --git a/src/cpu/o3/rename_map.hh b/src/cpu/o3/rename_map.hh
+index e5886f1..3e5380b 100644
+--- a/src/cpu/o3/rename_map.hh
++++ b/src/cpu/o3/rename_map.hh
+@@ -42,7 +42,10 @@
+ #ifndef __CPU_O3_RENAME_MAP_HH__
+ #define __CPU_O3_RENAME_MAP_HH__
+ 
++#include <algorithm>
++#include <array>
+ #include <iostream>
++#include <limits>
+ #include <utility>
+ #include <vector>
+ 
+@@ -174,23 +177,7 @@ class SimpleRenameMap
+ class UnifiedRenameMap
+ {
+   private:
+-    /** The integer register rename map */
+-    SimpleRenameMap intMap;
+-
+-    /** The floating-point register rename map */
+-    SimpleRenameMap floatMap;
+-
+-    /** The condition-code register rename map */
+-    SimpleRenameMap ccMap;
+-
+-    /** The vector register rename map */
+-    SimpleRenameMap vecMap;
+-
+-    /** The vector element register rename map */
+-    SimpleRenameMap vecElemMap;
+-
+-    /** The predicate register rename map */
+-    SimpleRenameMap predMap;
++    std::array<SimpleRenameMap, CCRegClass + 1> renameMaps;
+ 
+     /**
+      * The register file object is used only to get PhysRegIdPtr
+@@ -223,32 +210,16 @@ class UnifiedRenameMap
+     RenameInfo
+     rename(const RegId& arch_reg)
+     {
+-        switch (arch_reg.classValue()) {
+-          case IntRegClass:
+-            return intMap.rename(arch_reg);
+-          case FloatRegClass:
+-            return floatMap.rename(arch_reg);
+-          case VecRegClass:
+-            return vecMap.rename(arch_reg);
+-          case VecElemClass:
+-            return vecElemMap.rename(arch_reg);
+-          case VecPredRegClass:
+-            return predMap.rename(arch_reg);
+-          case CCRegClass:
+-            return ccMap.rename(arch_reg);
+-          case MiscRegClass:
+-            {
+-                // misc regs aren't really renamed, just remapped
+-                PhysRegIdPtr phys_reg = lookup(arch_reg);
+-                // Set the new register to the previous one to keep the same
+-                // mapping throughout the execution.
+-                return RenameInfo(phys_reg, phys_reg);
+-            }
+-
+-          default:
+-            panic("rename rename(): unknown reg class %s\n",
+-                  arch_reg.className());
++        auto reg_class = arch_reg.classValue();
++        if (reg_class == MiscRegClass) {
++            // misc regs aren't really renamed, just remapped
++            PhysRegIdPtr phys_reg = lookup(arch_reg);
++            // Set the new register to the previous one to keep the same
++            // mapping throughout the execution.
++            return RenameInfo(phys_reg, phys_reg);
+         }
++
++        return renameMaps[reg_class].rename(arch_reg);
+     }
+ 
+     /**
+@@ -261,34 +232,13 @@ class UnifiedRenameMap
+     PhysRegIdPtr
+     lookup(const RegId& arch_reg) const
+     {
+-        switch (arch_reg.classValue()) {
+-          case IntRegClass:
+-            return intMap.lookup(arch_reg);
+-
+-          case FloatRegClass:
+-            return  floatMap.lookup(arch_reg);
+-
+-          case VecRegClass:
+-            return  vecMap.lookup(arch_reg);
+-
+-          case VecElemClass:
+-            return  vecElemMap.lookup(arch_reg);
+-
+-          case VecPredRegClass:
+-            return predMap.lookup(arch_reg);
+-
+-          case CCRegClass:
+-            return ccMap.lookup(arch_reg);
+-
+-          case MiscRegClass:
++        auto reg_class = arch_reg.classValue();
++        if (reg_class == MiscRegClass) {
+             // misc regs aren't really renamed, they keep the same
+             // mapping throughout the execution.
+             return regFile->getMiscRegId(arch_reg.index());
+-
+-          default:
+-            panic("rename lookup(): unknown reg class %s\n",
+-                  arch_reg.className());
+         }
++        return renameMaps[reg_class].lookup(arch_reg);
+     }
+ 
+     /**
+@@ -303,37 +253,17 @@ class UnifiedRenameMap
+     setEntry(const RegId& arch_reg, PhysRegIdPtr phys_reg)
+     {
+         assert(phys_reg->is(arch_reg.classValue()));
+-        switch (arch_reg.classValue()) {
+-          case IntRegClass:
+-            return intMap.setEntry(arch_reg, phys_reg);
+-
+-          case FloatRegClass:
+-            return floatMap.setEntry(arch_reg, phys_reg);
+-
+-          case VecRegClass:
+-            return vecMap.setEntry(arch_reg, phys_reg);
+-
+-          case VecElemClass:
+-            return vecElemMap.setEntry(arch_reg, phys_reg);
+-
+-          case VecPredRegClass:
+-            return predMap.setEntry(arch_reg, phys_reg);
+-
+-          case CCRegClass:
+-            return ccMap.setEntry(arch_reg, phys_reg);
+-
+-          case MiscRegClass:
++        auto reg_class = arch_reg.classValue();
++        if (reg_class == MiscRegClass) {
+             // Misc registers do not actually rename, so don't change
+             // their mappings.  We end up here when a commit or squash
+             // tries to update or undo a hardwired misc reg nmapping,
+             // which should always be setting it to what it already is.
+             assert(phys_reg == lookup(arch_reg));
+             return;
+-
+-          default:
+-            panic("rename setEntry(): unknown reg class %s\n",
+-                  arch_reg.className());
+         }
++
++        return renameMaps[reg_class].setEntry(arch_reg, phys_reg);
+     }
+ 
+     /**
+@@ -345,23 +275,20 @@ class UnifiedRenameMap
+     unsigned
+     numFreeEntries() const
+     {
+-        return std::min({intMap.numFreeEntries(),
+-                         floatMap.numFreeEntries(),
+-                         vecMap.numFreeEntries(),
+-                         vecElemMap.numFreeEntries(),
+-                         predMap.numFreeEntries()});
++        auto min_free = std::numeric_limits<unsigned>::max();
++        for (auto &map: renameMaps) {
++            // If this map isn't empty (not used)...
++            if (map.numArchRegs())
++                min_free = std::min(min_free, map.numFreeEntries());
++        }
++        return min_free;
+     }
+ 
+-    unsigned numFreeIntEntries() const { return intMap.numFreeEntries(); }
+-    unsigned numFreeFloatEntries() const { return floatMap.numFreeEntries(); }
+-    unsigned numFreeVecEntries() const { return vecMap.numFreeEntries(); }
+     unsigned
+-    numFreeVecElemEntries() const
++    numFreeEntries(RegClassType type) const
+     {
+-        return vecElemMap.numFreeEntries();
++        return renameMaps[type].numFreeEntries();
+     }
+-    unsigned numFreePredEntries() const { return predMap.numFreeEntries(); }
+-    unsigned numFreeCCEntries() const { return ccMap.numFreeEntries(); }
+ 
+     /**
+      * Return whether there are enough registers to serve the request.
+-- 
+1.8.3.1
+

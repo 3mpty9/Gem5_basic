@@ -1,0 +1,72 @@
+From 1f568c26e47f2fccc482cb075072692c8d634099 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 17 Mar 2022 08:44:33 +0000
+Subject: [PATCH 460/757] arch-arm: Use uint64_t for AArch64 MiscReg operands
+
+At the moment those operands are using uint32_t (uw) variables,
+therefore losing the content of the 32 most significant bits
+
+This is not a problem for some of them (like CPTR_EL2, CPTR_EL3)
+as [63:32] bits are RES0 for now.
+HCR_EL2 on the other hand holds meaningful bits in [63:32],
+HCR_EL.E2H being a notable example. With this patch we
+are then fixing a bug in VHE (which relies on E2H)
+
+Change-Id: I3e31009ad3dec8d8ea1c1057a189f7dcc2c3a54c
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58113
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/operands.isa | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index 0b0d381..efac053 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -1,5 +1,5 @@
+ // -*- mode:c++ -*-
+-// Copyright (c) 2010-2014, 2016-2018, 2021 ARM Limited
++// Copyright (c) 2010-2014, 2016-2018, 2021-2022 Arm Limited
+ // All rights reserved
+ //
+ // The license below extends only to copyright in the software and shall
+@@ -202,6 +202,10 @@ let {{
+                     read_code=self.read_code, write_code=self.write_code,
+                     flags=self.flags)
+ 
++    class CntrlReg64(CntrlReg):
++        def __init__(self, idx, id=srtNormal, ctype='ud'):
++            super().__init__(idx, id, ctype)
++
+     class CntrlNsBankedReg(CntrlReg):
+         read_code = cntrlNsBankedRead
+         write_code = cntrlNsBankedWrite
+@@ -427,17 +431,17 @@ def operands {{
+     'FpscrQc': CntrlRegNC('MISCREG_FPSCR_QC'),
+     'FpscrExc': CntrlRegNC('MISCREG_FPSCR_EXC'),
+     'Cpacr': CntrlReg('MISCREG_CPACR'),
+-    'Cpacr64': CntrlReg('MISCREG_CPACR_EL1'),
++    'Cpacr64': CntrlReg64('MISCREG_CPACR_EL1'),
+     'Fpexc': CntrlRegNC('MISCREG_FPEXC'),
+     'Nsacr': CntrlReg('MISCREG_NSACR'),
+     'ElrHyp': CntrlRegNC('MISCREG_ELR_HYP'),
+     'Hcr': CntrlReg('MISCREG_HCR'),
+-    'Hcr64': CntrlReg('MISCREG_HCR_EL2'),
+-    'CptrEl264': CntrlReg('MISCREG_CPTR_EL2'),
+-    'CptrEl364': CntrlReg('MISCREG_CPTR_EL3'),
++    'Hcr64': CntrlReg64('MISCREG_HCR_EL2'),
++    'CptrEl264': CntrlReg64('MISCREG_CPTR_EL2'),
++    'CptrEl364': CntrlReg64('MISCREG_CPTR_EL3'),
+     'Hstr': CntrlReg('MISCREG_HSTR'),
+     'Scr': CntrlReg('MISCREG_SCR'),
+-    'Scr64': CntrlReg('MISCREG_SCR_EL3'),
++    'Scr64': CntrlReg64('MISCREG_SCR_EL3'),
+     'Sctlr': CntrlRegNC('MISCREG_SCTLR'),
+     'SevMailbox': CntrlRegNC('MISCREG_SEV_MAILBOX'),
+     'LLSCLock': CntrlRegNC('MISCREG_LOCKFLAG'),
+-- 
+1.8.3.1
+

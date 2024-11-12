@@ -1,0 +1,52 @@
+From d3a323a72c020456dd1d53dde0f8da0fc2245121 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 1 Nov 2021 22:18:16 -0700
+Subject: [PATCH 139/757] arch-x86: Make x86 respect m5op_base in SE mode.
+
+In SE mode, we can reasonably hard code what virtual address the m5ops
+show up at since that's private to the process, but we should respect
+the external setting of what physical address to use.
+
+Change-Id: I2ed9e5ba8c411e22e1d5163cf2ab875f9e2fe387
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/52496
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/process.cc     | 7 +++++--
+ src/arch/x86/se_workload.hh | 1 -
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index c646c02..90d3f7d 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -518,8 +518,11 @@ X86_64Process::initState()
+         /* PF handler */
+         pTable->map(PFHandlerVirtAddr, pfHandlerPhysAddr, PageBytes, false);
+         /* MMIO region for m5ops */
+-        pTable->map(MMIORegionVirtAddr, MMIORegionPhysAddr,
+-                    16 * PageBytes, false);
++        auto m5op_range = system->m5opRange();
++        if (m5op_range.size()) {
++            pTable->map(MMIORegionVirtAddr, m5op_range.start(),
++                        m5op_range.size(), false);
++        }
+     } else {
+         for (int i = 0; i < contextIds.size(); i++) {
+             ThreadContext * tc = system->threads[contextIds[i]];
+diff --git a/src/arch/x86/se_workload.hh b/src/arch/x86/se_workload.hh
+index 49ddf20..0795a51 100644
+--- a/src/arch/x86/se_workload.hh
++++ b/src/arch/x86/se_workload.hh
+@@ -45,7 +45,6 @@ const Addr TSSPhysAddr = 0x63000;
+ const Addr ISTVirtAddr = 0xffff800000004000;
+ const Addr PFHandlerVirtAddr = 0xffff800000005000;
+ const Addr MMIORegionVirtAddr = 0xffffc90000000000;
+-const Addr MMIORegionPhysAddr = 0xffff0000;
+ 
+ } // namespace X86ISA
+ } // namespace gem5
+-- 
+1.8.3.1
+

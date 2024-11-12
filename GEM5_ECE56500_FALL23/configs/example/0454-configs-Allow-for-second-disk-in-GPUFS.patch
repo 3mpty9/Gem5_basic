@@ -1,0 +1,40 @@
+From 0aedbb82feec4034c6dc39cd7ae737fea6d523e2 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Wed, 20 Oct 2021 13:01:40 -0500
+Subject: [PATCH 454/757] configs: Allow for second disk in GPUFS
+
+Connect the --second-disk option in GPUFS. Typically this is used as a
+benchmarks disk image. If the disk is unmounted at the time of
+checkpoint, a new disk image can be mounted after restoring the
+checkpoint for a simple way to add new benchmarks without recreating a
+checkpoint.
+
+Change-Id: I57b31bdf8ec628006d774feacff3fde6f533cd4b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53071
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 2e35373..8ea2cd5 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -54,7 +54,10 @@ def makeGpuFSSystem(args):
+ 
+     # Use the common FSConfig to setup a Linux X86 System
+     (TestCPUClass, test_mem_mode, FutureClass) = Simulation.setCPUClass(args)
+-    bm = SysConfig(disks=[args.disk_image], mem=args.mem_size)
++    disks = [args.disk_image]
++    if args.second_disk is not None:
++        disks.extend([args.second_disk])
++    bm = SysConfig(disks=disks, mem=args.mem_size)
+     system = makeLinuxX86System(test_mem_mode, args.num_cpus, bm, True,
+                                   cmdline=cmdline)
+     system.workload.object_file = binary(args.kernel)
+-- 
+1.8.3.1
+

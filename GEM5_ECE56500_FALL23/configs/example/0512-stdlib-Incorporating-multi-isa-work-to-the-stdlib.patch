@@ -1,0 +1,1338 @@
+From 79a93f342971efaa3a94a4e085825c3e0e46546d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 11 Jan 2022 11:53:32 -0800
+Subject: [PATCH 512/757] stdlib: Incorporating multi-isa work to the stdlib
+
+The main restriction with this design is it results in one ISA target
+per board. The ISA is declared per core. To make the design simpler it's
+assumed a Processor (a collection of cores) are all of the same ISA. As
+each board has one processor, this also means a board is typically tied
+to one ISA per simulation.
+
+In order to remain backwards compatible and maintain the standard
+library APIs, this patch adds a `--main-isa` parameter which will
+determine what `gem5.runtime.get_runtime_isa` returns in cases where
+mutliple ISAs are compiled in. When setting the ISA in a simulation (via
+the Processor or Cores), the user may, as before, choose not to and, in
+this case, the `gem5.runtime.get_runtime_isa` function is used.
+
+The `gem5.runtime.get_runtime_isa` function is an intermediate step
+which should be removed in future versions of gem5 (users should specify
+precisely what ISA they want via configuration scripts). For this reason
+it throws a warning when used and should not be heavily relied upon. It
+is deprecated.
+
+Change-Id: Ia76541bfa9a5a4b6b86401309281849b49dc724b
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55423
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/arm-hello.py          |  2 +-
+ configs/example/gem5_library/riscv-fs.py           |  4 +-
+ configs/example/gem5_library/riscv-ubuntu-run.py   |  1 +
+ .../example/gem5_library/x86-gapbs-benchmarks.py   |  1 +
+ configs/example/gem5_library/x86-npb-benchmarks.py |  1 +
+ .../example/gem5_library/x86-parsec-benchmarks.py  |  1 +
+ .../gem5_library/x86-spec-cpu2006-benchmarks.py    |  1 +
+ .../gem5_library/x86-spec-cpu2017-benchmarks.py    |  1 +
+ .../gem5_library/x86-ubuntu-run-with-kvm.py        |  1 +
+ configs/example/lupv/run_lupv.py                   |  7 +-
+ .../components/boards/experimental/lupv_board.py   |  7 +-
+ src/python/gem5/components/boards/riscv_board.py   |  7 +-
+ src/python/gem5/components/boards/x86_board.py     |  5 +-
+ .../chi/private_l1_cache_hierarchy.py              |  7 +-
+ .../cachehierarchies/classic/no_cache.py           |  3 +-
+ .../classic/private_l1_cache_hierarchy.py          |  3 +-
+ .../private_l1_private_l2_cache_hierarchy.py       |  4 +-
+ .../ruby/mesi_two_level_cache_hierarchy.py         |  5 +-
+ .../ruby/mi_example_cache_hierarchy.py             |  5 +-
+ .../gem5/components/processors/abstract_core.py    | 70 +++++++++++++++++
+ .../processors/abstract_generator_core.py          |  7 ++
+ .../components/processors/abstract_processor.py    | 13 ++++
+ .../gem5/components/processors/simple_core.py      | 41 +++++-----
+ .../gem5/components/processors/simple_processor.py | 32 +++++++-
+ .../processors/simple_switchable_processor.py      | 21 +++++-
+ src/python/gem5/isas.py                            | 61 +++++++++++++--
+ src/python/gem5/prebuilt/demo/x86_demo_board.py    |  6 +-
+ src/python/gem5/runtime.py                         | 88 +++++++++++++++++-----
+ src/python/gem5/utils/requires.py                  | 41 +++++++---
+ src/python/m5/main.py                              |  6 ++
+ tests/gem5/configs/boot_kvm_fork_run.py            |  7 +-
+ tests/gem5/configs/boot_kvm_switch_exit.py         |  7 +-
+ tests/gem5/configs/parsec_disk_run.py              |  1 +
+ tests/gem5/configs/riscv_boot_exit_run.py          |  6 +-
+ tests/gem5/configs/simple_binary_run.py            | 14 +++-
+ tests/gem5/configs/x86_boot_exit_run.py            | 11 ++-
+ tests/gem5/hello_se/test_hello_se.py               |  9 +++
+ tests/gem5/insttest_se/test.py                     |  1 +
+ tests/gem5/m5_util/test_exit.py                    |  1 +
+ tests/gem5/stats/test_hdf5.py                      |  1 +
+ 40 files changed, 404 insertions(+), 106 deletions(-)
+
+diff --git a/configs/example/gem5_library/arm-hello.py b/configs/example/gem5_library/arm-hello.py
+index b1f6f38..3faa3ed 100644
+--- a/configs/example/gem5_library/arm-hello.py
++++ b/configs/example/gem5_library/arm-hello.py
+@@ -62,7 +62,7 @@ cache_hierarchy = NoCache()
+ memory = SingleChannelDDR3_1600(size="32MB")
+ 
+ # We use a simple Timing processor with one core.
+-processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, num_cores=1)
++processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, isa=ISA.ARM, num_cores=1)
+ 
+ # The gem5 library simble board which can be used to run simple SE-mode
+ # simulations.
+diff --git a/configs/example/gem5_library/riscv-fs.py b/configs/example/gem5_library/riscv-fs.py
+index 4c1f117..dffb3d4 100644
+--- a/configs/example/gem5_library/riscv-fs.py
++++ b/configs/example/gem5_library/riscv-fs.py
+@@ -66,7 +66,9 @@ cache_hierarchy = PrivateL1PrivateL2CacheHierarchy(
+ memory = SingleChannelDDR3_1600()
+ 
+ # Setup a single core Processor.
+-processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, num_cores=1)
++processor = SimpleProcessor(
++    cpu_type=CPUTypes.TIMING, isa=ISA.RISCV, num_cores=1
++)
+ 
+ # Setup the board.
+ board = RiscvBoard(
+diff --git a/configs/example/gem5_library/riscv-ubuntu-run.py b/configs/example/gem5_library/riscv-ubuntu-run.py
+index f25d20f..d54fa90 100644
+--- a/configs/example/gem5_library/riscv-ubuntu-run.py
++++ b/configs/example/gem5_library/riscv-ubuntu-run.py
+@@ -79,6 +79,7 @@ memory = DualChannelDDR4_2400(size = "3GB")
+ # Here we setup the processor. We use a simple processor.
+ processor = SimpleProcessor(
+     cpu_type=CPUTypes.TIMING,
++    isa=ISA.RISCV,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-gapbs-benchmarks.py b/configs/example/gem5_library/x86-gapbs-benchmarks.py
+index 92746aa..50f56d5 100644
+--- a/configs/example/gem5_library/x86-gapbs-benchmarks.py
++++ b/configs/example/gem5_library/x86-gapbs-benchmarks.py
+@@ -147,6 +147,7 @@ memory = DualChannelDDR4_2400(size="3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-npb-benchmarks.py b/configs/example/gem5_library/x86-npb-benchmarks.py
+index 1609521..83cc700 100644
+--- a/configs/example/gem5_library/x86-npb-benchmarks.py
++++ b/configs/example/gem5_library/x86-npb-benchmarks.py
+@@ -164,6 +164,7 @@ memory = DualChannelDDR4_2400(size = "3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-parsec-benchmarks.py b/configs/example/gem5_library/x86-parsec-benchmarks.py
+index c3dd9ea..0d2e665 100644
+--- a/configs/example/gem5_library/x86-parsec-benchmarks.py
++++ b/configs/example/gem5_library/x86-parsec-benchmarks.py
+@@ -137,6 +137,7 @@ memory = DualChannelDDR4_2400(size = "3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+index c1b7a3b..2e52eef 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2006-benchmarks.py
+@@ -187,6 +187,7 @@ memory = DualChannelDDR4_2400(size = "3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+index 2a03389..4e77dd0 100644
+--- a/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
++++ b/configs/example/gem5_library/x86-spec-cpu2017-benchmarks.py
+@@ -193,6 +193,7 @@ memory = DualChannelDDR4_2400(size = "3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+index 1aea258..a47eb2b 100644
+--- a/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
++++ b/configs/example/gem5_library/x86-ubuntu-run-with-kvm.py
+@@ -89,6 +89,7 @@ memory = SingleChannelDDR3_1600(size="3GB")
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=CPUTypes.TIMING,
++    isa=ISA.X86,
+     num_cores=2,
+ )
+ 
+diff --git a/configs/example/lupv/run_lupv.py b/configs/example/lupv/run_lupv.py
+index 93eaa86..e87d392 100644
+--- a/configs/example/lupv/run_lupv.py
++++ b/configs/example/lupv/run_lupv.py
+@@ -36,7 +36,6 @@ Characteristics
+ import m5
+ from m5.objects import Root
+ 
+-from gem5.runtime import get_runtime_isa
+ from gem5.components.boards.experimental.lupv_board import LupvBoard
+ from gem5.components.memory.single_channel import SingleChannelDDR3_1600
+ from gem5.components.processors.simple_processor import SimpleProcessor
+@@ -83,11 +82,11 @@ memory = SingleChannelDDR3_1600(size="128MB")
+ # Setup a single core Processor.
+ if args.cpu_type == "atomic":
+     processor = SimpleProcessor(
+-        cpu_type=CPUTypes.ATOMIC, num_cores=args.num_cpus
++        cpu_type=CPUTypes.ATOMIC, num_cores=args.num_cpus, isa=ISA.RISCV
+     )
+ elif args.cpu_type == "timing":
+     processor = SimpleProcessor(
+-        cpu_type=CPUTypes.TIMING, num_cores=args.num_cpus
++        cpu_type=CPUTypes.TIMING, num_cores=args.num_cpus, isa=ISA.RISCV
+     )
+ 
+ # Setup the board.
+@@ -106,7 +105,7 @@ board.set_kernel_disk_workload(
+ 
+ 
+ # Begin running of the simulation.
+-print("Running with ISA: " + get_runtime_isa().name)
++print("Running with ISA: " + processor.get_isa().name)
+ print()
+ root = Root(full_system=True, system=board)
+ m5.instantiate()
+diff --git a/src/python/gem5/components/boards/experimental/lupv_board.py b/src/python/gem5/components/boards/experimental/lupv_board.py
+index d6b1dc5..52fc1c8 100644
+--- a/src/python/gem5/components/boards/experimental/lupv_board.py
++++ b/src/python/gem5/components/boards/experimental/lupv_board.py
+@@ -35,7 +35,6 @@ from ...cachehierarchies.abstract_cache_hierarchy import AbstractCacheHierarchy
+ from ..kernel_disk_workload import KernelDiskWorkload
+ from ....resources.resource import AbstractResource
+ from ....isas import ISA
+-from ....utils.requires import requires
+ 
+ import m5
+ from m5.objects import (
+@@ -91,10 +90,14 @@ class LupvBoard(AbstractBoard, KernelDiskWorkload):
+         cache_hierarchy: AbstractCacheHierarchy,
+     ) -> None:
+ 
+-        requires(isa_required=ISA.RISCV)
+         if cache_hierarchy.is_ruby():
+             raise EnvironmentError("RiscvBoard is not compatible with Ruby")
+ 
++        if processor.get_isa() != ISA.RISCV:
++            raise Exception("The LupvBoard requires a processor using the "
++                "RISCV ISA. Current processor "
++                f"ISA: '{processor.get_isa().name}'.")
++
+         super().__init__(clk_freq, processor, memory, cache_hierarchy)
+ 
+     @overrides(AbstractBoard)
+diff --git a/src/python/gem5/components/boards/riscv_board.py b/src/python/gem5/components/boards/riscv_board.py
+index 7dfa9db..f72b31d 100644
+--- a/src/python/gem5/components/boards/riscv_board.py
++++ b/src/python/gem5/components/boards/riscv_board.py
+@@ -37,7 +37,6 @@ from ..cachehierarchies.abstract_cache_hierarchy import AbstractCacheHierarchy
+ from ...resources.resource import AbstractResource
+ 
+ from ...isas import ISA
+-from ...utils.requires import requires
+ 
+ import m5
+ 
+@@ -89,7 +88,11 @@ class RiscvBoard(AbstractBoard, KernelDiskWorkload):
+         cache_hierarchy: AbstractCacheHierarchy,
+     ) -> None:
+         super().__init__(clk_freq, processor, memory, cache_hierarchy)
+-        requires(isa_required=ISA.RISCV)
++
++        if processor.get_isa() != ISA.RISCV:
++            raise Exception("The RISCVBoard requires a processor using the"
++                "RISCV ISA. Current processor ISA: "
++                f"'{processor.get_isa().name}'.")
+ 
+     @overrides(AbstractBoard)
+     def _setup_board(self) -> None:
+diff --git a/src/python/gem5/components/boards/x86_board.py b/src/python/gem5/components/boards/x86_board.py
+index f777392..1ffc86c 100644
+--- a/src/python/gem5/components/boards/x86_board.py
++++ b/src/python/gem5/components/boards/x86_board.py
+@@ -57,7 +57,6 @@ from m5.util.convert import toMemorySize
+ from ..processors.abstract_processor import AbstractProcessor
+ from ..memory.abstract_memory_system import AbstractMemorySystem
+ from ..cachehierarchies.abstract_cache_hierarchy import AbstractCacheHierarchy
+-from ...utils.requires import requires
+ 
+ from typing import List, Sequence
+ 
+@@ -85,7 +84,9 @@ class X86Board(AbstractBoard, KernelDiskWorkload):
+             cache_hierarchy=cache_hierarchy,
+         )
+ 
+-        requires(isa_required=ISA.X86)
++        if self.get_processor().get_isa() != ISA.X86:
++            raise Exception("The X86Board requires a processor using the X86 "
++                f"ISA. Current processor ISA: '{processor.get_isa().name}'.")
+ 
+     @overrides(AbstractBoard)
+     def _setup_board(self) -> None:
+diff --git a/src/python/gem5/components/cachehierarchies/chi/private_l1_cache_hierarchy.py b/src/python/gem5/components/cachehierarchies/chi/private_l1_cache_hierarchy.py
+index d692710..58dc780 100644
+--- a/src/python/gem5/components/cachehierarchies/chi/private_l1_cache_hierarchy.py
++++ b/src/python/gem5/components/cachehierarchies/chi/private_l1_cache_hierarchy.py
+@@ -35,7 +35,6 @@ from gem5.components.cachehierarchies.abstract_cache_hierarchy import (
+ )
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.isas import ISA
+-from gem5.runtime import get_runtime_isa
+ from gem5.utils.requires import requires
+ from gem5.utils.override import overrides
+ from gem5.components.boards.abstract_board import AbstractBoard
+@@ -155,7 +154,7 @@ class PrivateL1CacheHierarchy(AbstractRubyCacheHierarchy):
+             network=self.ruby_system.network,
+             core=core,
+             cache_line_size=board.get_cache_line_size(),
+-            target_isa=get_runtime_isa(),
++            target_isa=board.get_processor().get_isa(),
+             clk_domain=board.get_clock_domain(),
+         )
+         cluster.icache = PrivateL1MOESICache(
+@@ -164,7 +163,7 @@ class PrivateL1CacheHierarchy(AbstractRubyCacheHierarchy):
+             network=self.ruby_system.network,
+             core=core,
+             cache_line_size=board.get_cache_line_size(),
+-            target_isa=get_runtime_isa(),
++            target_isa=board.get_processor().get_isa(),
+             clk_domain=board.get_clock_domain(),
+         )
+ 
+@@ -194,7 +193,7 @@ class PrivateL1CacheHierarchy(AbstractRubyCacheHierarchy):
+         )
+ 
+         # Connect the interrupt ports
+-        if get_runtime_isa() == ISA.X86:
++        if board.get_processor().get_isa() == ISA.X86:
+             int_req_port = cluster.dcache.sequencer.interrupt_out_port
+             int_resp_port = cluster.dcache.sequencer.in_ports
+             core.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/cachehierarchies/classic/no_cache.py b/src/python/gem5/components/cachehierarchies/classic/no_cache.py
+index e57e713..7e8d314 100644
+--- a/src/python/gem5/components/cachehierarchies/classic/no_cache.py
++++ b/src/python/gem5/components/cachehierarchies/classic/no_cache.py
+@@ -28,7 +28,6 @@ from .abstract_classic_cache_hierarchy import AbstractClassicCacheHierarchy
+ from ..abstract_cache_hierarchy import AbstractCacheHierarchy
+ from ...boards.abstract_board import AbstractBoard
+ from ....isas import ISA
+-from ....runtime import get_runtime_isa
+ 
+ from m5.objects import Bridge, BaseXBar, SystemXBar, BadAddr, Port
+ 
+@@ -107,7 +106,7 @@ class NoCache(AbstractClassicCacheHierarchy):
+                 self.membus.cpu_side_ports, self.membus.cpu_side_ports
+             )
+ 
+-            if get_runtime_isa() == ISA.X86:
++            if board.get_processor().get_isa() == ISA.X86:
+                 int_req_port = self.membus.mem_side_ports
+                 int_resp_port = self.membus.cpu_side_ports
+                 core.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/cachehierarchies/classic/private_l1_cache_hierarchy.py b/src/python/gem5/components/cachehierarchies/classic/private_l1_cache_hierarchy.py
+index f1fe5df..c2755fe 100644
+--- a/src/python/gem5/components/cachehierarchies/classic/private_l1_cache_hierarchy.py
++++ b/src/python/gem5/components/cachehierarchies/classic/private_l1_cache_hierarchy.py
+@@ -31,7 +31,6 @@ from .caches.l1icache import L1ICache
+ from .caches.mmu_cache import MMUCache
+ from ...boards.abstract_board import AbstractBoard
+ from ....isas import ISA
+-from ....runtime import get_runtime_isa
+ 
+ from m5.objects import Cache, BaseXBar, SystemXBar, BadAddr, Port
+ 
+@@ -129,7 +128,7 @@ class PrivateL1CacheHierarchy(AbstractClassicCacheHierarchy):
+                 self.iptw_caches[i].cpu_side, self.dptw_caches[i].cpu_side
+             )
+ 
+-            if get_runtime_isa() == ISA.X86:
++            if board.get_processor().get_isa() == ISA.X86:
+                 int_req_port = self.membus.mem_side_ports
+                 int_resp_port = self.membus.cpu_side_ports
+                 cpu.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/cachehierarchies/classic/private_l1_private_l2_cache_hierarchy.py b/src/python/gem5/components/cachehierarchies/classic/private_l1_private_l2_cache_hierarchy.py
+index 7c4e829..ff66b30 100644
+--- a/src/python/gem5/components/cachehierarchies/classic/private_l1_private_l2_cache_hierarchy.py
++++ b/src/python/gem5/components/cachehierarchies/classic/private_l1_private_l2_cache_hierarchy.py
+@@ -33,8 +33,6 @@ from .caches.l2cache import L2Cache
+ from .caches.mmu_cache import MMUCache
+ from ...boards.abstract_board import AbstractBoard
+ from ....isas import ISA
+-from ....runtime import get_runtime_isa
+-
+ from m5.objects import Cache, L2XBar, BaseXBar, SystemXBar, BadAddr, Port
+ 
+ from ....utils.override import *
+@@ -166,7 +164,7 @@ class PrivateL1PrivateL2CacheHierarchy(
+                 self.iptw_caches[i].cpu_side, self.dptw_caches[i].cpu_side
+             )
+ 
+-            if get_runtime_isa() == ISA.X86:
++            if board.get_processor().get_isa() == ISA.X86:
+                 int_req_port = self.membus.mem_side_ports
+                 int_resp_port = self.membus.cpu_side_ports
+                 cpu.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/cachehierarchies/ruby/mesi_two_level_cache_hierarchy.py b/src/python/gem5/components/cachehierarchies/ruby/mesi_two_level_cache_hierarchy.py
+index 9d42365..cd3ea7f 100644
+--- a/src/python/gem5/components/cachehierarchies/ruby/mesi_two_level_cache_hierarchy.py
++++ b/src/python/gem5/components/cachehierarchies/ruby/mesi_two_level_cache_hierarchy.py
+@@ -30,7 +30,6 @@ from ..abstract_two_level_cache_hierarchy import AbstractTwoLevelCacheHierarchy
+ from ....coherence_protocol import CoherenceProtocol
+ from ....isas import ISA
+ from ...boards.abstract_board import AbstractBoard
+-from ....runtime import get_runtime_isa
+ from ....utils.requires import requires
+ 
+ from .topologies.simple_pt2pt import SimplePt2Pt
+@@ -106,7 +105,7 @@ class MESITwoLevelCacheHierarchy(
+                 core,
+                 self._num_l2_banks,
+                 cache_line_size,
+-                get_runtime_isa(),
++                board.processor.get_isa(),
+                 board.get_clock_domain(),
+             )
+ 
+@@ -129,7 +128,7 @@ class MESITwoLevelCacheHierarchy(
+             )
+ 
+             # Connect the interrupt ports
+-            if get_runtime_isa() == ISA.X86:
++            if board.get_processor().get_isa() == ISA.X86:
+                 int_req_port = cache.sequencer.interrupt_out_port
+                 int_resp_port = cache.sequencer.in_ports
+                 core.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/cachehierarchies/ruby/mi_example_cache_hierarchy.py b/src/python/gem5/components/cachehierarchies/ruby/mi_example_cache_hierarchy.py
+index 523ba49..352bf00 100644
+--- a/src/python/gem5/components/cachehierarchies/ruby/mi_example_cache_hierarchy.py
++++ b/src/python/gem5/components/cachehierarchies/ruby/mi_example_cache_hierarchy.py
+@@ -34,7 +34,6 @@ from ...boards.abstract_board import AbstractBoard
+ from ....coherence_protocol import CoherenceProtocol
+ from ....isas import ISA
+ from ....utils.override import overrides
+-from ....runtime import get_runtime_isa
+ from ....utils.requires import requires
+ 
+ 
+@@ -93,7 +92,7 @@ class MIExampleCacheHierarchy(AbstractRubyCacheHierarchy):
+                 network=self.ruby_system.network,
+                 core=core,
+                 cache_line_size=board.get_cache_line_size(),
+-                target_isa=get_runtime_isa(),
++                target_isa=board.get_processor().get_isa(),
+                 clk_domain=board.get_clock_domain(),
+             )
+ 
+@@ -116,7 +115,7 @@ class MIExampleCacheHierarchy(AbstractRubyCacheHierarchy):
+             )
+ 
+             # Connect the interrupt ports
+-            if get_runtime_isa() == ISA.X86:
++            if board.get_processor().get_isa() == ISA.X86:
+                 int_req_port = cache.sequencer.interrupt_out_port
+                 int_resp_port = cache.sequencer.in_ports
+                 core.connect_interrupt(int_req_port, int_resp_port)
+diff --git a/src/python/gem5/components/processors/abstract_core.py b/src/python/gem5/components/processors/abstract_core.py
+index a16196f..7d4fa77 100644
+--- a/src/python/gem5/components/processors/abstract_core.py
++++ b/src/python/gem5/components/processors/abstract_core.py
+@@ -26,7 +26,10 @@
+ 
+ from abc import ABCMeta, abstractmethod
+ from typing import Optional
++import importlib
++
+ from .cpu_types import CPUTypes
++from ...isas import ISA
+ from ...utils.requires import requires
+ 
+ from m5.objects import BaseMMU, Port, SubSystem
+@@ -45,6 +48,10 @@ class AbstractCore(SubSystem):
+         return self._cpu_type
+ 
+     @abstractmethod
++    def get_isa(self) -> ISA:
++        raise NotImplementedError
++
++    @abstractmethod
+     def connect_icache(self, port: Port) -> None:
+         """
+         This function should connect the response port from the instruction
+@@ -102,3 +109,66 @@ class AbstractCore(SubSystem):
+         This is used in the board to setup system-specific MMU settings.
+         """
+         raise NotImplementedError
++
++    @classmethod
++    def cpu_simobject_factory(cls, cpu_type: CPUTypes, isa: ISA, core_id: int):
++        """
++        A factory used to return the SimObject core object given the cpu type,
++        and ISA target. An exception will be thrown if there is an
++        incompatibility.
++
++        :param cpu_type: The target CPU type.
++        :param isa: The target ISA.
++        :param core_id: The id of the core to be returned.
++        """
++        requires(isa_required=isa)
++
++        _isa_string_map = {
++            ISA.X86 : "X86",
++            ISA.ARM : "Arm",
++            ISA.RISCV : "Riscv",
++            ISA.SPARC : "Sparc",
++            ISA.POWER : "Power",
++            ISA.MIPS : "Mips",
++        }
++
++        _cpu_types_string_map = {
++            CPUTypes.ATOMIC : "AtomicSimpleCPU",
++            CPUTypes.O3 : "O3CPU",
++            CPUTypes.TIMING : "TimingSimpleCPU",
++            CPUTypes.KVM : "KvmCPU"
++        }
++
++        if isa not in _isa_string_map:
++            raise NotImplementedError(f"ISA '{isa.name}' does not have an"
++                "entry in `AbstractCore.cpu_simobject_factory._isa_string_map`"
++            )
++
++        if cpu_type not in _cpu_types_string_map:
++            raise NotImplementedError(f"CPUType '{cpu_type.name}' "
++                "does not have an entry in "
++                "`AbstractCore.cpu_simobject_factory._cpu_types_string_map`"
++            )
++
++        if cpu_type == CPUTypes.KVM:
++            # For some reason, the KVM CPU is under "m5.objects" not the
++            # "m5.objects.{ISA}CPU".
++            module_str = f"m5.objects"
++        else:
++            module_str = f"m5.objects.{_isa_string_map[isa]}CPU"
++
++        cpu_class_str = f"{_isa_string_map[isa]}"\
++                        f"{_cpu_types_string_map[cpu_type]}"
++
++        try:
++            to_return_cls = getattr(importlib.import_module(module_str),
++                                    cpu_class_str
++                                   )
++        except ImportError:
++            raise Exception(
++                f"Cannot find CPU type '{cpu_type.name}' for '{isa.name}' "
++                "ISA. Please ensure you have compiled the correct version of "
++                "gem5."
++            )
++
++        return to_return_cls(cpu_id=core_id)
+diff --git a/src/python/gem5/components/processors/abstract_generator_core.py b/src/python/gem5/components/processors/abstract_generator_core.py
+index 5caed38..111a229 100644
+--- a/src/python/gem5/components/processors/abstract_generator_core.py
++++ b/src/python/gem5/components/processors/abstract_generator_core.py
+@@ -30,6 +30,8 @@ from ...utils.override import overrides
+ 
+ from .cpu_types import CPUTypes
+ from .abstract_core import AbstractCore
++from ...isas import ISA
++from ...utils.requires import requires
+ 
+ from typing import Optional
+ 
+@@ -52,9 +54,14 @@ class AbstractGeneratorCore(AbstractCore):
+         # TODO: Remove the CPU Type parameter. This not needed.
+         # Jira issue here: https://gem5.atlassian.net/browse/GEM5-1031
+         super().__init__(CPUTypes.TIMING)
++        requires(isa_required=ISA.NULL)
+         self.port_end = PortTerminator()
+ 
+     @overrides(AbstractCore)
++    def get_isa(self) -> ISA:
++        return ISA.NULL
++
++    @overrides(AbstractCore)
+     def connect_icache(self, port: Port) -> None:
+         """
+         Generator cores only have one request port which we will connect to
+diff --git a/src/python/gem5/components/processors/abstract_processor.py b/src/python/gem5/components/processors/abstract_processor.py
+index 07ddcdb..74e7825 100644
+--- a/src/python/gem5/components/processors/abstract_processor.py
++++ b/src/python/gem5/components/processors/abstract_processor.py
+@@ -25,11 +25,14 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from abc import ABCMeta, abstractmethod
++
++from ...utils.requires import requires
+ from .abstract_core import AbstractCore
+ 
+ from m5.objects import SubSystem
+ 
+ from ..boards.abstract_board import AbstractBoard
++from ...isas import ISA
+ 
+ from typing import List
+ 
+@@ -41,6 +44,13 @@ class AbstractProcessor(SubSystem):
+         super().__init__()
+         assert len(cores) > 0
+ 
++        # In the stdlib we assume the system processor conforms to a single
++        # ISA target.
++        assert len(set(core.get_isa() for core in cores)) == 1
++        self._isa = cores[0].get_isa()
++
++        requires(isa_required=self._isa)
++
+         self.cores = cores
+ 
+     def get_num_cores(self) -> int:
+@@ -49,6 +59,9 @@ class AbstractProcessor(SubSystem):
+     def get_cores(self) -> List[AbstractCore]:
+         return self.cores
+ 
++    def get_isa(self) -> ISA:
++        return self._isa
++
+     @abstractmethod
+     def incorporate_processor(self, board: AbstractBoard) -> None:
+         raise NotImplementedError
+diff --git a/src/python/gem5/components/processors/simple_core.py b/src/python/gem5/components/processors/simple_core.py
+index 89c78d0..d4469e2 100644
+--- a/src/python/gem5/components/processors/simple_core.py
++++ b/src/python/gem5/components/processors/simple_core.py
+@@ -25,46 +25,51 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ from typing import Optional
+-from ...runtime import get_runtime_isa
++from python.gem5.utils.requires import requires
+ from ..processors.abstract_core import AbstractCore
+ 
+ from .cpu_types import CPUTypes
+ from ...isas import ISA
++from ...runtime import get_runtime_isa
+ from ...utils.override import overrides
+ 
+ from m5.objects import (
+     BaseMMU,
+     Port,
+-    AtomicSimpleCPU,
+-    DerivO3CPU,
+-    TimingSimpleCPU,
+     BaseCPU,
+     Process,
+ )
+ 
+ 
+ class SimpleCore(AbstractCore):
+-    def __init__(self, cpu_type: CPUTypes, core_id: int):
+-        super().__init__(cpu_type=cpu_type)
+ 
+-        if cpu_type == CPUTypes.ATOMIC:
+-            self.core = AtomicSimpleCPU(cpu_id=core_id)
+-        elif cpu_type == CPUTypes.O3:
+-            self.core = DerivO3CPU(cpu_id=core_id)
+-        elif cpu_type == CPUTypes.TIMING:
+-            self.core = TimingSimpleCPU(cpu_id=core_id)
+-        elif cpu_type == CPUTypes.KVM:
+-            from m5.objects import X86KvmCPU
+-            self.core = X86KvmCPU(cpu_id=core_id)
++    def __init__(
++        self,
++        cpu_type: CPUTypes,
++        core_id: int,
++        isa: Optional[ISA]= None
++    ):
++        super().__init__(cpu_type=cpu_type)
++        if isa:
++            requires(isa_required=isa)
++            self._isa = isa
+         else:
+-            raise NotImplementedError
+-
++            self._isa = get_runtime_isa()
++        self.core = AbstractCore.cpu_simobject_factory(
++            isa=self._isa,
++            cpu_type=cpu_type,
++            core_id=core_id
++        )
+         self.core.createThreads()
+ 
+     def get_simobject(self) -> BaseCPU:
+         return self.core
+ 
+     @overrides(AbstractCore)
++    def get_isa(self) -> ISA:
++        return self._isa
++
++    @overrides(AbstractCore)
+     def connect_icache(self, port: Port) -> None:
+         self.core.icache_port = port
+ 
+@@ -94,7 +99,7 @@ class SimpleCore(AbstractCore):
+         # controller as we require it. Not sure how true this is in all cases.
+         self.core.createInterruptController()
+ 
+-        if get_runtime_isa() == ISA.X86:
++        if self.get_isa() == ISA.X86:
+             if interrupt_requestor != None:
+                 self.core.interrupts[0].pio = interrupt_requestor
+                 self.core.interrupts[0].int_responder = interrupt_requestor
+diff --git a/src/python/gem5/components/processors/simple_processor.py b/src/python/gem5/components/processors/simple_processor.py
+index 8f32cf1..d4dd85d 100644
+--- a/src/python/gem5/components/processors/simple_processor.py
++++ b/src/python/gem5/components/processors/simple_processor.py
+@@ -33,19 +33,39 @@ from m5.util import warn
+ 
+ from .abstract_processor import AbstractProcessor
+ from .cpu_types import CPUTypes
++from ...isas import ISA
+ from ..boards.abstract_board import AbstractBoard
+ 
++from typing import Optional
++
+ 
+ class SimpleProcessor(AbstractProcessor):
+     """
+     A SimpeProcessor contains a number of cores of a a single CPUType.
+     """
+ 
+-    def __init__(self, cpu_type: CPUTypes, num_cores: int) -> None:
++    def __init__(
++        self,
++        cpu_type: CPUTypes,
++        num_cores: int,
++        isa: Optional[ISA] = None,
++    ) -> None:
++        """
++        param cpu_type: The CPU type for each type in the processor.
++:
++        :param num_cores: The number of CPU cores in the processor.
++
++        :param isa: The ISA of the processor. This argument is optional. If not
++        set the `runtime.get_runtime_isa` is used to determine the ISA at
++        runtime. **WARNING**: This functionality is deprecated. It is
++        recommended you explicitly set your ISA via SimpleProcessor
++        construction.
++        """
+         super().__init__(
+             cores=self._create_cores(
+                 cpu_type=cpu_type,
+                 num_cores=num_cores,
++                isa = isa,
+             )
+         )
+ 
+@@ -55,9 +75,15 @@ class SimpleProcessor(AbstractProcessor):
+ 
+             self.kvm_vm = KvmVM()
+ 
+-    def _create_cores(self, cpu_type: CPUTypes, num_cores: int):
++    def _create_cores(
++        self,
++        cpu_type: CPUTypes,
++        num_cores: int,
++        isa: Optional[ISA]
++    ):
+         return [
+-            SimpleCore(cpu_type=cpu_type, core_id=i) for i in range(num_cores)
++            SimpleCore(cpu_type=cpu_type, core_id=i, isa=isa,) \
++                for i in range(num_cores)
+         ]
+ 
+     @overrides(AbstractProcessor)
+diff --git a/src/python/gem5/components/processors/simple_switchable_processor.py b/src/python/gem5/components/processors/simple_switchable_processor.py
+index f13bb22..52ba013 100644
+--- a/src/python/gem5/components/processors/simple_switchable_processor.py
++++ b/src/python/gem5/components/processors/simple_switchable_processor.py
+@@ -29,9 +29,12 @@ from ..boards.abstract_board import AbstractBoard
+ from ..processors.simple_core import SimpleCore
+ from ..processors.cpu_types import CPUTypes
+ from .switchable_processor import SwitchableProcessor
++from ...isas import ISA
+ 
+ from ...utils.override import *
+ 
++from typing import Optional
++
+ 
+ class SimpleSwitchableProcessor(SwitchableProcessor):
+     """
+@@ -46,7 +49,21 @@ class SimpleSwitchableProcessor(SwitchableProcessor):
+         starting_core_type: CPUTypes,
+         switch_core_type: CPUTypes,
+         num_cores: int,
++        isa: Optional[ISA] = None,
+     ) -> None:
++        """
++        param starting_core_type: The CPU type for each type in the processor
++        to start with (i.e., when the simulation has just started).
++:
++        :param switch_core_types: The CPU type for each core, to be switched
++        to..
++
++        :param isa: The ISA of the processor. This argument is optional. If not
++        set the `runtime.get_runtime_isa` is used to determine the ISA at
++        runtime. **WARNING**: This functionality is deprecated. It is
++        recommended you explicitly set your ISA via SimpleSwitchableProcessor
++        construction.
++        """
+ 
+         if num_cores <= 0:
+             raise AssertionError("Number of cores must be a positive integer!")
+@@ -66,11 +83,11 @@ class SimpleSwitchableProcessor(SwitchableProcessor):
+ 
+         switchable_cores = {
+             self._start_key: [
+-                SimpleCore(cpu_type=starting_core_type, core_id=i)
++                SimpleCore(cpu_type=starting_core_type, core_id=i, isa=isa)
+                 for i in range(num_cores)
+             ],
+             self._switch_key: [
+-                SimpleCore(cpu_type=switch_core_type, core_id=i)
++                SimpleCore(cpu_type=switch_core_type, core_id=i, isa=isa)
+                 for i in range(num_cores)
+             ],
+         }
+diff --git a/src/python/gem5/isas.py b/src/python/gem5/isas.py
+index 9fb7e96..c8b2a38 100644
+--- a/src/python/gem5/isas.py
++++ b/src/python/gem5/isas.py
+@@ -28,14 +28,59 @@
+ Specifies the ISA enum
+ """
+ 
++import os
+ from enum import Enum
+-
++from typing import Set
+ 
+ class ISA(Enum):
+-    X86 = 1
+-    RISCV = 2
+-    ARM = 3
+-    MIPS = 4
+-    POWER = 5
+-    SPARC = 6
+-    NULL = 7
++    """
++    The ISA Enums which may be used in the gem5 stdlib to specify ISAs.
++
++    Their value may be used to translate the ISA to strings and compare against
++    inputs and environment variables.
++
++    E.g., to check if the X86 ISA is compiled:
++
++    ```
++    if buildEnv[f"USE_{ISA.X86.value}_ISA"]:
++        ...
++    ```
++    """
++    X86 = "x86"
++    RISCV = "riscv"
++    ARM = "arm"
++    MIPS = "mips"
++    POWER = "power"
++    SPARC = "sparc"
++    NULL = "null"
++
++def get_isas_str_set() -> Set[ISA]:
++    """
++    Returns a set of all the ISA as strings.
++    """
++    return {isa.value for isa in ISA}
++
++def get_isa_from_str(input: str) -> ISA:
++    """
++    Will return the correct enum given the input string. This is matched on
++    the enum's value. E.g., "x86" will return ISA.X86. Throws an exception if
++    the input string is invalid.
++
++    `get_isas_str_set()` can be used to determine the valid strings.
++
++    This is for parsing text inputs that specify ISA targets.
++
++    :param input: The ISA to return, as a string. Case-insensitive.
++    """
++    for isa in ISA:
++        if input.lower() == isa.value:
++            return isa
++
++    valid_isas_str_list =str()
++    for isa_str in get_isa_from_str():
++        valid_isas_str_list += f"{os.linesep}{isa_str}"
++
++    raise Exception(
++        f"Value '{input}' does not correspond to a known ISA. Known ISAs:"
++        f"{valid_isas_str_list}"
++    )
+diff --git a/src/python/gem5/prebuilt/demo/x86_demo_board.py b/src/python/gem5/prebuilt/demo/x86_demo_board.py
+index 7583849..e83fe3a 100644
+--- a/src/python/gem5/prebuilt/demo/x86_demo_board.py
++++ b/src/python/gem5/prebuilt/demo/x86_demo_board.py
+@@ -75,7 +75,11 @@ class X86DemoBoard(X86Board):
+              "real-world system. Use with caution.")
+ 
+         memory = SingleChannelDDR3_1600(size="2GB")
+-        processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, num_cores=4)
++        processor = SimpleProcessor(
++            cpu_type=CPUTypes.TIMING,
++            isa=ISA.X86,
++            num_cores=4
++        )
+         cache_hierarchy = MESITwoLevelCacheHierarchy(
+             l1d_size="32kB",
+             l1d_assoc=8,
+diff --git a/src/python/gem5/runtime.py b/src/python/gem5/runtime.py
+index 9e1f607..108dfc4 100644
+--- a/src/python/gem5/runtime.py
++++ b/src/python/gem5/runtime.py
+@@ -29,34 +29,86 @@ This file contains functions to extract gem5 runtime information.
+ """
+ 
+ from m5.defines import buildEnv
++from m5.util import warn
++import os
+ 
+-from .isas import ISA
++from .isas import ISA, get_isa_from_str, get_isas_str_set
+ from .coherence_protocol import CoherenceProtocol
++from typing import Set
++from m5 import options
++
++def get_supported_isas() -> Set[ISA]:
++    supported_isas = set()
++
++    # This if-statement is an intermediate step so the stdlib works on the
++    # "old style" of determining the available ISA (via the "TARGET_ISA"
++    # environment variable) and the "new style" which enables multiple ISAs
++    # (via the "USE_X_ISA" environment variables). Once multiple ISAs are fully
++    # incorporated, this code may be simplified.
++    if "TARGET_ISA" in buildEnv.keys():
++        supported_isas.add(get_isa_from_str(buildEnv["TARGET_ISA"]))
++    else:
++        for key in get_isas_str_set:
++            if buildEnv[f"USE_{key.upper()}_ISA"]:
++                supported_isas.add(get_isa_from_str(key))
++    return supported_isas
++
+ 
+ 
+ def get_runtime_isa() -> ISA:
+-    """Gets the target ISA.
+-    This can be inferred at runtime.
++    """Returns a single target ISA at runtime.
++    This is inferred at runtime and is assumed to be the ISA target ISA.
++    This is determined one of two ways:
++
++    1. The gem5 binary is compiled to one ISA target.
++    2. The user specifies the target ISA via gem5's `--main-isa` parameter.
++
++    **WARNING**: This function is deprecated and may be removed in future
++    versions of gem5. This function should not be relied upon to run gem5
++    simulations.
+ 
+     :returns: The target ISA.
+     """
+-    isa_map = {
+-        "sparc": ISA.SPARC,
+-        "mips": ISA.MIPS,
+-        "null": ISA.NULL,
+-        "arm": ISA.ARM,
+-        "x86": ISA.X86,
+-        "power": ISA.POWER,
+-        "riscv": ISA.RISCV,
+-    }
+ 
+-    isa_str = str(buildEnv["TARGET_ISA"]).lower()
+-    if isa_str not in isa_map.keys():
+-        raise NotImplementedError(
+-            "ISA '" + buildEnv["TARGET_ISA"] + "' not recognized."
+-        )
++    warn("The `get_runtime_isa` function is deprecated. Please migrate away "
++         "from using this function.")
++
++    supported = get_supported_isas()
++    main_isa_param = options.main_isa
++
++    supported_list_str = ""
++    for isa in supported:
++        supported_list_str += f"{os.linesep}{isa.name}"
++
++
++    if not main_isa_param:
++        if len(supported) == 1:
++            # In this case, where the main_isa_param is not specified, but only
++            # one ISA is compiled, we go with the ISA that has been compiled.
++            return next(iter(supported))
++
++        # If there are multiple supported ISAs, but no main ISA specified, we
++        # raise an exception.
++        raise Exception("The gem5 binary is compiled with multiple-ISAs. "
++                        "Please specify which you require using the "
++                        "`--main-isa` parameter when running gem5. "
++                        f"Supported ISAs: {supported_list_str}"
++                       )
++
++    assert main_isa_param
++
++    main_isa = get_isa_from_str(main_isa_param)
++
++    if main_isa not in supported:
++        # In the case the user has specified an ISA not compiled into
++        # the binary.
++        raise Exception(f"The ISA specified via the `--main-isa` "
++                        f"parameter, '{main_isa_param}', has not been "
++                        f"compiled into the binary. ISAs available: "
++                        f"{supported_list_str}."
++                       )
+ 
+-    return isa_map[isa_str]
++    return main_isa
+ 
+ 
+ def get_runtime_coherence_protocol() -> CoherenceProtocol:
+diff --git a/src/python/gem5/utils/requires.py b/src/python/gem5/utils/requires.py
+index 7789254..f4322ca 100644
+--- a/src/python/gem5/utils/requires.py
++++ b/src/python/gem5/utils/requires.py
+@@ -24,7 +24,7 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+-from ..runtime import get_runtime_coherence_protocol, get_runtime_isa
++from ..runtime import get_runtime_coherence_protocol, get_supported_isas
+ from ..isas import ISA
+ from ..coherence_protocol import CoherenceProtocol
+ from typing import Optional
+@@ -59,7 +59,7 @@ def requires(
+     Ensures the ISA/Coherence protocol/KVM requirements are met. An exception
+     will be raise if they are not.
+ 
+-    :param isa_required: The ISA gem5 must be compiled to.
++    :param isa_required: The ISA(s) gem5 must be compiled to.
+     :param coherence_protocol_required: The coherence protocol gem5 must be
+         compiled to.
+     :param kvm_required: The host system must have the Kernel-based Virtual
+@@ -68,18 +68,37 @@ def requires(
+         protocol do not match that of the current gem5 binary.
+     """
+ 
+-    runtime_isa = get_runtime_isa()
++    supported_isas = get_supported_isas()
+     runtime_coherence_protocol = get_runtime_coherence_protocol()
+     kvm_available = os.access("/dev/kvm", mode=os.R_OK | os.W_OK)
+ 
+-    if isa_required != None and isa_required.value != runtime_isa.value:
+-        raise Exception(
+-            _get_exception_str(
+-                msg="The current ISA is '{}'. Required: '{}'".format(
+-                    runtime_isa.name, isa_required.name
+-                )
+-            )
+-        )
++    # Note, previously I had the following code here:
++    #
++    # `if isa_required != None and isa_required not in supported_isas:`
++    #
++    # However, for reasons I do not currently understand, I frequently
++    # encountered errors such as the following:
++    #
++    # ```
++    # Exception: The required ISA is 'RISCV'. Supported ISAs:
++    # SPARC
++    # RISCV
++    # ARM
++    # X86
++    # POWER
++    # MIPS
++    # ```
++    #
++    # I do not know why this happens and my various attempts at tracking down
++    # why the enum did not compare correctly yielded no results. The following
++    # code works, even though it is verbose and appears functionally equivalent
++    # to the original code.
++    if isa_required != None and isa_required.value not in \
++        (isa.value for isa in supported_isas):
++        msg=f"The required ISA is '{isa_required.name}'. Supported ISAs: "
++        for isa in supported_isas:
++            msg += f"{os.linesep}{isa.name}"
++        raise Exception(_get_exception_str(msg=msg))
+ 
+     if (
+         coherence_protocol_required != None
+diff --git a/src/python/m5/main.py b/src/python/m5/main.py
+index b216840..09228b4 100644
+--- a/src/python/m5/main.py
++++ b/src/python/m5/main.py
+@@ -107,6 +107,12 @@ def parse_options():
+         help="Reduce verbosity")
+     option('-v', "--verbose", action="count", default=0,
+         help="Increase verbosity")
++    option('--main-isa', action='store', default=None,
++          help='Select the main target ISA. This dictates what the '
++          '`gem5.runtime.get_runtime_isa()` function returns when multiple '
++          'ISAs are compiled into the gem5 binary. Note: This functionality '
++          'is deprecated. The `gem5.runtime.get_runtime_isa()` function will '
++          'be removed in future releases of gem5.')
+ 
+     # Statistics options
+     group("Statistics Options")
+diff --git a/tests/gem5/configs/boot_kvm_fork_run.py b/tests/gem5/configs/boot_kvm_fork_run.py
+index 662ef23..d0f38fb 100644
+--- a/tests/gem5/configs/boot_kvm_fork_run.py
++++ b/tests/gem5/configs/boot_kvm_fork_run.py
+@@ -52,9 +52,7 @@ from gem5.components.processors.simple_switchable_processor import (
+     SimpleSwitchableProcessor,
+ )
+ from gem5.resources.resource import Resource
+-from gem5.runtime import (
+-    get_runtime_coherence_protocol, get_runtime_isa
+-)
++from gem5.runtime import get_runtime_coherence_protocol
+ from gem5.utils.requires import requires
+ 
+ parser = argparse.ArgumentParser(
+@@ -183,6 +181,7 @@ assert cpu_type != None
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=cpu_type,
++    isa=ISA.X86,
+     num_cores=args.num_cpus,
+ )
+ 
+@@ -218,7 +217,7 @@ motherboard.set_kernel_disk_workload(
+ 
+ # Begin running of the simulation. This will exit once the Linux system boot
+ # is complete.
+-print("Running with ISA: " + get_runtime_isa().name)
++print("Running with ISA: " + processor.get_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+diff --git a/tests/gem5/configs/boot_kvm_switch_exit.py b/tests/gem5/configs/boot_kvm_switch_exit.py
+index 5cfee40..3505a20 100644
+--- a/tests/gem5/configs/boot_kvm_switch_exit.py
++++ b/tests/gem5/configs/boot_kvm_switch_exit.py
+@@ -42,9 +42,7 @@ from gem5.components.processors.simple_switchable_processor import (
+     SimpleSwitchableProcessor,
+ )
+ from gem5.resources.resource import Resource
+-from gem5.runtime import (
+-    get_runtime_coherence_protocol, get_runtime_isa
+-)
++from gem5.runtime import get_runtime_coherence_protocol
+ from gem5.simulate.simulator import Simulator
+ from gem5.simulate.exit_event import ExitEvent
+ from gem5.utils.requires import requires
+@@ -168,6 +166,7 @@ assert cpu_type != None
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=CPUTypes.KVM,
+     switch_core_type=cpu_type,
++    isa=ISA.X86,
+     num_cores=args.num_cpus,
+ )
+ 
+@@ -199,7 +198,7 @@ motherboard.set_kernel_disk_workload(
+ 
+ # Begin running of the simulation. This will exit once the Linux system boot
+ # is complete.
+-print("Running with ISA: " + get_runtime_isa().name)
++print("Running with ISA: " + processor.get_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+diff --git a/tests/gem5/configs/parsec_disk_run.py b/tests/gem5/configs/parsec_disk_run.py
+index a5cf41d..8063cf4 100644
+--- a/tests/gem5/configs/parsec_disk_run.py
++++ b/tests/gem5/configs/parsec_disk_run.py
+@@ -198,6 +198,7 @@ else:
+ processor = SimpleSwitchableProcessor(
+     starting_core_type=boot_type,
+     switch_core_type=roi_type,
++    isa=ISA.X86,
+     num_cores=args.num_cpus,
+ )
+ 
+diff --git a/tests/gem5/configs/riscv_boot_exit_run.py b/tests/gem5/configs/riscv_boot_exit_run.py
+index 6420542..a06a45b 100644
+--- a/tests/gem5/configs/riscv_boot_exit_run.py
++++ b/tests/gem5/configs/riscv_boot_exit_run.py
+@@ -144,7 +144,11 @@ else:
+         "CPU type '{}' is not supported in the boot tests.".format(args.cpu)
+     )
+ 
+-processor = SimpleProcessor(cpu_type=cpu_type, num_cores=args.num_cpus)
++processor = SimpleProcessor(
++    cpu_type=cpu_type,
++    isa=ISA.RISCV,
++    num_cores=args.num_cpus,
++)
+ 
+ # Setup the board.
+ board = RiscvBoard(
+diff --git a/tests/gem5/configs/simple_binary_run.py b/tests/gem5/configs/simple_binary_run.py
+index 3a44602..15e589c 100644
+--- a/tests/gem5/configs/simple_binary_run.py
++++ b/tests/gem5/configs/simple_binary_run.py
+@@ -37,6 +37,7 @@ from gem5.components.boards.simple_board import SimpleBoard
+ from gem5.components.cachehierarchies.classic.no_cache import NoCache
+ from gem5.components.processors.simple_processor import SimpleProcessor
+ from gem5.simulate.simulator import Simulator
++from gem5.isas import get_isa_from_str, get_isas_str_set
+ 
+ import argparse
+ 
+@@ -58,6 +59,13 @@ parser.add_argument(
+ )
+ 
+ parser.add_argument(
++    "isa",
++    type=str,
++    choices=get_isas_str_set(),
++    help="The ISA used",
++)
++
++parser.add_argument(
+     "-r",
+     "--resource-directory",
+     type=str,
+@@ -82,7 +90,11 @@ def input_to_cputype(input: str) -> CPUTypes:
+ # Setup the system.
+ cache_hierarchy = NoCache()
+ memory = SingleChannelDDR3_1600()
+-processor = SimpleProcessor(cpu_type=input_to_cputype(args.cpu), num_cores=1)
++processor = SimpleProcessor(
++    cpu_type=input_to_cputype(args.cpu),
++    isa=get_isa_from_str(args.isa),
++    num_cores=1,
++)
+ 
+ motherboard = SimpleBoard(
+     clk_freq="3GHz",
+diff --git a/tests/gem5/configs/x86_boot_exit_run.py b/tests/gem5/configs/x86_boot_exit_run.py
+index 93c9028..3297421 100644
+--- a/tests/gem5/configs/x86_boot_exit_run.py
++++ b/tests/gem5/configs/x86_boot_exit_run.py
+@@ -30,10 +30,7 @@ This script will run a simple boot exit test.
+ 
+ import m5
+ 
+-from gem5.runtime import (
+-    get_runtime_coherence_protocol,
+-    get_runtime_isa,
+-)
++from gem5.runtime import get_runtime_coherence_protocol
+ from gem5.isas import ISA
+ from gem5.utils.requires import requires
+ from gem5.resources.resource import Resource
+@@ -186,7 +183,9 @@ else:
+ 
+ assert cpu_type != None
+ 
+-processor = SimpleProcessor(cpu_type=cpu_type, num_cores=args.num_cpus)
++processor = SimpleProcessor(
++    cpu_type=cpu_type, isa=ISA.X86, num_cores=args.num_cpus
++)
+ 
+ # Setup the motherboard.
+ motherboard = X86Board(
+@@ -216,7 +215,7 @@ motherboard.set_kernel_disk_workload(
+ 
+ # Begin running of the simulation. This will exit once the Linux system boot
+ # is complete.
+-print("Running with ISA: " + get_runtime_isa().name)
++print("Running with ISA: " + processor.get_isa().name)
+ print("Running with protocol: " + get_runtime_coherence_protocol().name)
+ print()
+ 
+diff --git a/tests/gem5/hello_se/test_hello_se.py b/tests/gem5/hello_se/test_hello_se.py
+index ea1f987..115b396 100644
+--- a/tests/gem5/hello_se/test_hello_se.py
++++ b/tests/gem5/hello_se/test_hello_se.py
+@@ -46,6 +46,14 @@ from testlib import *
+ 
+ import re
+ 
++isa_str_map = {
++    constants.gcn3_x86_tag: "x86",
++    constants.arm_tag: "arm",
++    constants.mips_tag: "mips",
++    constants.riscv_tag: "riscv",
++    constants.sparc_tag: "sparc",
++}
++
+ static_progs = {
+     constants.gcn3_x86_tag: (
+         "x86-hello64-static",
+@@ -109,6 +117,7 @@ def verify_config(isa, binary, cpu, hosts):
+             cpu,
+             "--resource-directory",
+             resource_path,
++            isa_str_map[isa],
+         ],
+         valid_isas=(isa,),
+         valid_hosts=hosts,
+diff --git a/tests/gem5/insttest_se/test.py b/tests/gem5/insttest_se/test.py
+index 25c8823..dfae7ce 100644
+--- a/tests/gem5/insttest_se/test.py
++++ b/tests/gem5/insttest_se/test.py
+@@ -62,6 +62,7 @@ for isa in test_progs:
+                     cpu,
+                     "--resource-directory",
+                     resource_path,
++                    "sparc",
+                 ],
+                 valid_isas=(isa,),
+                 length=constants.long_tag,
+diff --git a/tests/gem5/m5_util/test_exit.py b/tests/gem5/m5_util/test_exit.py
+index 48d9645..d6695df 100644
+--- a/tests/gem5/m5_util/test_exit.py
++++ b/tests/gem5/m5_util/test_exit.py
+@@ -68,6 +68,7 @@ gem5_verify_config(
+         "atomic",
+         "--resource-directory",
+         resource_path,
++        "x86",
+     ],
+     valid_isas=(constants.gcn3_x86_tag,),
+ )
+diff --git a/tests/gem5/stats/test_hdf5.py b/tests/gem5/stats/test_hdf5.py
+index bf35f70..b566235 100644
+--- a/tests/gem5/stats/test_hdf5.py
++++ b/tests/gem5/stats/test_hdf5.py
+@@ -94,6 +94,7 @@ if have_hdf5():
+             "atomic",
+             "--resource-directory",
+             resource_path,
++            "arm",
+         ],
+         gem5_args=["--stats-file=h5://stats.h5"],
+         valid_isas=(constants.arm_tag,),
+-- 
+1.8.3.1
+

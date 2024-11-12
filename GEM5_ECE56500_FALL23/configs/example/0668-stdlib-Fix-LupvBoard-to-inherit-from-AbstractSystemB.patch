@@ -1,0 +1,93 @@
+From 424b946d160b46443c500008122cf50b52153f5d Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Fri, 27 May 2022 18:04:48 -0700
+Subject: [PATCH 668/757] stdlib: Fix LupvBoard to inherit from
+ AbstractSystemBoard
+
+In this patch:
+https://gem5-review.googlesource.com/c/public/gem5/+/58909, the
+AbstractBoard was refactored. While all otherboards were updated
+correctly, the LupvBoard was not. This caused the nightly tests to
+fail: https://jenkins.gem5.org/job/nightly/240
+
+This patch corrects this issue.
+
+Change-Id: Icac39d48358daf4acb2f7077f5d3e8871320812e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60095
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ .../gem5/components/boards/experimental/lupv_board.py    | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/python/gem5/components/boards/experimental/lupv_board.py b/src/python/gem5/components/boards/experimental/lupv_board.py
+index 52fc1c8..59eedd8 100644
+--- a/src/python/gem5/components/boards/experimental/lupv_board.py
++++ b/src/python/gem5/components/boards/experimental/lupv_board.py
+@@ -28,7 +28,7 @@ import os
+ from typing import List
+ 
+ from ....utils.override import overrides
+-from ..abstract_board import AbstractBoard
++from ..abstract_system_board import AbstractSystemBoard
+ from ...processors.abstract_processor import AbstractProcessor
+ from ...memory.abstract_memory_system import AbstractMemorySystem
+ from ...cachehierarchies.abstract_cache_hierarchy import AbstractCacheHierarchy
+@@ -72,7 +72,7 @@ from m5.util.fdthelper import (
+     FdtState,
+ )
+ 
+-class LupvBoard(AbstractBoard, KernelDiskWorkload):
++class LupvBoard(AbstractSystemBoard, KernelDiskWorkload):
+     """
+     A board capable of full system simulation for RISC-V.
+     This board uses a set of LupIO education-friendly devices.
+@@ -100,7 +100,7 @@ class LupvBoard(AbstractBoard, KernelDiskWorkload):
+ 
+         super().__init__(clk_freq, processor, memory, cache_hierarchy)
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def _setup_board(self) -> None:
+ 
+         self.workload = RiscvLinux()
+@@ -245,22 +245,22 @@ class LupvBoard(AbstractBoard, KernelDiskWorkload):
+                 uncacheable=uncacheable_range
+             )
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def has_dma_ports(self) -> bool:
+         return False
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def get_dma_ports(self) -> List[Port]:
+         raise NotImplementedError(
+             "The LupvBoard does not have DMA Ports. "
+             "Use `has_dma_ports()` to check this."
+         )
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def has_io_bus(self) -> bool:
+         return True
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def get_io_bus(self) -> IOXBar:
+         return self.iobus
+ 
+@@ -270,7 +270,7 @@ class LupvBoard(AbstractBoard, KernelDiskWorkload):
+     def get_mem_side_coherent_io_port(self) -> Port:
+         return self.iobus.mem_side_ports
+ 
+-    @overrides(AbstractBoard)
++    @overrides(AbstractSystemBoard)
+     def _setup_memory_ranges(self):
+         memory = self.get_memory()
+         mem_size = memory.get_size()
+-- 
+1.8.3.1
+

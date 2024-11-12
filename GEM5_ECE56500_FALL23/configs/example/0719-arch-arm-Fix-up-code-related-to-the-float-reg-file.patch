@@ -1,0 +1,65 @@
+From 112f4104b94807a4db56e44cd649013c4f7c6404 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 29 Aug 2021 00:37:15 -0700
+Subject: [PATCH 719/757] arch-arm: Fix up code related to the float reg file?
+
+ARM no longer uses it's primitive FloatRegClass register file, but the
+code in tarmac_record.cc still seems to access it? Should this code be
+deleted, or rewritten to use the vector register file?
+
+This code was used in the 32 bit ARM KVM code as well.
+
+Change-Id: I6ed2ed9ae853fa4313294fdde4ce08d134fc12da
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49767
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/kvm/arm_cpu.cc           | 9 +++++----
+ src/arch/arm/tracers/tarmac_record.cc | 3 ++-
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/arm/kvm/arm_cpu.cc b/src/arch/arm/kvm/arm_cpu.cc
+index becb6b9..42aeea6 100644
+--- a/src/arch/arm/kvm/arm_cpu.cc
++++ b/src/arch/arm/kvm/arm_cpu.cc
+@@ -773,8 +773,8 @@ ArmKvmCPU::updateKvmStateVFP(uint64_t id, bool show_warnings)
+         const unsigned idx_hi = idx_base + 1;
+         const unsigned idx_lo = idx_base + 0;
+         uint64_t value =
+-            ((uint64_t)tc->readFloatRegFlat(idx_hi) << 32) |
+-            tc->readFloatRegFlat(idx_lo);
++            ((uint64_t)tc->getRegFlat(RegId(FloatRegClass, idx_hi)) << 32) |
++            tc->getRegFlat(RegId(FloatRegClass, idx_lo));
+ 
+         setOneReg(id, value);
+     } else if (regIsVfpCtrl(id)) {
+@@ -915,8 +915,9 @@ ArmKvmCPU::updateTCStateVFP(uint64_t id, bool show_warnings)
+         const unsigned idx_lo = idx_base + 0;
+         uint64_t value = getOneRegU64(id);
+ 
+-        tc->setFloatRegFlat(idx_hi, (value >> 32) & 0xFFFFFFFF);
+-        tc->setFloatRegFlat(idx_lo, value & 0xFFFFFFFF);
++        tc->setRegFlat(RegId(FloatRegClass, idx_hi),
++                (value >> 32) & 0xFFFFFFFF);
++        tc->setRegFlat(RegId(FloatRegClass, idx_lo), value & 0xFFFFFFFF);
+     } else if (regIsVfpCtrl(id)) {
+         MiscRegIndex idx = decodeVFPCtrlReg(id);
+         if (idx == NUM_MISCREGS) {
+diff --git a/src/arch/arm/tracers/tarmac_record.cc b/src/arch/arm/tracers/tarmac_record.cc
+index 4ae379b..94dbc51 100644
+--- a/src/arch/arm/tracers/tarmac_record.cc
++++ b/src/arch/arm/tracers/tarmac_record.cc
+@@ -246,7 +246,8 @@ TarmacTracerRecord::TraceRegEntry::updateFloat(
+ 
+     regValid = true;
+     regName  = "f" + std::to_string(regRelIdx);
+-    values[Lo] = bitsToFloat32(thread->readFloatReg(regRelIdx));
++    RegId reg(FloatRegClass, regRelIdx);
++    values[Lo] = bitsToFloat32(thread->getReg(reg));
+ }
+ 
+ void
+-- 
+1.8.3.1
+

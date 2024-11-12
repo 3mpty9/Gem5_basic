@@ -1,0 +1,41 @@
+From 2194aea0530d8af00c6ea005eeaadcc1e9071e50 Mon Sep 17 00:00:00 2001
+From: Cui Jin <cuijinbird@gmail.com>
+Date: Tue, 21 Dec 2021 23:15:03 +0800
+Subject: [PATCH 076/757] arch-riscv: rvc instruction is mistaken as branch
+
+Fetch in O3CPU mistakes the normal non-branching compressed
+instructions, and regards it as a branch. This issue interrupts
+the consecutive instruction stream, thus affecting performance
+of cpu front-end.
+This fix sets the compressed for PCState during decoding.
+
+Jira Issue: https://gem5.atlassian.net/browse/GEM5-1137
+
+Change-Id: I7607d563bba8a08869e104877fc3c11c94cbe904
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54644
+Reviewed-by: Jin Cui <cuijinbird@gmail.com>
+Reviewed-by: Ayaz Akram <yazakram@ucdavis.edu>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/decoder.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/arch/riscv/decoder.cc b/src/arch/riscv/decoder.cc
+index 4fbcc64..a02415f 100644
+--- a/src/arch/riscv/decoder.cc
++++ b/src/arch/riscv/decoder.cc
+@@ -105,8 +105,10 @@ Decoder::decode(PCStateBase &_next_pc)
+ 
+     if (compressed(emi)) {
+         next_pc.npc(next_pc.instAddr() + sizeof(machInst) / 2);
++        next_pc.compressed(true);
+     } else {
+         next_pc.npc(next_pc.instAddr() + sizeof(machInst));
++        next_pc.compressed(false);
+     }
+ 
+     return decode(emi, next_pc.instAddr());
+-- 
+1.8.3.1
+

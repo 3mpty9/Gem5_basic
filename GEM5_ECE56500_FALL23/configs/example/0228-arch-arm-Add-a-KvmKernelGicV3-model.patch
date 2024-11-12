@@ -1,0 +1,307 @@
+From 469d90cbbea9b9b96bf20919ed5f6a2812e14e8c Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 9 Dec 2021 11:35:30 +0000
+Subject: [PATCH 228/757] arch-arm: Add a KvmKernelGicV3 model
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I7b0db0b8b436a6b2ca47444e4e1f8a2a20bd7c25
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55614
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/KvmGic.py  |  11 ++++-
+ src/arch/arm/kvm/SConscript |   2 +-
+ src/arch/arm/kvm/gic.cc     | 110 ++++++++++++++++++++++++++++++++++++++++++--
+ src/arch/arm/kvm/gic.hh     |  71 ++++++++++++++++++++++++++++
+ 4 files changed, 188 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/arm/kvm/KvmGic.py b/src/arch/arm/kvm/KvmGic.py
+index 166d261..de86653 100644
+--- a/src/arch/arm/kvm/KvmGic.py
++++ b/src/arch/arm/kvm/KvmGic.py
+@@ -36,7 +36,7 @@
+ from m5.params import *
+ from m5.proxy import *
+ 
+-from m5.objects.Gic import GicV2
++from m5.objects.Gic import GicV2, Gicv3
+ 
+ class MuxingKvmGicV2(GicV2):
+     type = 'MuxingKvmGicV2'
+@@ -46,3 +46,12 @@ class MuxingKvmGicV2(GicV2):
+ 
+     simulate_gic = Param.Bool(False,
+         "Forcing the simulation to use the gem5 GIC instead of the host GIC")
++
++class MuxingKvmGicV3(Gicv3):
++    type = 'MuxingKvmGicV3'
++    cxx_header = "arch/arm/kvm/gic.hh"
++    cxx_class = 'gem5::MuxingKvmGic<gem5::GicV3Types>'
++    cxx_template_params = [ 'class Types' ]
++
++    simulate_gic = Param.Bool(False,
++        "Forcing the simulation to use the gem5 GIC instead of the host GIC")
+diff --git a/src/arch/arm/kvm/SConscript b/src/arch/arm/kvm/SConscript
+index d06501f..f25ee96 100644
+--- a/src/arch/arm/kvm/SConscript
++++ b/src/arch/arm/kvm/SConscript
+@@ -44,7 +44,7 @@ if not (env['USE_KVM'] and env['KVM_ISA'] == 'arm'):
+     Return()
+ 
+ SimObject('KvmGic.py',
+-    sim_objects=['MuxingKvmGicV2'], tags='arm isa')
++    sim_objects=['MuxingKvmGicV2', 'MuxingKvmGicV3'], tags='arm isa')
+ Source('gic.cc', tags='arm isa')
+ 
+ SimObject('BaseArmKvmCPU.py', sim_objects=['BaseArmKvmCPU'], tags='arm isa')
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index 7d8ef75..8d60255 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -40,6 +40,7 @@
+ #include <linux/kvm.h>
+ 
+ #include "arch/arm/kvm/base_cpu.hh"
++#include "arch/arm/regs/misc.hh"
+ #include "debug/GIC.hh"
+ #include "debug/Interrupt.hh"
+ #include "params/MuxingKvmGicV2.hh"
+@@ -169,6 +170,101 @@ KvmKernelGicV2::writeCpu(ContextID ctx, Addr daddr, uint32_t data)
+     setGicReg(KVM_DEV_ARM_VGIC_GRP_CPU_REGS, vcpu, daddr, data);
+ }
+ 
++#ifndef SZ_64K
++#define SZ_64K 0x00000040
++#endif
++
++KvmKernelGicV3::KvmKernelGicV3(KvmVM &_vm,
++                               const MuxingKvmGicV3Params &p)
++    : KvmKernelGic(_vm, KVM_DEV_TYPE_ARM_VGIC_V3, p.it_lines),
++      redistRange(RangeSize(p.redist_addr, KVM_VGIC_V3_REDIST_SIZE)),
++      distRange(RangeSize(p.dist_addr, KVM_VGIC_V3_DIST_SIZE))
++{
++    kdev.setAttr<uint64_t>(
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V3_ADDR_TYPE_DIST, p.dist_addr);
++    kdev.setAttr<uint64_t>(
++        KVM_DEV_ARM_VGIC_GRP_ADDR, KVM_VGIC_V3_ADDR_TYPE_REDIST, p.redist_addr);
++}
++
++void
++KvmKernelGicV3::init()
++{
++    kdev.setAttr<uint64_t>(
++        KVM_DEV_ARM_VGIC_GRP_CTRL, KVM_DEV_ARM_VGIC_CTRL_INIT, 0);
++}
++
++template <typename Ret>
++Ret
++KvmKernelGicV3::getGicReg(unsigned group, unsigned mpidr, unsigned offset)
++{
++    Ret reg;
++
++    assert(mpidr <= KVM_DEV_ARM_VGIC_V3_MPIDR_MASK);
++    const uint64_t attr(
++        ((uint64_t)mpidr << KVM_DEV_ARM_VGIC_V3_MPIDR_SHIFT) |
++        (offset << KVM_DEV_ARM_VGIC_OFFSET_SHIFT));
++
++    kdev.getAttrPtr(group, attr, &reg);
++    return reg;
++}
++
++template <typename Arg>
++void
++KvmKernelGicV3::setGicReg(unsigned group, unsigned mpidr, unsigned offset,
++                          Arg value)
++{
++    Arg reg = value;
++
++    assert(mpidr <= KVM_DEV_ARM_VGIC_V3_MPIDR_MASK);
++    const uint64_t attr(
++        ((uint64_t)mpidr << KVM_DEV_ARM_VGIC_V3_MPIDR_SHIFT) |
++        (offset << KVM_DEV_ARM_VGIC_OFFSET_SHIFT));
++
++    kdev.setAttrPtr(group, attr, &reg);
++}
++
++uint32_t
++KvmKernelGicV3::readDistributor(Addr daddr)
++{
++    return getGicReg<uint32_t>(KVM_DEV_ARM_VGIC_GRP_DIST_REGS, 0, daddr);
++}
++
++uint32_t
++KvmKernelGicV3::readRedistributor(const ArmISA::Affinity &aff, Addr daddr)
++{
++    return getGicReg<uint32_t>(KVM_DEV_ARM_VGIC_GRP_REDIST_REGS, aff, daddr);
++}
++
++RegVal
++KvmKernelGicV3::readCpu(const ArmISA::Affinity &aff,
++                        ArmISA::MiscRegIndex misc_reg)
++{
++    auto sys_reg = ArmISA::encodeAArch64SysReg(misc_reg).packed();
++    return getGicReg<RegVal>(KVM_DEV_ARM_VGIC_GRP_CPU_SYSREGS, aff, sys_reg);
++}
++
++void
++KvmKernelGicV3::writeDistributor(Addr daddr, uint32_t data)
++{
++    setGicReg<uint32_t>(KVM_DEV_ARM_VGIC_GRP_DIST_REGS, 0, daddr, data);
++}
++
++void
++KvmKernelGicV3::writeRedistributor(const ArmISA::Affinity &aff, Addr daddr,
++                                   uint32_t data)
++{
++    setGicReg<uint32_t>(KVM_DEV_ARM_VGIC_GRP_REDIST_REGS, aff, daddr, data);
++}
++
++void
++KvmKernelGicV3::writeCpu(const ArmISA::Affinity &aff,
++                         ArmISA::MiscRegIndex misc_reg,
++                         RegVal data)
++{
++    auto sys_reg = ArmISA::encodeAArch64SysReg(misc_reg).packed();
++    setGicReg<RegVal>(KVM_DEV_ARM_VGIC_GRP_CPU_SYSREGS, aff, sys_reg, data);
++}
++
+ template <class Types>
+ MuxingKvmGic<Types>::MuxingKvmGic(const Params &p)
+   : SimGic(p),
+@@ -188,10 +284,15 @@ MuxingKvmGic<Types>::startup()
+ {
+     SimGic::startup();
+ 
+-    KvmVM *vm = system.getKvmVM();
+-    usingKvm = kernelGic && vm && vm->validEnvironment();
+-    if (usingKvm)
+-        fromGicToKvm();
++    if (kernelGic) {
++        kernelGic->init();
++
++        KvmVM *vm = system.getKvmVM();
++        if (vm && vm->validEnvironment()) {
++            usingKvm = true;
++            fromGicToKvm();
++        }
++    }
+ }
+ 
+ template <class Types>
+@@ -323,5 +424,6 @@ MuxingKvmGic<Types>::fromKvmToGic()
+ }
+ 
+ template class MuxingKvmGic<GicV2Types>;
++template class MuxingKvmGic<GicV3Types>;
+ 
+ } // namespace gem5
+diff --git a/src/arch/arm/kvm/gic.hh b/src/arch/arm/kvm/gic.hh
+index 9a4edd5..f864945 100644
+--- a/src/arch/arm/kvm/gic.hh
++++ b/src/arch/arm/kvm/gic.hh
+@@ -42,9 +42,11 @@
+ #include "cpu/kvm/device.hh"
+ #include "cpu/kvm/vm.hh"
+ #include "dev/arm/gic_v2.hh"
++#include "dev/arm/gic_v3.hh"
+ #include "dev/platform.hh"
+ 
+ #include "params/MuxingKvmGicV2.hh"
++#include "params/MuxingKvmGicV3.hh"
+ 
+ namespace gem5
+ {
+@@ -78,6 +80,8 @@ class KvmKernelGic
+     KvmKernelGic &operator=(const KvmKernelGic &&rhs) = delete;
+     KvmKernelGic &operator=(const KvmKernelGic &rhs) = delete;
+ 
++    virtual void init() {}
++
+   public:
+     /**
+      * @{
+@@ -184,6 +188,66 @@ class KvmKernelGicV2 : public KvmKernelGic, public GicV2Registers
+     const AddrRange distRange;
+ };
+ 
++class KvmKernelGicV3 : public KvmKernelGic, public Gicv3Registers
++{
++  public:
++    /**
++     * Instantiate a KVM in-kernel GICv3 model.
++     *
++     * This constructor instantiates an in-kernel GICv3 model and wires
++     * it up to the virtual memory system.
++     *
++     * @param vm KVM VM representing this system
++     * @param params MuxingKvmGicV3 parameters
++     */
++    KvmKernelGicV3(KvmVM &vm,
++                   const MuxingKvmGicV3Params &params);
++
++    void init() override;
++
++  public: // Gicv3Registers
++    uint32_t readDistributor(Addr daddr) override;
++    uint32_t readRedistributor(const ArmISA::Affinity &aff,
++                               Addr daddr) override;
++    RegVal readCpu(const ArmISA::Affinity &aff,
++                   ArmISA::MiscRegIndex misc_reg) override;
++
++    void writeDistributor(Addr daddr, uint32_t data) override;
++    void writeRedistributor(const ArmISA::Affinity &aff,
++                            Addr daddr, uint32_t data) override;
++    void writeCpu(const ArmISA::Affinity &aff,
++                  ArmISA::MiscRegIndex misc_reg, RegVal data) override;
++
++  protected:
++    /**
++     * Get value of GIC register "from" a cpu
++     *
++     * @param group Distributor or CPU (KVM_DEV_ARM_VGIC_GRP_{DIST,CPU}_REGS)
++     * @param mpidr CPU affinity numbers
++     * @param offset register offset
++     */
++    template <typename Ret>
++    Ret getGicReg(unsigned group, unsigned mpidr, unsigned offset);
++
++    /**
++     * Set value of GIC register "from" a cpu
++     *
++     * @param group Distributor or CPU (KVM_DEV_ARM_VGIC_GRP_{DIST,CPU}_REGS)
++     * @param mpidr CPU affinity numbers
++     * @param offset register offset
++     * @param value value to set register to
++     */
++    template <typename Arg>
++    void setGicReg(unsigned group, unsigned mpidr, unsigned offset,
++                   Arg value);
++
++  private:
++    /** Address range for the redistributor */
++    const AddrRange redistRange;
++    /** Address range for the distributor */
++    const AddrRange distRange;
++};
++
+ struct GicV2Types
+ {
+     using SimGic = GicV2;
+@@ -191,6 +255,13 @@ struct GicV2Types
+     using Params = MuxingKvmGicV2Params;
+ };
+ 
++struct GicV3Types
++{
++    using SimGic = Gicv3;
++    using KvmGic = KvmKernelGicV3;
++    using Params = MuxingKvmGicV3Params;
++};
++
+ template <class Types>
+ class MuxingKvmGic : public Types::SimGic
+ {
+-- 
+1.8.3.1
+

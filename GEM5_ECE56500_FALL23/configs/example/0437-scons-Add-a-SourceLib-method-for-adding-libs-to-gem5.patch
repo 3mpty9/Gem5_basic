@@ -1,0 +1,164 @@
+From b9f4b9e13043785bbfe311b05f2d6182bd4768fd Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Mon, 21 Mar 2022 17:30:29 -0700
+Subject: [PATCH 437/757] scons: Add a SourceLib method for adding libs to
+ gem5.
+
+Sometimes a library is needed to support particular functionality in
+gem5, and that functionality is only used (or even desirable) in
+certain binaries SCons can build. We can currently filter sources to
+include in a particular executable using tags, but libraries have been
+added to the environment globally using the LIBS variable which applies
+to all Executables.
+
+This change adds a SourceLib() mechanism which is a new category of
+source which represents libraries. This is independent from classes
+which inherit from SourceFile which represent actual files, as opposed
+to more abstract libraries.
+
+When gem5 builds an executable, the filters it provides are used to
+select both Source()-es, aka c/c++ files, and libraries. If something
+like a unit test does not need all the libraries gem5 proper does,
+then those won't be picked up by its filter, and it won't include them.
+
+Change-Id: I003e029eb82f7800a7ecff698c260e2d18ea2900
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58069
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ site_scons/gem5_scons/sources.py | 33 +++++++++++++++++++++------------
+ src/SConscript                   | 24 +++++++++++++++++++++---
+ 2 files changed, 42 insertions(+), 15 deletions(-)
+
+diff --git a/site_scons/gem5_scons/sources.py b/site_scons/gem5_scons/sources.py
+index 7a2a641..85b0b4e 100644
+--- a/site_scons/gem5_scons/sources.py
++++ b/site_scons/gem5_scons/sources.py
+@@ -188,13 +188,13 @@ class SourceMeta(type):
+         super(SourceMeta, cls).__init__(name, bases, dict)
+         cls.all = SourceList()
+ 
+-class SourceFile(object, metaclass=SourceMeta):
+-    '''Base object that encapsulates the notion of a source file.
+-    This includes, the source node, target node, various manipulations
+-    of those.  A source file also specifies a set of tags which
+-    describing arbitrary properties of the source file.'''
+-
++class SourceItem(object, metaclass=SourceMeta):
++    '''Base object that encapsulates the notion of a source component for
++    gem5. This specifies a set of tags which help group components into groups
++    based on arbitrary properties.'''
+     def __init__(self, source, tags=None, add_tags=None, append=None):
++        self.source = source
++
+         if tags is None:
+             tags='gem5 lib'
+         if isinstance(tags, str):
+@@ -212,16 +212,24 @@ class SourceFile(object, metaclass=SourceMeta):
+ 
+         self.append = append
+ 
++        for base in type(self).__mro__:
++            if issubclass(base, SourceItem):
++                base.all.append(self)
++
++class SourceFile(SourceItem):
++    '''Base object that encapsulates the notion of a source file.
++    This includes, the source node, target node, various manipulations
++    of those.'''
++
++    def __init__(self, source, tags=None, add_tags=None, append=None):
++        super().__init__(source, tags=tags, add_tags=add_tags, append=append)
++
+         tnode = SCons.Script.File(source)
+ 
+         self.tnode = tnode
+         self.filename = str(self.tnode)
+         self.snode = tnode.srcnode()
+ 
+-        for base in type(self).__mro__:
+-            if issubclass(base, SourceFile):
+-                base.all.append(self)
+-
+     def static(self, env):
+         if self.append:
+             env = env.Clone()
+@@ -234,6 +242,7 @@ class SourceFile(object, metaclass=SourceMeta):
+             env.Append(**self.append)
+         return env.SharedObject(self.tnode)
+ 
++
+ __all__ = ['TagImpliesTool', 'SourceFilter', 'SourceList', 'SourceFile',
+-           'with_any_tags', 'with_all_tags', 'with_tag', 'without_tags',
+-           'without_tag']
++           'SourceItem', 'with_any_tags', 'with_all_tags', 'with_tag',
++           'without_tags', 'without_tag']
+diff --git a/src/SConscript b/src/SConscript
+index 64f1318..5dd84ce 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -78,6 +78,9 @@ def GdbXml(xml_id, symbol, tags=None, add_tags=None):
+ class Source(SourceFile):
+     pass
+ 
++class SourceLib(SourceItem):
++    pass
++
+ build_tools = Dir('#build_tools')
+ 
+ # Build a small helper that runs Python code using the same version of Python
+@@ -318,11 +321,15 @@ class TopLevelBase(object, metaclass=TopLevelMeta):
+         self.target = target
+ 
+         isFilter = lambda arg: isinstance(arg, SourceFilter)
+-        self.filters = filter(isFilter, srcs_and_filts)
+-        sources = filter(lambda a: not isFilter(a), srcs_and_filts)
++        isLib = lambda arg: isinstance(arg, SourceLib)
++        # If something isn't a library or filter, assume it's a source file.
++        isSourceFile = lambda arg: not isFilter(arg) and not isLib(arg)
++        self.filters = list(filter(isFilter, srcs_and_filts))
++        self.sourceLibs = list(filter(isLib, srcs_and_filts))
++        source_files = list(filter(isSourceFile, srcs_and_filts))
+ 
+         srcs = SourceList()
+-        for src in sources:
++        for src in source_files:
+             if not isinstance(src, SourceFile):
+                 src = Source(src, tags=[])
+             srcs.append(src)
+@@ -336,6 +343,12 @@ class TopLevelBase(object, metaclass=TopLevelMeta):
+             srcs += Source.all.apply_filter(env, f)
+         return srcs
+ 
++    def libs(self, env):
++        libs = self.sourceLibs
++        for f in self.filters:
++            libs += SourceLib.all.apply_filter(env, f)
++        return libs
++
+     def srcs_to_objs(self, env, sources):
+         return list([ s.static(env) for s in sources ])
+ 
+@@ -382,6 +395,10 @@ class Executable(TopLevelBase):
+         env['BIN_RPATH_PREFIX'] = os.path.relpath(
+                 env['BUILDDIR'], self.path(env).dir.abspath)
+ 
++        libs = self.libs(env)
++        if libs:
++            env.Append(LIBS=list(lib.source for lib in libs))
++
+         executable = env.Program(self.path(env).abspath, objs)[0]
+ 
+         if sys.platform == 'sunos5':
+@@ -439,6 +456,7 @@ class GTest(Executable):
+ # Children should have access
+ Export('GdbXml')
+ Export('Source')
++Export('SourceLib')
+ Export('PySource')
+ Export('SimObject')
+ Export('ProtoBuf')
+-- 
+1.8.3.1
+

@@ -1,0 +1,189 @@
+From feceff7723b7b5a23610d22c278a924a47172510 Mon Sep 17 00:00:00 2001
+From: Ayaz Akram <yazakram@ucdavis.edu>
+Date: Fri, 13 May 2022 23:52:59 -0700
+Subject: [PATCH 688/757] mem: Support for separate tRCD and tCL for
+ reads/writes
+
+HBM2 has asynchronous read/write timings (tRCD, tCL). This change
+updates dram interface in gem5 to allow using separate values of
+tRCD and tCL for reads and writes.
+
+Change-Id: I56bfa9519cedad89cc2d4c163efc7126f609f15a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59733
+Reviewed-by: Wendy Elsasser <welsasser@rambus.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/DRAMInterface.py  | 15 +++++++++++----
+ src/mem/dram_interface.cc | 34 ++++++++++++++++++++++------------
+ src/mem/dram_interface.hh | 15 ++++++++++-----
+ 3 files changed, 43 insertions(+), 21 deletions(-)
+
+diff --git a/src/mem/DRAMInterface.py b/src/mem/DRAMInterface.py
+index e2893bb..4fa971a 100644
+--- a/src/mem/DRAMInterface.py
++++ b/src/mem/DRAMInterface.py
+@@ -79,11 +79,18 @@ class DRAMInterface(MemInterface):
+     # timing behaviour and constraints - all in nanoseconds
+ 
+     # the amount of time in nanoseconds from issuing an activate command
+-    # to the data being available in the row buffer for a read/write
+-    tRCD = Param.Latency("RAS to CAS delay")
++    # to the data being available in the row buffer for a read
++    tRCD = Param.Latency("RAS to Read CAS delay")
+ 
+-    # the time from issuing a read/write command to seeing the actual data
+-    tCL = Param.Latency("CAS latency")
++    # the amount of time in nanoseconds from issuing an activate command
++    # to the data being available in the row buffer for a write
++    tRCD_WR = Param.Latency(Self.tRCD, "RAS to Write CAS delay")
++
++    # the time from issuing a read command to seeing the actual data
++    tCL = Param.Latency("Read CAS latency")
++
++    # the time from issuing a write command to seeing the actual data
++    tCWL = Param.Latency(Self.tCL, "Write CAS latency")
+ 
+     # minimum time between a precharge and subsequent activate
+     tRP = Param.Latency("Row precharge time")
+diff --git a/src/mem/dram_interface.cc b/src/mem/dram_interface.cc
+index df8c7b5..159e0bf 100644
+--- a/src/mem/dram_interface.cc
++++ b/src/mem/dram_interface.cc
+@@ -214,8 +214,8 @@ DRAMInterface::activateBank(Rank& rank_ref, Bank& bank_ref,
+     bank_ref.preAllowedAt = act_at + tRAS;
+ 
+     // Respect the row-to-column command delay for both read and write cmds
+-    bank_ref.rdAllowedAt = std::max(act_at + tRCD, bank_ref.rdAllowedAt);
+-    bank_ref.wrAllowedAt = std::max(act_at + tRCD, bank_ref.wrAllowedAt);
++    bank_ref.rdAllowedAt = std::max(act_at + tRCD_RD, bank_ref.rdAllowedAt);
++    bank_ref.wrAllowedAt = std::max(act_at + tRCD_WR, bank_ref.wrAllowedAt);
+ 
+     // start by enforcing tRRD
+     for (int i = 0; i < banksPerRank; i++) {
+@@ -399,7 +399,8 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
+ 
+     // verify that we have command bandwidth to issue the burst
+     // if not, shift to next burst window
+-    if (dataClockSync && ((cmd_at - rank_ref.lastBurstTick) > clkResyncDelay))
++    Tick max_sync = clkResyncDelay + (mem_pkt->isRead() ? tRL : tWL);
++    if (dataClockSync && ((cmd_at - rank_ref.lastBurstTick) > max_sync))
+         cmd_at = ctrl->verifyMultiCmd(cmd_at, maxCommandsPerWindow, tCK);
+     else
+         cmd_at = ctrl->verifySingleCmd(cmd_at, maxCommandsPerWindow, false);
+@@ -423,7 +424,11 @@ DRAMInterface::doBurstAccess(MemPacket* mem_pkt, Tick next_burst_at,
+     DPRINTF(DRAM, "Schedule RD/WR burst at tick %d\n", cmd_at);
+ 
+     // update the packet ready time
+-    mem_pkt->readyTime = cmd_at + tCL + tBURST;
++    if (mem_pkt->isRead()) {
++        mem_pkt->readyTime = cmd_at + tRL + tBURST;
++    } else {
++        mem_pkt->readyTime = cmd_at + tWL + tBURST;
++    }
+ 
+     rank_ref.lastBurstTick = cmd_at;
+ 
+@@ -632,19 +637,21 @@ DRAMInterface::DRAMInterface(const DRAMInterfaceParams &_p)
+     : MemInterface(_p),
+       bankGroupsPerRank(_p.bank_groups_per_rank),
+       bankGroupArch(_p.bank_groups_per_rank > 0),
+-      tCL(_p.tCL),
++      tRL(_p.tCL),
++      tWL(_p.tCWL),
+       tBURST_MIN(_p.tBURST_MIN), tBURST_MAX(_p.tBURST_MAX),
+-      tCCD_L_WR(_p.tCCD_L_WR), tCCD_L(_p.tCCD_L), tRCD(_p.tRCD),
++      tCCD_L_WR(_p.tCCD_L_WR), tCCD_L(_p.tCCD_L),
++      tRCD_RD(_p.tRCD), tRCD_WR(_p.tRCD_WR),
+       tRP(_p.tRP), tRAS(_p.tRAS), tWR(_p.tWR), tRTP(_p.tRTP),
+       tRFC(_p.tRFC), tREFI(_p.tREFI), tRRD(_p.tRRD), tRRD_L(_p.tRRD_L),
+       tPPD(_p.tPPD), tAAD(_p.tAAD),
+       tXAW(_p.tXAW), tXP(_p.tXP), tXS(_p.tXS),
+-      clkResyncDelay(tCL + _p.tBURST_MAX),
++      clkResyncDelay(_p.tBURST_MAX),
+       dataClockSync(_p.data_clock_sync),
+       burstInterleave(tBURST != tBURST_MIN),
+       twoCycleActivate(_p.two_cycle_activate),
+       activationLimit(_p.activation_limit),
+-      wrToRdDlySameBG(tCL + _p.tBURST_MAX + _p.tWTR_L),
++      wrToRdDlySameBG(tWL + _p.tBURST_MAX + _p.tWTR_L),
+       rdToWrDlySameBG(_p.tRTW + _p.tBURST_MAX),
+       pageMgmt(_p.page_policy),
+       maxAccessesPerRow(_p.max_accesses_per_row),
+@@ -1024,10 +1031,6 @@ DRAMInterface::minBankPrep(const MemPacketQueue& queue,
+     Tick min_act_at = MaxTick;
+     std::vector<uint32_t> bank_mask(ranksPerChannel, 0);
+ 
+-    // latest Tick for which ACT can occur without incurring additoinal
+-    // delay on the data bus
+-    const Tick hidden_act_max = std::max(min_col_at - tRCD, curTick());
+-
+     // Flag condition when burst can issue back-to-back with previous burst
+     bool found_seamless_bank = false;
+ 
+@@ -1063,6 +1066,13 @@ DRAMInterface::minBankPrep(const MemPacketQueue& queue,
+                     std::max(ranks[i]->banks[j].actAllowedAt, curTick()) :
+                     std::max(ranks[i]->banks[j].preAllowedAt, curTick()) + tRP;
+ 
++                // latest Tick for which ACT can occur without
++                // incurring additoinal delay on the data bus
++                const Tick tRCD = ctrl->inReadBusState(false) ?
++                                                 tRCD_RD : tRCD_WR;
++                const Tick hidden_act_max =
++                            std::max(min_col_at - tRCD, curTick());
++
+                 // When is the earliest the R/W burst can issue?
+                 const Tick col_allowed_at = ctrl->inReadBusState(false) ?
+                                               ranks[i]->banks[j].rdAllowedAt :
+diff --git a/src/mem/dram_interface.hh b/src/mem/dram_interface.hh
+index 924db66..fa9d319 100644
+--- a/src/mem/dram_interface.hh
++++ b/src/mem/dram_interface.hh
+@@ -487,12 +487,14 @@ class DRAMInterface : public MemInterface
+     /**
+      * DRAM specific timing requirements
+      */
+-    const Tick tCL;
++    const Tick tRL;
++    const Tick tWL;
+     const Tick tBURST_MIN;
+     const Tick tBURST_MAX;
+     const Tick tCCD_L_WR;
+     const Tick tCCD_L;
+-    const Tick tRCD;
++    const Tick tRCD_RD;
++    const Tick tRCD_WR;
+     const Tick tRP;
+     const Tick tRAS;
+     const Tick tWR;
+@@ -621,7 +623,7 @@ class DRAMInterface : public MemInterface
+     /*
+      * @return delay between write and read commands
+      */
+-    Tick writeToReadDelay() const override { return tBURST + tWTR + tCL; }
++    Tick writeToReadDelay() const override { return tBURST + tWTR + tWL; }
+ 
+     /**
+      * Find which are the earliest banks ready to issue an activate
+@@ -692,12 +694,15 @@ class DRAMInterface : public MemInterface
+     /*
+      * @return time to offset next command
+      */
+-    Tick commandOffset() const override { return (tRP + tRCD); }
++    Tick commandOffset() const override
++    {
++        return (tRP + std::max(tRCD_RD, tRCD_WR));
++    }
+ 
+     /*
+      * Function to calulate unloaded, closed bank access latency
+      */
+-    Tick accessLatency() const override { return (tRP + tRCD + tCL); }
++    Tick accessLatency() const override { return (tRP + tRCD_RD + tRL); }
+ 
+     /**
+      * For FR-FCFS policy, find first DRAM command that can issue
+-- 
+1.8.3.1
+

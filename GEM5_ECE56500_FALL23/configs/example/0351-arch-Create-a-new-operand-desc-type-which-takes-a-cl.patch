@@ -1,0 +1,108 @@
+From 988f7573f60192ac690225a2aa294a6a96e5be3a Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 04:58:25 -0700
+Subject: [PATCH 351/757] arch: Create a new operand desc type which takes a
+ class as a parameter.
+
+This will be the basis for an operand type which can override its
+register class if needed.
+
+Change-Id: I415b70d6d655efc9f6b32102a8482e2cca2fa613
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49727
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 33 +++++++++++++++++++--------------
+ 1 file changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 262659a..a6eb976 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -278,33 +278,38 @@ class RegValOperand(RegOperand):
+                 traceData->setData(final_val);
+         }}'''
+ 
++class RegOperandDesc(OperandDesc):
++    def __init__(self, reg_class, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.attrs['reg_class'] = reg_class
++
+ class IntRegOperand(RegValOperand):
+     reg_class = 'IntRegClass'
+ 
+-class IntRegOperandDesc(OperandDesc):
++class IntRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('IntReg', *args, **kwargs)
++        super().__init__('IntRegClass', 'RegVal', *args, **kwargs)
+ 
+ class FloatRegOperand(RegValOperand):
+     reg_class = 'FloatRegClass'
+ 
+-class FloatRegOperandDesc(OperandDesc):
++class FloatRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('FloatReg', *args, **kwargs)
++        super().__init__('FloatRegClass', 'RegVal', *args, **kwargs)
+ 
+ class CCRegOperand(RegValOperand):
+     reg_class = 'CCRegClass'
+ 
+-class CCRegOperandDesc(OperandDesc):
++class CCRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('CCReg', *args, **kwargs)
++        super().__init__('CCRegClass', 'RegVal', *args, **kwargs)
+ 
+ class VecElemOperand(RegValOperand):
+     reg_class = 'VecElemClass'
+ 
+-class VecElemOperandDesc(OperandDesc):
++class VecElemOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecElem', *args, **kwargs)
++        super().__init__('VecElemClass', 'RegVal', *args, **kwargs)
+ 
+ class VecRegOperand(RegOperand):
+     reg_class = 'VecRegClass'
+@@ -434,9 +439,9 @@ class VecRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class VecRegOperandDesc(OperandDesc):
++class VecRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecReg', *args, **kwargs)
++        super().__init__('VecRegClass', 'VecReg', *args, **kwargs)
+ 
+ class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+@@ -499,9 +504,9 @@ class VecPredRegOperand(RegOperand):
+         if self.is_dest:
+             self.op_rd = self.makeReadW(predWrite) + self.op_rd
+ 
+-class VecPredRegOperandDesc(OperandDesc):
++class VecPredRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecPredReg', *args, **kwargs)
++        super().__init__('VecPredRegClass', 'VecPredReg', *args, **kwargs)
+ 
+ class ControlRegOperand(Operand):
+     reg_class = 'MiscRegClass'
+@@ -557,9 +562,9 @@ class ControlRegOperand(Operand):
+ 
+         return wb
+ 
+-class ControlRegOperandDesc(OperandDesc):
++class ControlRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('ControlReg', *args, **kwargs)
++        super().__init__('MiscRegClass', 'ControlReg', *args, **kwargs)
+ 
+ class MemOperand(Operand):
+     def isMem(self):
+-- 
+1.8.3.1
+

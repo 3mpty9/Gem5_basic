@@ -1,0 +1,152 @@
+From 19c7fe03ac5c707f32999ed158c54ae2a400a6f4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 18 Aug 2021 22:04:02 -0700
+Subject: [PATCH 106/757] scons: Generate cxx_config/init.cc using a helper
+ script.
+
+Change-Id: Ib0129fc5c2de3977f2dedc1bfec532bbedb2d20e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49428
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/cxx_config_init_cc.py | 58 +++++++++++++++++++++++++++++++++++++++
+ src/SConscript                    | 48 ++++++++++----------------------
+ 2 files changed, 73 insertions(+), 33 deletions(-)
+ create mode 100644 build_tools/cxx_config_init_cc.py
+
+diff --git a/build_tools/cxx_config_init_cc.py b/build_tools/cxx_config_init_cc.py
+new file mode 100644
+index 0000000..d3af795
+--- /dev/null
++++ b/build_tools/cxx_config_init_cc.py
+@@ -0,0 +1,58 @@
++# Copyright 2021 Google, Inc.
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are
++# met: redistributions of source code must retain the above copyright
++# notice, this list of conditions and the following disclaimer;
++# redistributions in binary form must reproduce the above copyright
++# notice, this list of conditions and the following disclaimer in the
++# documentation and/or other materials provided with the distribution;
++# neither the name of the copyright holders nor the names of its
++# contributors may be used to endorse or promote products derived from
++# this software without specific prior written permission.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++import argparse
++import sys
++
++from code_formatter import code_formatter
++
++parser = argparse.ArgumentParser()
++parser.add_argument('cxx_config_init_cc',
++        help='cxx config init cc file to generate')
++parser.add_argument('sim_objects', help='all simobjects to include', nargs='*')
++
++args = parser.parse_args()
++
++code = code_formatter()
++
++for sim_object in args.sim_objects:
++    code('#include "cxx_config/${sim_object}.hh"')
++code('')
++code('namespace gem5')
++code('{')
++code('')
++code('void')
++code('cxxConfigInit()')
++code('{')
++code.indent()
++for sim_object in args.sim_objects:
++    code('cxx_config_directory["${sim_object}"] = '
++         '${sim_object}CxxConfigParams::makeDirectoryEntry();')
++code.dedent()
++code('}')
++code('')
++code('} // namespace gem5')
++
++code.write(args.cxx_config_init_cc)
+diff --git a/src/SConscript b/src/SConscript
+index 49f8c98..0e172d3 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -44,6 +44,7 @@ import importlib
+ import importlib.abc
+ import importlib.machinery
+ import importlib.util
++import itertools
+ import os
+ import os.path
+ import re
+@@ -721,40 +722,21 @@ for module, simobjs in sorted(SimObject.sim_objects.items()):
+         if GetOption('with_cxx_config'):
+             Source(cc_file)
+ 
+-# C++ parameter description files
++# CXX config init.cc
++all_sim_objects = sorted(itertools.chain.from_iterable(
++    SimObject.sim_objects.values()))
++sim_object_args = list(f'"{sim_object}"' for sim_object in all_sim_objects)
++cc_file = File('cxx_config/init.cc')
++gem5py_env.Command([ "${CXXCONFIGINIT_CC}" ],
++        [ "${GEM5PY}", "${CXXCONFIGINITCC_PY}" ],
++        MakeAction('"${GEM5PY}" "${CXXCONFIGINITCC_PY}" "${TARGET}" '
++                '${SIM_OBJECTS}',
++            Transform("CXXCINIT", 0)),
++        CXXCONFIGINITCC_PY=build_tools.File('cxx_config_init_cc.py'),
++        SIM_OBJECTS=' '.join(sim_object_args),
++        CXXCONFIGINIT_CC=cc_file)
+ if GetOption('with_cxx_config'):
+-    cxx_config_init_cc_file = File('cxx_config/init.cc')
+-
+-    def createCxxConfigInitCC(target, source, env):
+-        assert len(target) == 1
+-
+-        code = code_formatter()
+-
+-        for name,simobj in sorted(sim_objects.items()):
+-            if not hasattr(simobj, 'abstract') or not simobj.abstract:
+-                code('#include "cxx_config/${name}.hh"')
+-        code()
+-        code('namespace gem5')
+-        code('{')
+-        code()
+-        code('void cxxConfigInit()')
+-        code('{')
+-        code.indent()
+-        for name,simobj in sorted(sim_objects.items()):
+-            not_abstract = not hasattr(simobj, 'abstract') or \
+-                not simobj.abstract
+-            if not_abstract and 'type' in simobj.__dict__:
+-                code('cxx_config_directory["${name}"] = '
+-                     '${name}CxxConfigParams::makeDirectoryEntry();')
+-        code.dedent()
+-        code('}')
+-        code('')
+-        code('} // namespace gem5')
+-        code.write(target[0].abspath)
+-
+-    env.Command(cxx_config_init_cc_file, [],
+-        MakeAction(createCxxConfigInitCC, Transform("CXXCINIT")))
+-    Source(cxx_config_init_cc_file)
++    Source(cc_file)
+ 
+ # C++ versions of enum params.
+ for module, enums in sorted(SimObject.enums.items()):
+-- 
+1.8.3.1
+

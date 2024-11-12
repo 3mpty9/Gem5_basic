@@ -1,0 +1,40 @@
+From dc48de5e62a5671871dc94399211f21ae1fa39f8 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Mon, 10 Jan 2022 13:36:20 +0800
+Subject: [PATCH 101/757] configs: Fix parameters change when WalkCache is
+ removed
+
+Change-Id: I3e8d2ae60e64d18462f6782484be500c5c514003
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55303
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/arm/devices.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/configs/example/arm/devices.py b/configs/example/arm/devices.py
+index 9122e7c..a488ab3 100644
+--- a/configs/example/arm/devices.py
++++ b/configs/example/arm/devices.py
+@@ -176,7 +176,7 @@ class CpuCluster(SubSystem):
+ class AtomicCluster(CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock, cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("AtomicSimpleCPU"), None,
+-                       None, None, None ]
++                       None, None ]
+         super(AtomicCluster, self).__init__(system, num_cpus, cpu_clock,
+                                             cpu_voltage, *cpu_config)
+     def addL1(self):
+@@ -185,7 +185,7 @@ class AtomicCluster(CpuCluster):
+ class KvmCluster(CpuCluster):
+     def __init__(self, system, num_cpus, cpu_clock, cpu_voltage="1.0V"):
+         cpu_config = [ ObjectList.cpu_list.get("ArmV8KvmCPU"), None, None,
+-            None, None ]
++            None ]
+         super(KvmCluster, self).__init__(system, num_cpus, cpu_clock,
+                                          cpu_voltage, *cpu_config)
+     def addL1(self):
+-- 
+1.8.3.1
+

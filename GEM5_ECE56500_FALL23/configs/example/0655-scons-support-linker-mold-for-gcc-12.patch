@@ -1,0 +1,53 @@
+From c376ec2fdeb7163f07b267dfa5dee5d069e8656d Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Sun, 29 May 2022 09:06:05 +0000
+Subject: [PATCH 655/757] scons: support --linker="mold" for gcc < 12.
+
+Now, to use mold linker for gcc prior to version 12.1.0, you need
+to manually set the LINKFLAGS_EXTRA scons variable. This is because
+older gcc doesn't support "-fuse-ld=mold" option.
+
+To make it more convenient for users, this patch adds support for
+'--linker="mold"' option for older versions of gcc. A -B option will
+be passed to gcc automatically if '/usr/libexec/mold' or
+'/usr/local/libexec/mold' exist.
+
+[1] https://github.com/rui314/mold
+[2] https://gem5-review.googlesource.com/c/public/gem5/+/57173
+
+Change-Id: Id1cd780d98c39fc837066d826a9ff942579748fe
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60109
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ SConstruct | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/SConstruct b/SConstruct
+index 95ebff1..4d91eae 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -399,7 +399,18 @@ for variant_path in variant_paths:
+         if linker:
+             with gem5_scons.Configure(env) as conf:
+                 if not conf.CheckLinkFlag(f'-fuse-ld={linker}'):
+-                    error(f'Linker "{linker}" is not supported')
++                    # check mold support for gcc older than 12.1.0
++                    if linker == 'mold' and \
++                       (env['GCC'] and \
++                           compareVersions(env['CXXVERSION'],
++                                           "12.1.0") < 0) and \
++                       ((isdir('/usr/libexec/mold') and \
++                           conf.CheckLinkFlag('-B/usr/libexec/mold')) or \
++                       (isdir('/usr/local/libexec/mold') and \
++                           conf.CheckLinkFlag('-B/usr/local/libexec/mold'))):
++                        pass # support mold
++                    else:
++                        error(f'Linker "{linker}" is not supported')
+                 if linker == 'gold' and not GetOption('with_lto'):
+                     # Tell the gold linker to use threads. The gold linker
+                     # segfaults if both threads and LTO are enabled.
+-- 
+1.8.3.1
+

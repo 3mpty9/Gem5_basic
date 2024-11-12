@@ -1,0 +1,34 @@
+From 7c0c23b2da22ad6ae32d296f43a99f3d62c80929 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 26 Jan 2022 15:07:50 -0800
+Subject: [PATCH 176/757] tests: Use clang-11 for the Kokoro compilation test
+
+We support up to clang-11 which includes some additional checks. It's
+better to catch these during the Kokoro/quick tests than during the
+nightly compilation tests.
+
+Change-Id: I8076f296875448d39416fecc947f71230ce2ddf7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56003
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/jenkins/presubmit.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/jenkins/presubmit.sh b/tests/jenkins/presubmit.sh
+index a5e9013..2883bf7 100755
+--- a/tests/jenkins/presubmit.sh
++++ b/tests/jenkins/presubmit.sh
+@@ -38,7 +38,7 @@
+ set -e
+ 
+ DOCKER_IMAGE_ALL_DEP=gcr.io/gem5-test/ubuntu-20.04_all-dependencies:latest
+-DOCKER_IMAGE_CLANG_COMPILE=gcr.io/gem5-test/clang-version-9:latest
++DOCKER_IMAGE_CLANG_COMPILE=gcr.io/gem5-test/clang-version-11:latest
+ PRESUBMIT_STAGE2=tests/jenkins/presubmit-stage2.sh
+ GEM5ART_TESTS=tests/jenkins/gem5art-tests.sh
+ 
+-- 
+1.8.3.1
+

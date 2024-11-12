@@ -1,0 +1,41 @@
+From 222c7d8f1cba4009c239eced11777280fc17eec1 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 29 Mar 2022 21:13:58 -0700
+Subject: [PATCH 503/757] scons: Remove an error check from the ProtoBuf
+ declare-er.
+
+ProtoBuf files can (and should) be declared to SCons unconditionally,
+but then also use a "protobuf" tag. This lets SCons still include them
+conditionally when it gathers sources to build certain binaries without
+having additional python logic in SConscripts, or manually interpreting
+config state.
+
+Change-Id: I9426d647bc2d6c9d7eee7dadba77f75ed83bcaad
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58349
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/SConscript | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/src/SConscript b/src/SConscript
+index c1b00f0..d55520b 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -259,11 +259,6 @@ cxx_file.add_emitter('.proto', protoc_emitter)
+ 
+ def ProtoBuf(source, tags=None, add_tags=None):
+     '''Add a Protocol Buffer to build'''
+-
+-    if not env['HAVE_PROTOC'] or not env['CONF']['HAVE_PROTOBUF']:
+-        error('Got protobuf to build, but lacks support!')
+-
+-    '''Specify the source file, and any tags'''
+     Source(source, tags, add_tags, append={'CXXFLAGS': '-Wno-array-bounds'})
+ 
+ env['PROTOC_GRPC'] = distutils.spawn.find_executable('grpc_cpp_plugin')
+-- 
+1.8.3.1
+

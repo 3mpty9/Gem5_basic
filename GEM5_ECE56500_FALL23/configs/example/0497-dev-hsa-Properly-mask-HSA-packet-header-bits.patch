@@ -1,0 +1,41 @@
+From 6883f12f092532a7e811cb20ad1957f78137e17c Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 15 Mar 2022 12:28:54 -0500
+Subject: [PATCH 497/757] dev-hsa: Properly mask HSA packet header bits
+
+The HSA packet macros were not actually masking the header bits
+properly. Add a mask call around the width (number of bits) of the field
+being masked.
+
+Change-Id: Ia5e5fb0451296e99a85fb12a5f73b27aea72fc2e
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57669
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/hsa/hsa_packet_processor.cc | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/dev/hsa/hsa_packet_processor.cc b/src/dev/hsa/hsa_packet_processor.cc
+index 89fc3c1..1236256 100644
+--- a/src/dev/hsa/hsa_packet_processor.cc
++++ b/src/dev/hsa/hsa_packet_processor.cc
+@@ -60,12 +60,13 @@
+   }
+ 
+ #define PKT_TYPE(PKT) ((hsa_packet_type_t)(((PKT->header) >> \
+-            HSA_PACKET_HEADER_TYPE) & (HSA_PACKET_HEADER_WIDTH_TYPE - 1)))
++            HSA_PACKET_HEADER_TYPE) & mask(HSA_PACKET_HEADER_WIDTH_TYPE)))
+ 
+ // checks if the barrier bit is set in the header -- shift the barrier bit
+ // to LSB, then bitwise "and" to mask off all other bits
+ #define IS_BARRIER(PKT) ((hsa_packet_header_t)(((PKT->header) >> \
+-            HSA_PACKET_HEADER_BARRIER) & HSA_PACKET_HEADER_WIDTH_BARRIER))
++            HSA_PACKET_HEADER_BARRIER) & \
++            mask(HSA_PACKET_HEADER_WIDTH_BARRIER)))
+ 
+ namespace gem5
+ {
+-- 
+1.8.3.1
+

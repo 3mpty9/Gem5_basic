@@ -1,0 +1,73 @@
+From d7854cce3bcdbeb87df0eeedaf973af192a54a92 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 28 Oct 2021 09:39:19 +0100
+Subject: [PATCH 421/757] arch-arm: Implement DSB Shareable as a DVM op
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I52c965817dd9d70feca31d1ec2981ad3a090e6a3
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56607
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/formats/aarch64.isa |  3 ++-
+ src/arch/arm/isa/insts/misc64.isa    | 25 +++++++++++++++++++++----
+ 2 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/arm/isa/formats/aarch64.isa b/src/arch/arm/isa/formats/aarch64.isa
+index c7339c6..9574012 100644
+--- a/src/arch/arm/isa/formats/aarch64.isa
++++ b/src/arch/arm/isa/formats/aarch64.isa
+@@ -407,7 +407,8 @@ namespace Aarch64
+                               case 0x0: // OuterShareable
+                               case 0x2: // InnerShareable
+                               case 0x3: // FullSystem
+-                                return new Dsb64Shareable(machInst);
++                                return new Dsb64Shareable(
++                                    machInst, dec.dvmEnabled);
+                               default:
+                                 GEM5_UNREACHABLE;
+                             }
+diff --git a/src/arch/arm/isa/insts/misc64.isa b/src/arch/arm/isa/insts/misc64.isa
+index 9151b88..f98d894 100644
+--- a/src/arch/arm/isa/insts/misc64.isa
++++ b/src/arch/arm/isa/insts/misc64.isa
+@@ -179,12 +179,29 @@ let {{
+     decoder_output += BasicConstructor64.subst(dsbLocalIop)
+     exec_output += BasicExecute.subst(dsbLocalIop)
+ 
+-    dsbShareableIop = ArmInstObjParams("dsb", "Dsb64Shareable", "ArmStaticInst", "",
++    dvmCode = '''
++        if (dvmEnabled) {
++            Request::Flags memAccessFlags =
++                Request::STRICT_ORDER|Request::TLBI_SYNC;
++
++            if (!PendingDvm) {
++                memAccessFlags = memAccessFlags | Request::NO_ACCESS;
++            }
++
++            fault = xc->initiateSpecialMemCmd(memAccessFlags);
++
++            PendingDvm = false;
++        }
++    '''
++    dsbShareableIop = ArmInstObjParams("dsb", "Dsb64Shareable", "ArmStaticInst",
++                                       { "code" : "", "dvm_code" : dvmCode },
+                                        ['IsReadBarrier', 'IsWriteBarrier',
+-                                       'IsSerializeAfter'])
+-    header_output += BasicDeclare.subst(dsbShareableIop)
+-    decoder_output += BasicConstructor64.subst(dsbShareableIop)
++                                        'IsSerializeAfter'])
++    header_output += DvmDeclare.subst(dsbShareableIop)
++    decoder_output += DvmConstructor.subst(dsbShareableIop)
+     exec_output += BasicExecute.subst(dsbShareableIop)
++    exec_output += DvmInitiateAcc.subst(dsbShareableIop)
++    exec_output += DvmCompleteAcc.subst(dsbShareableIop)
+ 
+     dmbIop = ArmInstObjParams("dmb", "Dmb64", "ArmStaticInst", "",
+                               ['IsReadBarrier', 'IsWriteBarrier'])
+-- 
+1.8.3.1
+

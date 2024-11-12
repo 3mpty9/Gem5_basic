@@ -1,0 +1,73 @@
+From df886bc8c19ead793f4a8eeca11097e5080bb7be Mon Sep 17 00:00:00 2001
+From: Jerin Joy <joy@rivosinc.com>
+Date: Fri, 1 Apr 2022 11:51:34 -0700
+Subject: [PATCH 560/757] arch-riscv: Added the Zbc bitmanip instructions
+
+Added clmul, clmulh, clmulr instructions.
+
+Changes based on spec:
+https://github.com/riscv/riscv-bitmanip/releases/download/1.0.0/bitmanip-1.0.0.pdf
+
+Change-Id: I98dc76ddde052f56e32eabed12af87039def665b
+Signed-off-by: Jerin Joy <joy@rivosinc.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58631
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Luming Wang <wlm199558@126.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa/decoder.isa | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index a2e5ca2..bc3368f 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -776,6 +776,14 @@ decode QUADRANT default Unknown::unknown() {
+                         Rd = negate ? ~res + (Rs1_sd*Rs2_sd == 0 ? 1 : 0)
+                                     : res;
+                     }}, IntMultOp);
++                    0x5: clmul({{
++                        Rd = 0;
++                        for (int i = 0; i < 64; i++) {
++                            if ((Rs2 >> i) & 1) {
++                                Rd ^= Rs1 << i;
++                            }
++                        }
++                    }});
+                     0x30: rol({{
+                         int shamt = Rs2 & (64 - 1);
+                         Rd = (Rs1 << shamt) | (Rs1 >> ((64 - shamt) & (64 - 1)));
+@@ -805,6 +813,14 @@ decode QUADRANT default Unknown::unknown() {
+                                        carry;
+                         Rd = negate ? ~res + (Rs1_sd*Rs2 == 0 ? 1 : 0) : res;
+                     }}, IntMultOp);
++                    0x5: clmulr({{
++                        Rd = 0;
++                        for (int i = 0; i < 64; i++) {
++                            if ((Rs2 >> i) & 1) {
++                                Rd ^= Rs1 >> (64-i-1);
++                            }
++                        }
++                    }});
+                     0x10: sh1add({{
+                         Rd = (Rs1 << 1) + Rs2;
+                     }});
+@@ -828,6 +844,14 @@ decode QUADRANT default Unknown::unknown() {
+ 
+                         Rd = hi + (mid1 >> 32) + (mid2 >> 32) + carry;
+                     }}, IntMultOp);
++                    0x5: clmulh({{
++                        Rd = 0;
++                        for (int i = 1; i < 64; i++) {
++                            if ((Rs2 >> i) & 1) {
++                                Rd ^= (Rs1 >> (64-i));
++                            }
++                        }
++                    }});
+                 }
+                 0x4: decode FUNCT7 {
+                     0x0: xor({{
+-- 
+1.8.3.1
+

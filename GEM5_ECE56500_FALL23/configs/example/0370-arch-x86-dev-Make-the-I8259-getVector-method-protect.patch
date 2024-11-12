@@ -1,0 +1,44 @@
+From 3a950f034506a06f57a503319fda42a56c70efe4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 21 Jan 2022 19:01:29 -0800
+Subject: [PATCH 370/757] arch-x86,dev: Make the I8259::getVector method
+ protected.
+
+Now that the I8259's vector is reported using a special memory access,
+the getVector method doesn't need to be accessible outside of the class.
+It's still useful internally though, since it nicely encapsulates what
+should happen when an INTA signal is received.
+
+Change-Id: I7da7c1f18fac97ffc62c965978f53fb4c5430de3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55698
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/i8259.hh | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/dev/x86/i8259.hh b/src/dev/x86/i8259.hh
+index 485664d..7bb319d 100644
+--- a/src/dev/x86/i8259.hh
++++ b/src/dev/x86/i8259.hh
+@@ -83,6 +83,8 @@ class I8259 : public BasicPioDevice
+     void requestInterrupt(int line);
+     void handleEOI(int line);
+ 
++    int getVector();
++
+   public:
+     using Params = I8259Params;
+ 
+@@ -119,7 +121,6 @@ class I8259 : public BasicPioDevice
+     void signalInterrupt(int line);
+     void raiseInterruptPin(int number);
+     void lowerInterruptPin(int number);
+-    int getVector();
+ 
+     void serialize(CheckpointOut &cp) const override;
+     void unserialize(CheckpointIn &cp) override;
+-- 
+1.8.3.1
+

@@ -1,0 +1,71 @@
+From ab73158c1d47e41785d5fbb84d3a90e580287db6 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 9 Jan 2022 06:13:27 -0800
+Subject: [PATCH 200/757] arch-x86: Use operand size consistently pushing for
+ near calls.
+
+The near call instruction first attempts to store the return address on
+the stack (the part of the instruction that could fail), and then if
+that succeeds it decrements the stack pointer to point at the newly
+stored data.
+
+Unfortunately, the microcode was not using the same offset between
+those two steps. Specifically it was using the effective operand size
+when storing the return address, but then incorrectly using the
+effective stack size when adjusting the stack pointer.
+
+This change updates the microcode to use the effective operand size in
+both places.
+
+Change-Id: Ic4211a96900fee5d10c2fa0e038070383fefaac3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55250
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/x86/isa/insts/general_purpose/control_transfer/call.py | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/x86/isa/insts/general_purpose/control_transfer/call.py b/src/arch/x86/isa/insts/general_purpose/control_transfer/call.py
+index 4204a8c..31b81e9 100644
+--- a/src/arch/x86/isa/insts/general_purpose/control_transfer/call.py
++++ b/src/arch/x86/isa/insts/general_purpose/control_transfer/call.py
+@@ -45,7 +45,7 @@ def macroop CALL_NEAR_I
+     rdip t7
+     # Check target of call
+     stis t7, ss, [0, t0, rsp], "-env.dataSize"
+-    subi rsp, rsp, ssz
++    subi rsp, rsp, dsz
+     wrip t7, t1
+ };
+ 
+@@ -59,7 +59,7 @@ def macroop CALL_NEAR_R
+     rdip t1
+     # Check target of call
+     stis t1, ss, [0, t0, rsp], "-env.dataSize"
+-    subi rsp, rsp, ssz
++    subi rsp, rsp, dsz
+     wripi reg, 0
+ };
+ 
+@@ -74,7 +74,7 @@ def macroop CALL_NEAR_M
+     ld t1, seg, sib, disp
+     # Check target of call
+     st t7, ss, [0, t0, rsp], "-env.dataSize"
+-    subi rsp, rsp, ssz
++    subi rsp, rsp, dsz
+     wripi t1, 0
+ };
+ 
+@@ -89,7 +89,7 @@ def macroop CALL_NEAR_P
+     ld t1, seg, riprel, disp
+     # Check target of call
+     st t7, ss, [0, t0, rsp], "-env.dataSize"
+-    subi rsp, rsp, ssz
++    subi rsp, rsp, dsz
+     wripi t1, 0
+ };
+ '''
+-- 
+1.8.3.1
+

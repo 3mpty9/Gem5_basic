@@ -1,0 +1,57 @@
+From e35812f256085eb4342642425e1d67aa7f12d0a0 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 15 Dec 2021 22:35:01 -0800
+Subject: [PATCH 056/757] ext: In sst, set sys.argv up even when not
+ initializing python.
+
+pybind11 gives us a simple way to set up sys.argv when initializing the
+python interpreter, but we need to set that up even if the python
+interpreter is already running. We need to do that manually, which we do
+like gem5's main() used to.
+
+Change-Id: If9b79a80e05158226d13f68bf06a2a98a36c2602
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54310
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/gem5.cc | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/ext/sst/gem5.cc b/ext/sst/gem5.cc
+index 01ea3eb..8eab6281 100644
+--- a/ext/sst/gem5.cc
++++ b/ext/sst/gem5.cc
+@@ -382,8 +382,27 @@ gem5Component::initPython(int argc, char *_argv[])
+     // Initialize gem5 special signal handling.
+     gem5::initSignals();
+ 
+-    if (!Py_IsInitialized())
+-        py::initialize_interpreter(false, argc, _argv);
++    if (!Py_IsInitialized()) {
++        py::initialize_interpreter(true, argc, _argv);
++    } else {
++        // pybind doesn't provide a way to set sys.argv if not initializing the
++        // interpreter, so we have to do that manually if it's already running.
++        py::list py_argv;
++        auto sys = py::module::import("sys");
++        if (py::hasattr(sys, "argv")) {
++            // sys.argv already exists, so grab that.
++            py_argv = sys.attr("argv");
++        } else {
++            // sys.argv doesn't exist, so create it.
++            sys.add_object("argv", py_argv);
++        }
++        // Clear out argv just in case it has something in it.
++        py_argv.attr("clear")();
++
++        // Fill it with our argvs.
++        for (int i = 0; i < argc; i++)
++            py_argv.append(_argv[i]);
++    }
+ 
+     auto importer = py::module_::import("importer");
+     importer.attr("install")();
+-- 
+1.8.3.1
+

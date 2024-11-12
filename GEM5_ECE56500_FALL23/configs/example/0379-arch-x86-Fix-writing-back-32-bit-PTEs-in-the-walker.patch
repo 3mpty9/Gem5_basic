@@ -1,0 +1,39 @@
+From 4489e37344fd22a8f0916c352bf081325b9b52e7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 04:00:25 -0800
+Subject: [PATCH 379/757] arch-x86: Fix writing back 32 bit PTEs in the walker.
+
+The page table walker might need to write back page table entries to set
+their accessed bits. It was already checking whether the access was 32
+or 64 bit when the PTE was retrieved from the incoming packet, but was
+not checking the size when it was written back out, causing an assert to
+fail when working with 32 bit legacy PTEs.
+
+Change-Id: I7d02241cad20681e6cac0111edf2454335c466fa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55808
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/pagetable_walker.cc | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/pagetable_walker.cc b/src/arch/x86/pagetable_walker.cc
+index 5635895..15c3a1e 100644
+--- a/src/arch/x86/pagetable_walker.cc
++++ b/src/arch/x86/pagetable_walker.cc
+@@ -530,7 +530,10 @@ Walker::WalkerState::stepWalk(PacketPtr &write)
+         // value back to memory.
+         if (doWrite) {
+             write = oldRead;
+-            write->setLE<uint64_t>(pte);
++            if (dataSize == 8)
++                write->setLE<uint64_t>(pte);
++            else
++                write->setLE<uint32_t>(pte);
+             write->cmd = MemCmd::WriteReq;
+         } else {
+             write = NULL;
+-- 
+1.8.3.1
+

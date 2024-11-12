@@ -1,0 +1,36 @@
+From 851c86af6d351dfe4d150bd30a0cbc5af460c23a Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 21:00:43 -0700
+Subject: [PATCH 697/757] arch: Improve the regular expression that finds
+ operands.
+
+This regular expression currently has a negative lookbehind assertion
+that the operand name isn't preceded by any numbers or letters. Expand
+that to also include the : character, since no operand should have a
+namespace specifier in front of it.
+
+Change-Id: I0bd84b69b9dad278191831d82db762ae75ce4bf1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49751
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/isa_parser.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 39f884c..6a81fbe 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -1488,7 +1488,7 @@ StaticInstPtr
+         extensions = self.operandTypeMap.keys()
+ 
+         operandsREString = r'''
+-        (?<!\w)      # neg. lookbehind assertion: prevent partial matches
++        (?<!\w|:)     # neg. lookbehind assertion: prevent partial matches
+         ((%s)(?:_(%s))?)   # match: operand with optional '_' then suffix
+         (?!\w)       # neg. lookahead assertion: prevent partial matches
+         ''' % ('|'.join(operands), '|'.join(extensions))
+-- 
+1.8.3.1
+

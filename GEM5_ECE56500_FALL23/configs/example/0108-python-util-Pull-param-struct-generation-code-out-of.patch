@@ -1,0 +1,808 @@
+From df540f0dbf1bcdcb49de72c02bd21d9125d45d88 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 19 Aug 2021 21:59:22 -0700
+Subject: [PATCH 108/757] python,util: Pull param struct generation code out of
+ SimObject.
+
+Change-Id: I9f9c3b858a214650f6f07e6127bb316a227982a0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49450
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/sim_object_param_struct_cc.py | 213 +++++++++++++++++-
+ build_tools/sim_object_param_struct_hh.py | 176 ++++++++++++++-
+ src/python/m5/SimObject.py                | 354 ------------------------------
+ 3 files changed, 387 insertions(+), 356 deletions(-)
+
+diff --git a/build_tools/sim_object_param_struct_cc.py b/build_tools/sim_object_param_struct_cc.py
+index 7266556..1b72e3c 100644
+--- a/build_tools/sim_object_param_struct_cc.py
++++ b/build_tools/sim_object_param_struct_cc.py
+@@ -1,5 +1,18 @@
++# Copyright 2004-2006 The Regents of The University of Michigan
++# Copyright 2010-20013 Advanced Micro Devices, Inc.
++# Copyright 2013 Mark D. Hill and David A. Wood
++# Copyright 2017-2020 ARM Limited
+ # Copyright 2021 Google, Inc.
+ #
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are
+ # met: redistributions of source code must retain the above copyright
+@@ -57,6 +70,204 @@ importer.install()
+ module = importlib.import_module(args.modpath)
+ sim_object = getattr(module, sim_object_name)
+ 
++from m5.objects.SimObject import PyBindProperty
++
+ code = code_formatter()
+-sim_object.params_create_decl(code, use_python)
++
++py_class_name = sim_object.pybind_class
++
++# The 'local' attribute restricts us to the params declared in
++# the object itself, not including inherited params (which
++# will also be inherited from the base class's param struct
++# here). Sort the params based on their key
++params = list(map(lambda k_v: k_v[1],
++                  sorted(sim_object._params.local.items())))
++ports = sim_object._ports.local
++
++# only include pybind if python is enabled in the build
++if use_python:
++
++    code('''#include "pybind11/pybind11.h"
++#include "pybind11/stl.h"
++
++#include <type_traits>
++
++#include "base/compiler.hh"
++#include "params/$sim_object.hh"
++#include "sim/init.hh"
++#include "sim/sim_object.hh"
++
++#include "${{sim_object.cxx_header}}"
++
++''')
++else:
++    code('''
++#include <type_traits>
++
++#include "base/compiler.hh"
++#include "params/$sim_object.hh"
++
++#include "${{sim_object.cxx_header}}"
++
++''')
++# only include the python params code if python is enabled.
++if use_python:
++    for param in params:
++        param.pybind_predecls(code)
++
++    code('''namespace py = pybind11;
++
++namespace gem5
++{
++
++static void
++module_init(py::module_ &m_internal)
++{
++py::module_ m = m_internal.def_submodule("param_${sim_object}");
++''')
++    code.indent()
++    if sim_object._base:
++        code('py::class_<${sim_object}Params, ' \
++             '${{sim_object._base.type}}Params, ' \
++             'std::unique_ptr<${{sim_object}}Params, py::nodelete>>(' \
++             'm, "${sim_object}Params")')
++    else:
++        code('py::class_<${sim_object}Params, ' \
++            'std::unique_ptr<${sim_object}Params, py::nodelete>>(' \
++            'm, "${sim_object}Params")')
++
++    code.indent()
++    if not hasattr(sim_object, 'abstract') or not sim_object.abstract:
++        code('.def(py::init<>())')
++        code('.def("create", &${sim_object}Params::create)')
++
++    param_exports = sim_object.cxx_param_exports + [
++        PyBindProperty(k)
++        for k, v in sorted(sim_object._params.local.items())
++    ] + [
++        PyBindProperty(f"port_{port.name}_connection_count")
++        for port in ports.values()
++    ]
++    for exp in param_exports:
++        exp.export(code, f"{sim_object}Params")
++
++    code(';')
++    code()
++    code.dedent()
++
++    bases = []
++    if 'cxx_base' in sim_object._value_dict:
++        # If the c++ base class implied by python inheritance was
++        # overridden, use that value.
++        if sim_object.cxx_base:
++            bases.append(sim_object.cxx_base)
++    elif sim_object._base:
++        # If not and if there was a SimObject base, use its c++ class
++        # as this class' base.
++        bases.append(sim_object._base.cxx_class)
++    # Add in any extra bases that were requested.
++    bases.extend(sim_object.cxx_extra_bases)
++
++    if bases:
++        base_str = ", ".join(bases)
++        code('py::class_<${{sim_object.cxx_class}}, ${base_str}, ' \
++            'std::unique_ptr<${{sim_object.cxx_class}}, py::nodelete>>(' \
++            'm, "${py_class_name}")')
++    else:
++        code('py::class_<${{sim_object.cxx_class}}, ' \
++            'std::unique_ptr<${{sim_object.cxx_class}}, py::nodelete>>(' \
++            'm, "${py_class_name}")')
++    code.indent()
++    for exp in sim_object.cxx_exports:
++        exp.export(code, sim_object.cxx_class)
++    code(';')
++    code.dedent()
++    code()
++    code.dedent()
++    code('}')
++    code()
++    code('static EmbeddedPyBind '
++         'embed_obj("${0}", module_init, "${1}");',
++        sim_object, sim_object._base.type if sim_object._base else "")
++    code()
++    code('} // namespace gem5')
++
++# include the create() methods whether or not python is enabled.
++if not hasattr(sim_object, 'abstract') or not sim_object.abstract:
++    if 'type' in sim_object.__dict__:
++        code('''
++namespace gem5
++{
++
++namespace
++{
++
++/*
++ * If we can't define a default create() method for this params
++ * struct because the SimObject doesn't have the right
++ * constructor, use template magic to make it so we're actually
++ * defining a create method for this class instead.
++ */
++class Dummy${sim_object}ParamsClass
++{
++  public:
++    ${{sim_object.cxx_class}} *create() const;
++};
++
++template <class CxxClass, class Enable=void>
++class Dummy${sim_object}Shunt;
++
++/*
++ * This version directs to the real Params struct and the
++ * default behavior of create if there's an appropriate
++ * constructor.
++ */
++template <class CxxClass>
++class Dummy${sim_object}Shunt<CxxClass, std::enable_if_t<
++    std::is_constructible_v<CxxClass, const ${sim_object}Params &>>>
++{
++  public:
++    using Params = ${sim_object}Params;
++    static ${{sim_object.cxx_class}} *
++    create(const Params &p)
++    {
++        return new CxxClass(p);
++    }
++};
++
++/*
++ * This version diverts to the DummyParamsClass and a dummy
++ * implementation of create if the appropriate constructor does
++ * not exist.
++ */
++template <class CxxClass>
++class Dummy${sim_object}Shunt<CxxClass, std::enable_if_t<
++    !std::is_constructible_v<CxxClass, const ${sim_object}Params &>>>
++{
++  public:
++    using Params = Dummy${sim_object}ParamsClass;
++    static ${{sim_object.cxx_class}} *
++    create(const Params &p)
++    {
++        return nullptr;
++    }
++};
++
++} // anonymous namespace
++
++/*
++ * An implementation of either the real Params struct's create
++ * method, or the Dummy one. Either an implementation is
++ * mandantory since this was shunted off to the dummy class, or
++ * one is optional which will override this weak version.
++ */
++[[maybe_unused]] ${{sim_object.cxx_class}} *
++Dummy${sim_object}Shunt<${{sim_object.cxx_class}}>::Params::create() const
++{
++    return Dummy${sim_object}Shunt<${{sim_object.cxx_class}}>::create(*this);
++}
++
++} // namespace gem5
++''')
++
+ code.write(args.param_cc)
+diff --git a/build_tools/sim_object_param_struct_hh.py b/build_tools/sim_object_param_struct_hh.py
+index 0652ae5..ff525ee 100644
+--- a/build_tools/sim_object_param_struct_hh.py
++++ b/build_tools/sim_object_param_struct_hh.py
+@@ -1,5 +1,18 @@
++# Copyright 2004-2006 The Regents of The University of Michigan
++# Copyright 2010-20013 Advanced Micro Devices, Inc.
++# Copyright 2013 Mark D. Hill and David A. Wood
++# Copyright 2017-2020 ARM Limited
+ # Copyright 2021 Google, Inc.
+ #
++# The license below extends only to copyright in the software and shall
++# not be construed as granting a license to any other intellectual
++# property including but not limited to intellectual property relating
++# to a hardware implementation of the functionality of the software
++# licensed hereunder.  You may use the software subject to the license
++# terms below provided that you ensure that this notice is replicated
++# unmodified and in its entirety in all distributions of the software,
++# modified or unmodified, in source code or in binary form.
++#
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions are
+ # met: redistributions of source code must retain the above copyright
+@@ -45,6 +58,167 @@ importer.install()
+ module = importlib.import_module(args.modpath)
+ sim_object = getattr(module, sim_object_name)
+ 
++from m5.objects.SimObject import SimObject
++from m5.params import Enum
++
+ code = code_formatter()
+-sim_object.cxx_param_decl(code)
++
++# The 'local' attribute restricts us to the params declared in
++# the object itself, not including inherited params (which
++# will also be inherited from the base class's param struct
++# here). Sort the params based on their key
++params = list(map(lambda k_v: k_v[1],
++    sorted(sim_object._params.local.items())))
++ports = sim_object._ports.local
++try:
++    ptypes = [p.ptype for p in params]
++except:
++    print(sim_object, p, p.ptype_str)
++    print(params)
++    raise
++
++warned_about_nested_templates = False
++
++class CxxClass(object):
++    def __init__(self, sig, template_params=[]):
++        # Split the signature into its constituent parts. This could
++        # potentially be done with regular expressions, but
++        # it's simple enough to pick appart a class signature
++        # manually.
++        parts = sig.split('<', 1)
++        base = parts[0]
++        t_args = []
++        if len(parts) > 1:
++            # The signature had template arguments.
++            text = parts[1].rstrip(' \t\n>')
++            arg = ''
++            # Keep track of nesting to avoid splitting on ","s embedded
++            # in the arguments themselves.
++            depth = 0
++            for c in text:
++                if c == '<':
++                    depth = depth + 1
++                    if depth > 0 and not warned_about_nested_templates:
++                        warned_about_nested_templates = True
++                        print('Nested template argument in cxx_class.'
++                              ' This feature is largely untested and '
++                              ' may not work.')
++                elif c == '>':
++                    depth = depth - 1
++                elif c == ',' and depth == 0:
++                    t_args.append(arg.strip())
++                    arg = ''
++                else:
++                    arg = arg + c
++            if arg:
++                t_args.append(arg.strip())
++        # Split the non-template part on :: boundaries.
++        class_path = base.split('::')
++
++        # The namespaces are everything except the last part of the class path.
++        self.namespaces = class_path[:-1]
++        # And the class name is the last part.
++        self.name = class_path[-1]
++
++        self.template_params = template_params
++        self.template_arguments = []
++        # Iterate through the template arguments and their values. This
++        # will likely break if parameter packs are used.
++        for arg, param in zip(t_args, template_params):
++            type_keys = ('class', 'typename')
++            # If a parameter is a type, parse it recursively. Otherwise
++            # assume it's a constant, and store it verbatim.
++            if any(param.strip().startswith(kw) for kw in type_keys):
++                self.template_arguments.append(CxxClass(arg))
++            else:
++                self.template_arguments.append(arg)
++
++    def declare(self, code):
++        # First declare any template argument types.
++        for arg in self.template_arguments:
++            if isinstance(arg, CxxClass):
++                arg.declare(code)
++        # Re-open the target namespace.
++        for ns in self.namespaces:
++            code('namespace $ns {')
++        # If this is a class template...
++        if self.template_params:
++            code('template <${{", ".join(self.template_params)}}>')
++        # The actual class declaration.
++        code('class ${{self.name}};')
++        # Close the target namespaces.
++        for ns in reversed(self.namespaces):
++            code('} // namespace $ns')
++
++code('''\
++#ifndef __PARAMS__${sim_object}__
++#define __PARAMS__${sim_object}__
++
++''')
++
++
++# The base SimObject has a couple of params that get
++# automatically set from Python without being declared through
++# the normal Param mechanism; we slip them in here (needed
++# predecls now, actual declarations below)
++if sim_object == SimObject:
++    code('''#include <string>''')
++
++cxx_class = CxxClass(sim_object._value_dict['cxx_class'],
++                     sim_object._value_dict['cxx_template_params'])
++
++# A forward class declaration is sufficient since we are just
++# declaring a pointer.
++cxx_class.declare(code)
++
++for param in params:
++    param.cxx_predecls(code)
++for port in ports.values():
++    port.cxx_predecls(code)
++code()
++
++if sim_object._base:
++    code('#include "params/${{sim_object._base.type}}.hh"')
++    code()
++
++for ptype in ptypes:
++    if issubclass(ptype, Enum):
++        code('#include "enums/${{ptype.__name__}}.hh"')
++        code()
++
++code('namespace gem5')
++code('{')
++code('')
++
++# now generate the actual param struct
++code("struct ${sim_object}Params")
++if sim_object._base:
++    code("    : public ${{sim_object._base.type}}Params")
++code("{")
++if not hasattr(sim_object, 'abstract') or not sim_object.abstract:
++    if 'type' in sim_object.__dict__:
++        code("    ${{sim_object.cxx_type}} create() const;")
++
++code.indent()
++if sim_object == SimObject:
++    code('''
++SimObjectParams() {}
++virtual ~SimObjectParams() {}
++
++std::string name;
++    ''')
++
++for param in params:
++    param.cxx_decl(code)
++for port in ports.values():
++    port.cxx_decl(code)
++
++code.dedent()
++code('};')
++code()
++code('} // namespace gem5')
++
++code()
++code('#endif // __PARAMS__${sim_object}__')
++
+ code.write(args.param_hh)
+diff --git a/src/python/m5/SimObject.py b/src/python/m5/SimObject.py
+index b07d90f..b2ed967 100644
+--- a/src/python/m5/SimObject.py
++++ b/src/python/m5/SimObject.py
+@@ -708,360 +708,6 @@ class MetaSimObject(type):
+     def pybind_predecls(cls, code):
+         code('#include "${{cls.cxx_header}}"')
+ 
+-    def params_create_decl(cls, code, python_enabled):
+-        py_class_name = cls.pybind_class
+-
+-        # The 'local' attribute restricts us to the params declared in
+-        # the object itself, not including inherited params (which
+-        # will also be inherited from the base class's param struct
+-        # here). Sort the params based on their key
+-        params = list(map(lambda k_v: k_v[1],
+-                          sorted(cls._params.local.items())))
+-        ports = cls._ports.local
+-
+-        # only include pybind if python is enabled in the build
+-        if python_enabled:
+-
+-            code('''#include "pybind11/pybind11.h"
+-#include "pybind11/stl.h"
+-
+-#include <type_traits>
+-
+-#include "base/compiler.hh"
+-#include "params/$cls.hh"
+-#include "sim/init.hh"
+-#include "sim/sim_object.hh"
+-
+-#include "${{cls.cxx_header}}"
+-
+-''')
+-        else:
+-            code('''
+-#include <type_traits>
+-
+-#include "base/compiler.hh"
+-#include "params/$cls.hh"
+-
+-#include "${{cls.cxx_header}}"
+-
+-''')
+-        # only include the python params code if python is enabled.
+-        if python_enabled:
+-            for param in params:
+-                param.pybind_predecls(code)
+-
+-            code('''namespace py = pybind11;
+-
+-namespace gem5
+-{
+-
+-static void
+-module_init(py::module_ &m_internal)
+-{
+-    py::module_ m = m_internal.def_submodule("param_${cls}");
+-''')
+-            code.indent()
+-            if cls._base:
+-                code('py::class_<${cls}Params, ${{cls._base.type}}Params, ' \
+-                    'std::unique_ptr<${{cls}}Params, py::nodelete>>(' \
+-                    'm, "${cls}Params")')
+-            else:
+-                code('py::class_<${cls}Params, ' \
+-                    'std::unique_ptr<${cls}Params, py::nodelete>>(' \
+-                    'm, "${cls}Params")')
+-
+-            code.indent()
+-            if not hasattr(cls, 'abstract') or not cls.abstract:
+-                code('.def(py::init<>())')
+-                code('.def("create", &${cls}Params::create)')
+-
+-            param_exports = cls.cxx_param_exports + [
+-                PyBindProperty(k)
+-                for k, v in sorted(cls._params.local.items())
+-            ] + [
+-                PyBindProperty("port_%s_connection_count" % port.name)
+-                for port in ports.values()
+-            ]
+-            for exp in param_exports:
+-                exp.export(code, "%sParams" % cls)
+-
+-            code(';')
+-            code()
+-            code.dedent()
+-
+-            bases = []
+-            if 'cxx_base' in cls._value_dict:
+-                # If the c++ base class implied by python inheritance was
+-                # overridden, use that value.
+-                if cls.cxx_base:
+-                    bases.append(cls.cxx_base)
+-            elif cls._base:
+-                # If not and if there was a SimObject base, use its c++ class
+-                # as this class' base.
+-                bases.append(cls._base.cxx_class)
+-            # Add in any extra bases that were requested.
+-            bases.extend(cls.cxx_extra_bases)
+-
+-            if bases:
+-                base_str = ", ".join(bases)
+-                code('py::class_<${{cls.cxx_class}}, ${base_str}, ' \
+-                    'std::unique_ptr<${{cls.cxx_class}}, py::nodelete>>(' \
+-                    'm, "${py_class_name}")')
+-            else:
+-                code('py::class_<${{cls.cxx_class}}, ' \
+-                    'std::unique_ptr<${{cls.cxx_class}}, py::nodelete>>(' \
+-                    'm, "${py_class_name}")')
+-            code.indent()
+-            for exp in cls.cxx_exports:
+-                exp.export(code, cls.cxx_class)
+-            code(';')
+-            code.dedent()
+-            code()
+-            code.dedent()
+-            code('}')
+-            code()
+-            code('static EmbeddedPyBind '
+-                 'embed_obj("${0}", module_init, "${1}");',
+-                cls, cls._base.type if cls._base else "")
+-            code()
+-            code('} // namespace gem5')
+-
+-        # include the create() methods whether or not python is enabled.
+-        if not hasattr(cls, 'abstract') or not cls.abstract:
+-            if 'type' in cls.__dict__:
+-                code()
+-                code('namespace gem5')
+-                code('{')
+-                code()
+-                code('namespace')
+-                code('{')
+-                code()
+-                # If we can't define a default create() method for this params
+-                # struct because the SimObject doesn't have the right
+-                # constructor, use template magic to make it so we're actually
+-                # defining a create method for this class instead.
+-                code('class Dummy${cls}ParamsClass')
+-                code('{')
+-                code('  public:')
+-                code('    ${{cls.cxx_class}} *create() const;')
+-                code('};')
+-                code()
+-                code('template <class CxxClass, class Enable=void>')
+-                code('class Dummy${cls}Shunt;')
+-                code()
+-                # This version directs to the real Params struct and the
+-                # default behavior of create if there's an appropriate
+-                # constructor.
+-                code('template <class CxxClass>')
+-                code('class Dummy${cls}Shunt<CxxClass, std::enable_if_t<')
+-                code('    std::is_constructible_v<CxxClass,')
+-                code('        const ${cls}Params &>>>')
+-                code('{')
+-                code('  public:')
+-                code('    using Params = ${cls}Params;')
+-                code('    static ${{cls.cxx_class}} *')
+-                code('    create(const Params &p)')
+-                code('    {')
+-                code('        return new CxxClass(p);')
+-                code('    }')
+-                code('};')
+-                code()
+-                # This version diverts to the DummyParamsClass and a dummy
+-                # implementation of create if the appropriate constructor does
+-                # not exist.
+-                code('template <class CxxClass>')
+-                code('class Dummy${cls}Shunt<CxxClass, std::enable_if_t<')
+-                code('    !std::is_constructible_v<CxxClass,')
+-                code('        const ${cls}Params &>>>')
+-                code('{')
+-                code('  public:')
+-                code('    using Params = Dummy${cls}ParamsClass;')
+-                code('    static ${{cls.cxx_class}} *')
+-                code('    create(const Params &p)')
+-                code('    {')
+-                code('        return nullptr;')
+-                code('    }')
+-                code('};')
+-                code()
+-                code('} // anonymous namespace')
+-                code()
+-                # An implementation of either the real Params struct's create
+-                # method, or the Dummy one. Either an implementation is
+-                # mandantory since this was shunted off to the dummy class, or
+-                # one is optional which will override this weak version.
+-                code('[[maybe_unused]] ${{cls.cxx_class}} *')
+-                code('Dummy${cls}Shunt<${{cls.cxx_class}}>::Params::create() '
+-                     'const')
+-                code('{')
+-                code('    return Dummy${cls}Shunt<${{cls.cxx_class}}>::')
+-                code('        create(*this);')
+-                code('}')
+-                code()
+-                code('} // namespace gem5')
+-
+-    _warned_about_nested_templates = False
+-
+-    # Generate the C++ declaration (.hh file) for this SimObject's
+-    # param struct.  Called from src/SConscript.
+-    def cxx_param_decl(cls, code):
+-        # The 'local' attribute restricts us to the params declared in
+-        # the object itself, not including inherited params (which
+-        # will also be inherited from the base class's param struct
+-        # here). Sort the params based on their key
+-        params = list(map(lambda k_v: k_v[1], sorted(cls._params.local.items())))
+-        ports = cls._ports.local
+-        try:
+-            ptypes = [p.ptype for p in params]
+-        except:
+-            print(cls, p, p.ptype_str)
+-            print(params)
+-            raise
+-
+-        class CxxClass(object):
+-            def __init__(self, sig, template_params=[]):
+-                # Split the signature into its constituent parts. This could
+-                # potentially be done with regular expressions, but
+-                # it's simple enough to pick appart a class signature
+-                # manually.
+-                parts = sig.split('<', 1)
+-                base = parts[0]
+-                t_args = []
+-                if len(parts) > 1:
+-                    # The signature had template arguments.
+-                    text = parts[1].rstrip(' \t\n>')
+-                    arg = ''
+-                    # Keep track of nesting to avoid splitting on ","s embedded
+-                    # in the arguments themselves.
+-                    depth = 0
+-                    for c in text:
+-                        if c == '<':
+-                            depth = depth + 1
+-                            if depth > 0 and not \
+-                                    self._warned_about_nested_templates:
+-                                self._warned_about_nested_templates = True
+-                                print('Nested template argument in cxx_class.'
+-                                      ' This feature is largely untested and '
+-                                      ' may not work.')
+-                        elif c == '>':
+-                            depth = depth - 1
+-                        elif c == ',' and depth == 0:
+-                            t_args.append(arg.strip())
+-                            arg = ''
+-                        else:
+-                            arg = arg + c
+-                    if arg:
+-                        t_args.append(arg.strip())
+-                # Split the non-template part on :: boundaries.
+-                class_path = base.split('::')
+-
+-                # The namespaces are everything except the last part of the
+-                # class path.
+-                self.namespaces = class_path[:-1]
+-                # And the class name is the last part.
+-                self.name = class_path[-1]
+-
+-                self.template_params = template_params
+-                self.template_arguments = []
+-                # Iterate through the template arguments and their values. This
+-                # will likely break if parameter packs are used.
+-                for arg, param in zip(t_args, template_params):
+-                    type_keys = ('class', 'typename')
+-                    # If a parameter is a type, parse it recursively. Otherwise
+-                    # assume it's a constant, and store it verbatim.
+-                    if any(param.strip().startswith(kw) for kw in type_keys):
+-                        self.template_arguments.append(CxxClass(arg))
+-                    else:
+-                        self.template_arguments.append(arg)
+-
+-            def declare(self, code):
+-                # First declare any template argument types.
+-                for arg in self.template_arguments:
+-                    if isinstance(arg, CxxClass):
+-                        arg.declare(code)
+-                # Re-open the target namespace.
+-                for ns in self.namespaces:
+-                    code('namespace $ns {')
+-                # If this is a class template...
+-                if self.template_params:
+-                    code('template <${{", ".join(self.template_params)}}>')
+-                # The actual class declaration.
+-                code('class ${{self.name}};')
+-                # Close the target namespaces.
+-                for ns in reversed(self.namespaces):
+-                    code('} // namespace $ns')
+-
+-        code('''\
+-#ifndef __PARAMS__${cls}__
+-#define __PARAMS__${cls}__
+-
+-''')
+-
+-
+-        # The base SimObject has a couple of params that get
+-        # automatically set from Python without being declared through
+-        # the normal Param mechanism; we slip them in here (needed
+-        # predecls now, actual declarations below)
+-        if cls == SimObject:
+-            code('''#include <string>''')
+-
+-        cxx_class = CxxClass(cls._value_dict['cxx_class'],
+-                             cls._value_dict['cxx_template_params'])
+-
+-        # A forward class declaration is sufficient since we are just
+-        # declaring a pointer.
+-        cxx_class.declare(code)
+-
+-        for param in params:
+-            param.cxx_predecls(code)
+-        for port in ports.values():
+-            port.cxx_predecls(code)
+-        code()
+-
+-        if cls._base:
+-            code('#include "params/${{cls._base.type}}.hh"')
+-            code()
+-
+-        for ptype in ptypes:
+-            if issubclass(ptype, Enum):
+-                code('#include "enums/${{ptype.__name__}}.hh"')
+-                code()
+-
+-        code('namespace gem5')
+-        code('{')
+-        code('')
+-
+-        # now generate the actual param struct
+-        code("struct ${cls}Params")
+-        if cls._base:
+-            code("    : public ${{cls._base.type}}Params")
+-        code("{")
+-        if not hasattr(cls, 'abstract') or not cls.abstract:
+-            if 'type' in cls.__dict__:
+-                code("    ${{cls.cxx_type}} create() const;")
+-
+-        code.indent()
+-        if cls == SimObject:
+-            code('''
+-    SimObjectParams() {}
+-    virtual ~SimObjectParams() {}
+-
+-    std::string name;
+-            ''')
+-
+-        for param in params:
+-            param.cxx_decl(code)
+-        for port in ports.values():
+-            port.cxx_decl(code)
+-
+-        code.dedent()
+-        code('};')
+-        code()
+-        code('} // namespace gem5')
+-
+-        code()
+-        code('#endif // __PARAMS__${cls}__')
+-        return code
+-
+     # Generate the C++ declaration/definition files for this SimObject's
+     # param struct to allow C++ initialisation
+     def cxx_config_param_file(cls, code, is_header):
+-- 
+1.8.3.1
+

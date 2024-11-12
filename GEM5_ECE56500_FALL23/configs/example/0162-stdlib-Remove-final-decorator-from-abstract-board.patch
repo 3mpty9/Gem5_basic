@@ -1,0 +1,41 @@
+From 329ec5e201943f4f593667f04e591da0b7787b10 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Sun, 23 Jan 2022 22:52:27 -0800
+Subject: [PATCH 162/757] stdlib: Remove final decorator from abstract board
+
+@typing.final was not introduced until python3.8.
+
+Change-Id: I65a5f4b5655d2ad80f7b566f9cea8e2371b3be62
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55863
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/gem5/components/boards/abstract_board.py | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/python/gem5/components/boards/abstract_board.py b/src/python/gem5/components/boards/abstract_board.py
+index a27cecd..30fbfca 100644
+--- a/src/python/gem5/components/boards/abstract_board.py
++++ b/src/python/gem5/components/boards/abstract_board.py
+@@ -37,7 +37,7 @@ from m5.objects import (
+     VoltageDomain,
+ )
+ 
+-from typing import List, final
++from typing import List
+ 
+ 
+ class AbstractBoard(System):
+@@ -236,7 +236,6 @@ class AbstractBoard(System):
+         """
+         raise NotImplementedError
+ 
+-    @final
+     def _connect_things(self) -> None:
+         """Connects all the components to the board.
+ 
+-- 
+1.8.3.1
+

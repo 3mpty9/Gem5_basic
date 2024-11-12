@@ -1,0 +1,44 @@
+From c08c3fdcb23a78a09f56e84e8d4482d87334178f Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 5 Apr 2022 12:14:08 -0700
+Subject: [PATCH 523/757] tests: Skip "build/ALL/gem5.opt" build test
+
+This commit,
+https://gem5-review.googlesource.com/c/public/gem5/+/57509, added
+'constants.all_compiled_tag' to test the "build/ALL/gem5.opt" target
+once incorporated. However, the test_build.py tests automatically parse
+these tags to generate build tests. As such the nightly tests fail
+due to trying to build a target which has not yet been added to the
+project: https://jenkins.gem5.org/job/nightly/183
+
+This patch skips this build. It may be reverted once
+"build/ALL/gem5.opt" is available.
+
+Change-Id: Ib3a01113214f0715cd13ee0da4ee387efd403c8f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58609
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ tests/gem5/test_build/test_build.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tests/gem5/test_build/test_build.py b/tests/gem5/test_build/test_build.py
+index 3a6a534..715b129 100644
+--- a/tests/gem5/test_build/test_build.py
++++ b/tests/gem5/test_build/test_build.py
+@@ -32,9 +32,10 @@ import os
+ from testlib import *
+ 
+ common_isas = [constants.gcn3_x86_tag, constants.arm_tag, constants.riscv_tag]
++skipped_isas = {constants.null_tag, constants.all_compiled_tag}
+ 
+ for isa in constants.supported_isas:
+-    if isa is constants.null_tag: continue
++    if isa in skipped_isas: continue
+ 
+     for variant in constants.supported_variants:
+         if isa in common_isas:
+-- 
+1.8.3.1
+

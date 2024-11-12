@@ -1,0 +1,49 @@
+From eefe075d3b7873a381583d7da487d1117ee9eb13 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:50:28 -0700
+Subject: [PATCH 273/757] arm: Replace readVecPredReg with getReg in the tarmac
+ tracer.
+
+Change-Id: Id290b4b63ca0cf9982327e1451d12917e9d99272
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49701
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/tracers/tarmac_parser.cc    | 4 ++--
+ src/arch/arm/tracers/tarmac_record_v8.cc | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/arch/arm/tracers/tarmac_parser.cc b/src/arch/arm/tracers/tarmac_parser.cc
+index e8909a0..7abe1c2 100644
+--- a/src/arch/arm/tracers/tarmac_parser.cc
++++ b/src/arch/arm/tracers/tarmac_parser.cc
+@@ -786,8 +786,8 @@ TarmacParserRecord::TarmacParserRecordEvent::process()
+             break;
+           case REG_P:
+             {
+-                const ArmISA::VecPredRegContainer& pc =
+-                    thread->readVecPredReg(RegId(VecPredRegClass, it->index));
++                ArmISA::VecPredRegContainer pc;
++                thread->getReg(RegId(VecPredRegClass, it->index), &pc);
+                 auto pv = pc.as<uint8_t>();
+                 uint64_t p = 0;
+                 for (int i = maxVectorLength * 8; i > 0; ) {
+diff --git a/src/arch/arm/tracers/tarmac_record_v8.cc b/src/arch/arm/tracers/tarmac_record_v8.cc
+index 8dd96d1..f34a183 100644
+--- a/src/arch/arm/tracers/tarmac_record_v8.cc
++++ b/src/arch/arm/tracers/tarmac_record_v8.cc
+@@ -163,8 +163,8 @@ TarmacTracerRecordV8::TraceRegEntryV8::updatePred(
+ )
+ {
+     auto thread = tarmCtx.thread;
+-    const auto& pred_container = thread->readVecPredReg(
+-        RegId(regClass, regRelIdx));
++    ArmISA::VecPredRegContainer pred_container;
++    thread->getReg(RegId(regClass, regRelIdx), &pred_container);
+ 
+     // Predicate registers are always 1/8 the size of related vector
+     // registers. (getCurSveVecLenInBits(thread) / 8)
+-- 
+1.8.3.1
+

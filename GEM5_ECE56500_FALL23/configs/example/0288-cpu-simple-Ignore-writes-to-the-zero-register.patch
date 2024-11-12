@@ -1,0 +1,75 @@
+From aa4b6047e5caaf6c68afd76a8f79c79215511115 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 14 Aug 2021 01:28:45 -0700
+Subject: [PATCH 288/757] cpu-simple: Ignore writes to the "zero" register.
+
+Rather than constantly overwriting the "zero" register to return its
+value to zero, just ignore writes to it.
+
+We assume here that the "zero" register is a standard RegVal type
+register (ie not bigger than 64 bits) and is accessed as such.
+
+Change-Id: I06029b78103019c668647569c6037ca64a4d9c76
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49709
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/minor/exec_context.hh | 1 -
+ src/cpu/simple/base.cc        | 3 ---
+ src/cpu/simple_thread.hh      | 6 ++++++
+ 3 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/cpu/minor/exec_context.hh b/src/cpu/minor/exec_context.hh
+index 0c01793..43dad26 100644
+--- a/src/cpu/minor/exec_context.hh
++++ b/src/cpu/minor/exec_context.hh
+@@ -97,7 +97,6 @@ class ExecContext : public gem5::ExecContext
+         pcState(*inst->pc);
+         setPredicate(inst->readPredicate());
+         setMemAccPredicate(inst->readMemAccPredicate());
+-        thread.setIntReg(zeroReg, 0);
+     }
+ 
+     ~ExecContext()
+diff --git a/src/cpu/simple/base.cc b/src/cpu/simple/base.cc
+index 4cc8e1f..6db8025 100644
+--- a/src/cpu/simple/base.cc
++++ b/src/cpu/simple/base.cc
+@@ -307,9 +307,6 @@ BaseSimpleCPU::preExecute()
+     SimpleExecContext &t_info = *threadInfo[curThread];
+     SimpleThread* thread = t_info.thread;
+ 
+-    // maintain $r0 semantics
+-    thread->setIntReg(zeroReg, 0);
+-
+     // resets predicates
+     t_info.setPredicate(true);
+     t_info.setMemAccPredicate(true);
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 73c75ff..c2e620c 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -405,6 +405,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+         auto &reg_file = regFiles[reg.classValue()];
+         const auto &reg_class = reg_file.regClass;
+ 
++        if (reg.index() == reg_class.zeroReg())
++            return;
++
+         DPRINTFV(reg_class.debug(), "Setting %s register %s (%d) to %#x.\n",
+                 reg.className(), reg_class.regName(arch_reg), idx, val);
+         reg_file.reg(idx) = val;
+@@ -418,6 +421,9 @@ class SimpleThread : public ThreadState, public ThreadContext
+         auto &reg_file = regFiles[reg.classValue()];
+         const auto &reg_class = reg_file.regClass;
+ 
++        if (reg.index() == reg_class.zeroReg())
++            return;
++
+         DPRINTFV(reg_class.debug(), "Setting %s register %d to %#x.\n",
+                 reg.className(), idx, val);
+         reg_file.reg(idx) = val;
+-- 
+1.8.3.1
+

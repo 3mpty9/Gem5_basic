@@ -1,0 +1,590 @@
+From 53009f9e6976500ba47d2574e1a08d5a41e622e1 Mon Sep 17 00:00:00 2001
+From: ksco <numbksco@gmail.com>
+Date: Thu, 26 May 2022 02:57:50 +0800
+Subject: [PATCH 652/757] arch-riscv: Add Zfh extension
+
+This commit adds RISC-V Zfh 1.0 (half-precision IEEE 754 binary16 floating
+point) extension to gem5. Include the following commands:
+
+* FLH / FSH
+* FMADD.H / FMSUB.H / FNMSUB.H / FNMADD.H
+* FADD.H / FSUB.H / FMUL.H / FDIV.H
+* FSQRT.H
+* FSGNJ.H / FSGNJN.H / FSGNJX.H
+* FMIN.H / FMAX.H
+* FCVT.S.H / FCVT.H.S
+* FCVT.D.H / FCVT.H.D
+* FCVT.W.H / FCVT.H.W
+* FCVT.WU.H / FCVT.H.WU
+* FMV.X.H / FMV.H.X
+* FEQ.H / FLT.H / FLE.H
+* FCLASS.H
+* FCVT.L.H / FCVT.H.L
+* FCVT.LU.H / FCVT.H.LU
+
+Change-Id: Id7870fdfa1aa8b840706c3ba2cab8eeaf008880f
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60029
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/softfloat/SConscript       |   1 +
+ ext/softfloat/f16_classify.c   |  36 ++++++
+ ext/softfloat/softfloat.h      |   1 +
+ ext/softfloat/softfloat.mk.in  |   1 +
+ src/arch/riscv/isa/decoder.isa | 278 +++++++++++++++++++++++++++++++++++++----
+ src/arch/riscv/regs/float.hh   |  15 +++
+ 6 files changed, 310 insertions(+), 22 deletions(-)
+ create mode 100644 ext/softfloat/f16_classify.c
+
+diff --git a/ext/softfloat/SConscript b/ext/softfloat/SConscript
+index bfa2b28..689cbcf 100644
+--- a/ext/softfloat/SConscript
++++ b/ext/softfloat/SConscript
+@@ -80,6 +80,7 @@ SoftfloatFile('f128_to_ui32_r_minMag.c')
+ SoftfloatFile('f128_to_ui64.c')
+ SoftfloatFile('f128_to_ui64_r_minMag.c')
+ SoftfloatFile('f16_add.c')
++SoftfloatFile('f16_classify.c')
+ SoftfloatFile('f16_div.c')
+ SoftfloatFile('f16_eq.c')
+ SoftfloatFile('f16_eq_signaling.c')
+diff --git a/ext/softfloat/f16_classify.c b/ext/softfloat/f16_classify.c
+new file mode 100644
+index 0000000..9402ff1
+--- /dev/null
++++ b/ext/softfloat/f16_classify.c
+@@ -0,0 +1,36 @@
++
++#include <stdbool.h>
++#include <stdint.h>
++#include "platform.h"
++#include "internals.h"
++#include "specialize.h"
++#include "softfloat.h"
++
++uint_fast16_t f16_classify( float16_t a )
++{
++    union ui16_f16 uA;
++    uint_fast16_t uiA;
++
++    uA.f = a;
++    uiA = uA.ui;
++
++    uint_fast16_t infOrNaN = expF16UI( uiA ) == 0x1F;
++    uint_fast16_t subnormalOrZero = expF16UI( uiA ) == 0;
++    bool sign = signF16UI( uiA );
++    bool fracZero = fracF16UI( uiA ) == 0;
++    bool isNaN = isNaNF16UI( uiA );
++    bool isSNaN = softfloat_isSigNaNF16UI( uiA );
++
++    return
++        (  sign && infOrNaN && fracZero )          << 0 |
++        (  sign && !infOrNaN && !subnormalOrZero ) << 1 |
++        (  sign && subnormalOrZero && !fracZero )  << 2 |
++        (  sign && subnormalOrZero && fracZero )   << 3 |
++        ( !sign && infOrNaN && fracZero )          << 7 |
++        ( !sign && !infOrNaN && !subnormalOrZero ) << 6 |
++        ( !sign && subnormalOrZero && !fracZero )  << 5 |
++        ( !sign && subnormalOrZero && fracZero )   << 4 |
++        ( isNaN &&  isSNaN )                       << 8 |
++        ( isNaN && !isSNaN )                       << 9;
++}
++
+diff --git a/ext/softfloat/softfloat.h b/ext/softfloat/softfloat.h
+index 71592ae..41cacbc 100644
+--- a/ext/softfloat/softfloat.h
++++ b/ext/softfloat/softfloat.h
+@@ -173,6 +173,7 @@ bool f16_eq_signaling( float16_t, float16_t );
+ bool f16_le_quiet( float16_t, float16_t );
+ bool f16_lt_quiet( float16_t, float16_t );
+ bool f16_isSignalingNaN( float16_t );
++uint_fast16_t f16_classify( float16_t );
+ 
+ /*----------------------------------------------------------------------------
+ | 32-bit (single-precision) floating-point operations.
+diff --git a/ext/softfloat/softfloat.mk.in b/ext/softfloat/softfloat.mk.in
+index 77c1357..7cfe960 100644
+--- a/ext/softfloat/softfloat.mk.in
++++ b/ext/softfloat/softfloat.mk.in
+@@ -37,6 +37,7 @@ softfloat_c_srcs = \
+ 	f128_to_ui64.c \
+ 	f128_to_ui64_r_minMag.c \
+ 	f16_add.c \
++	f16_classify.c \
+ 	f16_div.c \
+ 	f16_eq.c \
+ 	f16_eq_signaling.c \
+diff --git a/src/arch/riscv/isa/decoder.isa b/src/arch/riscv/isa/decoder.isa
+index a88ca8c..6cd7d95 100644
+--- a/src/arch/riscv/isa/decoder.isa
++++ b/src/arch/riscv/isa/decoder.isa
+@@ -400,6 +400,15 @@ decode QUADRANT default Unknown::unknown() {
+ 
+         0x01: decode FUNCT3 {
+             format Load {
++                0x1: flh({{
++                    STATUS status = xc->readMiscReg(MISCREG_STATUS);
++                    if (status.fs == FPUStatus::OFF)
++                        return std::make_shared<IllegalInstFault>(
++                                    "FPU is off", machInst);
++                    freg_t fd;
++                    fd = freg(f16(Mem_uh));
++                    Fd_bits = fd.v;
++                }}, inst_flags=FloatMemReadOp);
+                 0x2: flw({{
+                     STATUS status = xc->readMiscReg(MISCREG_STATUS);
+                     if (status.fs == FPUStatus::OFF)
+@@ -588,6 +597,14 @@ decode QUADRANT default Unknown::unknown() {
+ 
+         0x09: decode FUNCT3 {
+             format Store {
++                0x1: fsh({{
++                    STATUS status = xc->readMiscReg(MISCREG_STATUS);
++                    if (status.fs == FPUStatus::OFF)
++                        return std::make_shared<IllegalInstFault>(
++                                "FPU is off", machInst);
++
++                    Mem_uh = (uint16_t)Fs2_bits;
++                }}, inst_flags=FloatMemWriteOp);
+                 0x2: fsw({{
+                     STATUS status = xc->readMiscReg(MISCREG_STATUS);
+                     if (status.fs == FPUStatus::OFF)
+@@ -1094,6 +1111,14 @@ decode QUADRANT default Unknown::unknown() {
+                                          f64(freg(Fs3_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatMultAccOp);
++                0x2: fmadd_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_mulAdd(f16(freg(Fs1_bits)),
++                                         f16(freg(Fs2_bits)),
++                                         f16(freg(Fs3_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatMultAccOp);
+             }
+             0x11: decode FUNCT2 {
+                 0x0: fmsub_s({{
+@@ -1114,6 +1139,15 @@ decode QUADRANT default Unknown::unknown() {
+                                         mask(63, 63))));
+                     Fd_bits = fd.v;
+                 }}, FloatMultAccOp);
++                0x2: fmsub_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_mulAdd(f16(freg(Fs1_bits)),
++                                    f16(freg(Fs2_bits)),
++                                    f16(f16(freg(Fs3_bits)).v ^
++                                        mask(15, 15))));
++                    Fd_bits = fd.v;
++                }}, FloatMultAccOp);
+             }
+             0x12: decode FUNCT2 {
+                 0x0: fnmsub_s({{
+@@ -1134,6 +1168,15 @@ decode QUADRANT default Unknown::unknown() {
+                                          f64(freg(Fs3_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatMultAccOp);
++                0x2: fnmsub_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_mulAdd(f16(f16(freg(Fs1_bits)).v ^
++                                             mask(15, 15)),
++                                         f16(freg(Fs2_bits)),
++                                         f16(freg(Fs3_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatMultAccOp);
+             }
+             0x13: decode FUNCT2 {
+                 0x0: fnmadd_s({{
+@@ -1156,6 +1199,16 @@ decode QUADRANT default Unknown::unknown() {
+                                         mask(63, 63))));
+                     Fd_bits = fd.v;
+                 }}, FloatMultAccOp);
++                0x2: fnmadd_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_mulAdd(f16(f16(freg(Fs1_bits)).v ^
++                                             mask(15, 15)),
++                                    f16(freg(Fs2_bits)),
++                                    f16(f16(freg(Fs3_bits)).v ^
++                                        mask(15, 15))));
++                    Fd_bits = fd.v;
++                }}, FloatMultAccOp);
+             }
+             0x14: decode FUNCT7 {
+                 0x0: fadd_s({{
+@@ -1172,6 +1225,13 @@ decode QUADRANT default Unknown::unknown() {
+                                       f64(freg(Fs2_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatAddOp);
++                0x2: fadd_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_add(f16(freg(Fs1_bits)),
++                                      f16(freg(Fs2_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatAddOp);
+                 0x4: fsub_s({{
+                     RM_REQUIRED;
+                     freg_t fd;
+@@ -1186,6 +1246,13 @@ decode QUADRANT default Unknown::unknown() {
+                                       f64(freg(Fs2_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatAddOp);
++                0x6: fsub_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_sub(f16(freg(Fs1_bits)),
++                                      f16(freg(Fs2_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatAddOp);
+                 0x8: fmul_s({{
+                     RM_REQUIRED;
+                     freg_t fd;
+@@ -1200,6 +1267,13 @@ decode QUADRANT default Unknown::unknown() {
+                                       f64(freg(Fs2_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatMultOp);
++                0xa: fmul_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_mul(f16(freg(Fs1_bits)),
++                                      f16(freg(Fs2_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatMultOp);
+                 0xc: fdiv_s({{
+                     RM_REQUIRED;
+                     freg_t fd;
+@@ -1214,6 +1288,13 @@ decode QUADRANT default Unknown::unknown() {
+                                       f64(freg(Fs2_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatDivOp);
++                0xe: fdiv_h({{
++                    RM_REQUIRED;
++                    freg_t fd;
++                    fd = freg(f16_div(f16(freg(Fs1_bits)),
++                                      f16(freg(Fs2_bits))));
++                    Fd_bits = fd.v;
++                }}, FloatDivOp);
+                 0x10: decode ROUND_MODE {
+                     0x0: fsgnj_s({{
+                         auto sign = bits(unboxF32(Fs2_bits), 31);
+@@ -1244,6 +1325,24 @@ decode QUADRANT default Unknown::unknown() {
+                                 Fs1_bits ^ Fs2_bits, 62, 0, Fs1_bits);
+                     }}, FloatMiscOp);
+                 }
++                0x12: decode ROUND_MODE {
++                    0x0: fsgnj_h({{
++                        auto sign = bits(unboxF16(Fs2_bits), 15);
++                        Fd_bits = boxF16(insertBits(unboxF16(Fs1_bits), 15,
++                                                    sign));
++                        }}, FloatMiscOp);
++                    0x1: fsgnjn_h({{
++                        auto sign = ~bits(unboxF16(Fs2_bits), 15);
++                        Fd_bits = boxF16(insertBits(unboxF16(Fs1_bits), 15,
++                                                    sign));
++                        }}, FloatMiscOp);
++                    0x2: fsgnjx_h({{
++                        auto sign = bits(
++                            unboxF16(Fs1_bits) ^ unboxF16(Fs2_bits), 15);
++                        Fd_bits = boxF16(insertBits(unboxF16(Fs1_bits), 15,
++                                                    sign));
++                        }}, FloatMiscOp);
++                }
+                 0x14: decode ROUND_MODE {
+                     0x0: fmin_s({{
+                         bool less = f32_lt_quiet(f32(freg(Fs1_bits)),
+@@ -1305,44 +1404,106 @@ decode QUADRANT default Unknown::unknown() {
+                             Fd_bits = f64(defaultNaNF64UI).v;
+                     }}, FloatCmpOp);
+                 }
+-                0x20: fcvt_s_d({{
+-                    if (CONV_SGN != 1) {
++                0x16: decode ROUND_MODE {
++                    0x0: fmin_h({{
++                        bool less = f16_lt_quiet(f16(freg(Fs1_bits)),
++                            f16(freg(Fs2_bits))) ||
++                            (f16_eq(f16(freg(Fs1_bits)),
++                            f16(freg(Fs2_bits))) &&
++                            bits(f16(freg(Fs1_bits)).v, 15));
++
++                        Fd_bits = less ||
++                            isNaNF16UI(f16(freg(Fs2_bits)).v) ?
++                            freg(Fs1_bits).v : freg(Fs2_bits).v;
++                        if (isNaNF16UI(f16(freg(Fs1_bits)).v) &&
++                            isNaNF16UI(f16(freg(Fs2_bits)).v))
++                            Fd_bits = f16(defaultNaNF16UI).v;
++                        }}, FloatCmpOp);
++                    0x1: fmax_h({{
++                        bool greater = f16_lt_quiet(f16(freg(Fs2_bits)),
++                            f16(freg(Fs1_bits))) ||
++                            (f16_eq(f16(freg(Fs2_bits)),
++                            f16(freg(Fs1_bits))) &&
++                            bits(f16(freg(Fs2_bits)).v, 15));
++
++                        Fd_bits = greater ||
++                            isNaNF16UI(f16(freg(Fs2_bits)).v) ?
++                            freg(Fs1_bits).v : freg(Fs2_bits).v;
++                        if (isNaNF16UI(f16(freg(Fs1_bits)).v) &&
++                            isNaNF16UI(f16(freg(Fs2_bits)).v))
++                            Fd_bits = f16(defaultNaNF16UI).v;
++                        }}, FloatCmpOp);
++                }
++                0x20: decode CONV_SGN {
++                    0x1: fcvt_s_d({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f64_to_f32(f64(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                    0x2: fcvt_s_h({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f16_to_f32(f16(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                }
++                0x21: decode CONV_SGN {
++                    0x0: fcvt_d_s({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f32_to_f64(f32(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                    0x2: fcvt_d_h({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f16_to_f64(f16(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                }
++                0x22: decode CONV_SGN {
++                    0x0: fcvt_h_s({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f32_to_f16(f32(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                    0x1: fcvt_h_d({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(f64_to_f16(f64(freg(Fs1_bits))));
++                        Fd_bits = fd.v;
++                    }}, FloatCvtOp);
++                }
++                0x2c: fsqrt_s({{
++                    if (RS2 != 0) {
+                         return std::make_shared<IllegalInstFault>(
+-                                "CONV_SGN != 1", machInst);
++                                "source reg x1", machInst);
+                     }
+-                    RM_REQUIRED;
+                     freg_t fd;
+-                    fd = freg(f64_to_f32(f64(freg(Fs1_bits))));
+-                    Fd_bits = fd.v;
+-                }}, FloatCvtOp);
+-                0x21: fcvt_d_s({{
+-                    if (CONV_SGN != 0) {
+-                        return std::make_shared<IllegalInstFault>(
+-                                "CONV_SGN != 0", machInst);
+-                    }
+                     RM_REQUIRED;
+-                    freg_t fd;
+-                    fd = freg(f32_to_f64(f32(freg(Fs1_bits))));
++                    fd = freg(f32_sqrt(f32(freg(Fs1_bits))));
+                     Fd_bits = fd.v;
+-                }}, FloatCvtOp);
+-                0x2c: fsqrt_s({{
++                }}, FloatSqrtOp);
++                0x2d: fsqrt_d({{
+                     if (RS2 != 0) {
+                         return std::make_shared<IllegalInstFault>(
+                                 "source reg x1", machInst);
+                     }
+                     freg_t fd;
+                     RM_REQUIRED;
+-                    fd = freg(f32_sqrt(f32(freg(Fs1_bits))));
++                    fd = freg(f64_sqrt(f64(freg(Fs1_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatSqrtOp);
+-                0x2d: fsqrt_d({{
++                0x2e: fsqrt_h({{
+                     if (RS2 != 0) {
+                         return std::make_shared<IllegalInstFault>(
+                                 "source reg x1", machInst);
+                     }
+                     freg_t fd;
+                     RM_REQUIRED;
+-                    fd = freg(f64_sqrt(f64(freg(Fs1_bits))));
++                    fd = freg(f16_sqrt(f16(freg(Fs1_bits))));
+                     Fd_bits = fd.v;
+                 }}, FloatSqrtOp);
+                 0x50: decode ROUND_MODE {
+@@ -1367,6 +1528,17 @@ decode QUADRANT default Unknown::unknown() {
+                         Rd = f64_eq(f64(freg(Fs1_bits)), f64(freg(Fs2_bits)));
+                     }}, FloatCmpOp);
+                 }
++                0x52: decode ROUND_MODE {
++                    0x0: fle_h({{
++                        Rd = f16_le(f16(freg(Fs1_bits)), f16(freg(Fs2_bits)));
++                    }}, FloatCmpOp);
++                    0x1: flt_h({{
++                        Rd = f16_lt(f16(freg(Fs1_bits)), f16(freg(Fs2_bits)));
++                    }}, FloatCmpOp);
++                    0x2: feq_h({{
++                        Rd = f16_eq(f16(freg(Fs1_bits)), f16(freg(Fs2_bits)));
++                    }}, FloatCmpOp);
++                }
+                 0x60: decode CONV_SGN {
+                     0x0: fcvt_w_s({{
+                         RM_REQUIRED;
+@@ -1407,6 +1579,26 @@ decode QUADRANT default Unknown::unknown() {
+                         Rd = f64_to_ui64(f64(freg(Fs1_bits)), rm, true);
+                     }}, FloatCvtOp);
+                 }
++                0x62: decode CONV_SGN {
++                    0x0: fcvt_w_h({{
++                        RM_REQUIRED;
++                        Rd_sd = sext<32>(f16_to_i32(f16(freg(Fs1_bits)), rm,
++                                                    true));
++                    }}, FloatCvtOp);
++                    0x1: fcvt_wu_h({{
++                        RM_REQUIRED;
++                        Rd = sext<32>(f16_to_ui32(f16(freg(Fs1_bits)), rm,
++                                                  true));
++                    }}, FloatCvtOp);
++                    0x2: fcvt_l_h({{
++                        RM_REQUIRED;
++                        Rd_sd = f16_to_i64(f16(freg(Fs1_bits)), rm, true);
++                    }}, FloatCvtOp);
++                    0x3: fcvt_lu_h({{
++                        RM_REQUIRED;
++                        Rd = f16_to_ui64(f16(freg(Fs1_bits)), rm, true);
++                    }}, FloatCvtOp);
++                }
+                 0x68: decode CONV_SGN {
+                     0x0: fcvt_s_w({{
+                         RM_REQUIRED;
+@@ -1417,7 +1609,7 @@ decode QUADRANT default Unknown::unknown() {
+                     0x1: fcvt_s_wu({{
+                         RM_REQUIRED;
+                         freg_t fd;
+-                        fd = freg(ui32_to_f32((int32_t)Rs1_uw));
++                        fd = freg(ui32_to_f32((uint32_t)Rs1_uw));
+                         Fd_bits = fd.v;
+                         }}, FloatCvtOp);
+                     0x2: fcvt_s_l({{
+@@ -1451,8 +1643,34 @@ decode QUADRANT default Unknown::unknown() {
+                         Fd = (double)Rs1;
+                     }}, FloatCvtOp);
+                 }
++                0x6a: decode CONV_SGN {
++                    0x0: fcvt_h_w({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(i32_to_f16((int32_t)Rs1_sw));
++                        Fd_bits = fd.v;
++                        }}, FloatCvtOp);
++                    0x1: fcvt_h_wu({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(ui32_to_f16((uint32_t)Rs1_uw));
++                        Fd_bits = fd.v;
++                        }}, FloatCvtOp);
++                    0x2: fcvt_h_l({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(i64_to_f16(Rs1_ud));
++                        Fd_bits = fd.v;
++                        }}, FloatCvtOp);
++                    0x3: fcvt_h_lu({{
++                        RM_REQUIRED;
++                        freg_t fd;
++                        fd = freg(ui64_to_f16(Rs1));
++                        Fd_bits = fd.v;
++                        }}, FloatCvtOp);
++                }
+                 0x70: decode ROUND_MODE {
+-                    0x0: fmv_x_s({{
++                    0x0: fmv_x_w({{
+                         Rd = (uint32_t)Fs1_bits;
+                         if ((Rd&0x80000000) != 0) {
+                             Rd |= (0xFFFFFFFFULL << 32);
+@@ -1470,7 +1688,18 @@ decode QUADRANT default Unknown::unknown() {
+                         Rd = f64_classify(f64(freg(Fs1_bits)));
+                     }}, FloatMiscOp);
+                 }
+-                0x78: fmv_s_x({{
++                0x72: decode ROUND_MODE {
++                    0x0: fmv_x_h({{
++                        Rd = (uint16_t)Fs1_bits;
++                        if ((Rd&0x8000) != 0) {
++                            Rd |= (0xFFFFFFFFFFFFULL << 16);
++                        }
++                    }}, FloatCvtOp);
++                    0x1: fclass_h({{
++                        Rd = f16_classify(f16(freg(Fs1_bits)));
++                    }}, FloatMiscOp);
++                }
++                0x78: fmv_w_x({{
+                     freg_t fd;
+                     fd = freg(f32(Rs1_uw));
+                     Fd_bits = fd.v;
+@@ -1480,6 +1709,11 @@ decode QUADRANT default Unknown::unknown() {
+                     fd = freg(f64(Rs1));
+                     Fd_bits = fd.v;
+                 }}, FloatCvtOp);
++                0x7a: fmv_h_x({{
++                    freg_t fd;
++                    fd = freg(f16(Rs1_uh));
++                    Fd_bits = fd.v;
++                }}, FloatCvtOp);
+             }
+         }
+ 
+diff --git a/src/arch/riscv/regs/float.hh b/src/arch/riscv/regs/float.hh
+index 37b94e2..78b4ca3 100644
+--- a/src/arch/riscv/regs/float.hh
++++ b/src/arch/riscv/regs/float.hh
+@@ -66,6 +66,17 @@ namespace RiscvISA
+ // Generic floating point value type.
+ using freg_t = float64_t;
+ 
++// Extract a 16 bit float packed into a 64 bit value.
++static constexpr uint16_t
++unboxF16(uint64_t v)
++{
++    // The upper 48 bits should all be ones.
++    if (bits(v, 63, 16) == mask(48))
++        return bits(v, 15, 0);
++    else
++        return defaultNaNF16UI;
++}
++
+ // Extract a 32 bit float packed into a 64 bit value.
+ static constexpr uint32_t
+ unboxF32(uint64_t v)
+@@ -77,15 +88,19 @@ unboxF32(uint64_t v)
+         return defaultNaNF32UI;
+ }
+ 
++static constexpr uint64_t boxF16(uint16_t v) { return mask(63, 16) | v; }
+ static constexpr uint64_t boxF32(uint32_t v) { return mask(63, 32) | v; }
+ 
+ // Create fixed size floats from raw bytes or generic floating point values.
++static constexpr float16_t f16(uint16_t v) { return {v}; }
+ static constexpr float32_t f32(uint32_t v) { return {v}; }
+ static constexpr float64_t f64(uint64_t v) { return {v}; }
++static constexpr float16_t f16(freg_t r) { return {unboxF16(r.v)}; }
+ static constexpr float32_t f32(freg_t r) { return {unboxF32(r.v)}; }
+ static constexpr float64_t f64(freg_t r) { return r; }
+ 
+ // Create generic floating point values from fixed size floats.
++static constexpr freg_t freg(float16_t f) { return {boxF16(f.v)}; }
+ static constexpr freg_t freg(float32_t f) { return {boxF32(f.v)}; }
+ static constexpr freg_t freg(float64_t f) { return f; }
+ static constexpr freg_t freg(uint_fast16_t f) { return {f}; }
+-- 
+1.8.3.1
+

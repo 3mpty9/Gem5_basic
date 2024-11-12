@@ -1,0 +1,86 @@
+From 092d33f3f5970f2e971b2936f8ff4135673903ae Mon Sep 17 00:00:00 2001
+From: Daecheol You <daecheol.you@samsung.com>
+Date: Wed, 9 Feb 2022 18:41:22 +0900
+Subject: [PATCH 303/757] configs: Modify createAddrRanges to support NUMA
+ configuration
+
+When system is configured for NUMA, it has multiple memory ranges,
+and each memory range is mapped to a corresponding NUMA node.
+For this, the change enables createAddrRanges to map address ranges to
+only a given HNFs.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1187
+
+Change-Id: If4a8f3ba9aac9f74125970f63410883d2ad32f01
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56610
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/ruby/CHI.py        |  3 ++-
+ configs/ruby/CHI_config.py | 14 ++++++--------
+ 2 files changed, 8 insertions(+), 9 deletions(-)
+
+diff --git a/configs/ruby/CHI.py b/configs/ruby/CHI.py
+index e4a2477..3fe8b26 100644
+--- a/configs/ruby/CHI.py
++++ b/configs/ruby/CHI.py
+@@ -156,8 +156,9 @@ def create_system(options, full_system, system, dma_ports, bootmem,
+     for m in other_memories:
+         sysranges.append(m.range)
+ 
++    hnf_list = [i for i in range(options.num_l3caches)]
+     CHI_HNF.createAddrRanges(sysranges, system.cache_line_size.value,
+-                             options.num_l3caches)
++                             hnf_list)
+     ruby_system.hnf = [ CHI_HNF(i, ruby_system, HNFCache, None)
+                         for i in range(options.num_l3caches) ]
+ 
+diff --git a/configs/ruby/CHI_config.py b/configs/ruby/CHI_config.py
+index 097f367..b596efa 100644
+--- a/configs/ruby/CHI_config.py
++++ b/configs/ruby/CHI_config.py
+@@ -486,15 +486,14 @@ class CHI_HNF(CHI_Node):
+         '''HNFs may also define the 'pairing' parameter to allow pairing'''
+         pairing = None
+ 
+-    _addr_ranges = []
++    _addr_ranges = {}
+     @classmethod
+-    def createAddrRanges(cls, sys_mem_ranges, cache_line_size, num_hnfs):
++    def createAddrRanges(cls, sys_mem_ranges, cache_line_size, hnfs):
+         # Create the HNFs interleaved addr ranges
+         block_size_bits = int(math.log(cache_line_size, 2))
+-        cls._addr_ranges = []
+-        llc_bits = int(math.log(num_hnfs, 2))
++        llc_bits = int(math.log(len(hnfs), 2))
+         numa_bit = block_size_bits + llc_bits - 1
+-        for i in range(num_hnfs):
++        for i, hnf in enumerate(hnfs):
+             ranges = []
+             for r in sys_mem_ranges:
+                 addr_range = AddrRange(r.start, size = r.size(),
+@@ -502,7 +501,7 @@ class CHI_HNF(CHI_Node):
+                                         intlvBits = llc_bits,
+                                         intlvMatch = i)
+                 ranges.append(addr_range)
+-            cls._addr_ranges.append((ranges, numa_bit, i))
++            cls._addr_ranges[hnf] = (ranges, numa_bit)
+ 
+     @classmethod
+     def getAddrRanges(cls, hnf_idx):
+@@ -514,10 +513,9 @@ class CHI_HNF(CHI_Node):
+     def __init__(self, hnf_idx, ruby_system, llcache_type, parent):
+         super(CHI_HNF, self).__init__(ruby_system)
+ 
+-        addr_ranges,intlvHighBit,intlvMatch = self.getAddrRanges(hnf_idx)
++        addr_ranges,intlvHighBit = self.getAddrRanges(hnf_idx)
+         # All ranges should have the same interleaving
+         assert(len(addr_ranges) >= 1)
+-        assert(intlvMatch == hnf_idx)
+ 
+         ll_cache = llcache_type(start_index_bit = intlvHighBit + 1)
+         self._cntrl = CHI_HNFController(ruby_system, ll_cache, NULL,
+-- 
+1.8.3.1
+

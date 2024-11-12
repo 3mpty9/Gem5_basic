@@ -1,0 +1,112 @@
+From ddfee1021830221bb86ef52537dc6966a7d31a4f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 21 Jan 2022 18:59:31 -0800
+Subject: [PATCH 369/757] arch-x86,dev: Use default initializers in the I8259.
+
+There were several uninitialized members in the I8259 class. Set default
+initializers for everything, instead of relying on the constructor which
+might miss something which isn't immediately obvious.
+
+Change-Id: Ifaf99e81fd64bbf28fc9ed6cd3de54c445435fa1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55697
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/i8259.cc | 11 ++---------
+ src/dev/x86/i8259.hh | 28 ++++++++++++++--------------
+ 2 files changed, 16 insertions(+), 23 deletions(-)
+
+diff --git a/src/dev/x86/i8259.cc b/src/dev/x86/i8259.cc
+index c78e129..9596eee 100644
+--- a/src/dev/x86/i8259.cc
++++ b/src/dev/x86/i8259.cc
+@@ -39,12 +39,8 @@
+ namespace gem5
+ {
+ 
+-X86ISA::I8259::I8259(const Params &p)
+-    : BasicPioDevice(p, 2),
+-      latency(p.pio_latency),
+-      mode(p.mode), slave(p.slave),
+-      IRR(0), ISR(0), IMR(0),
+-      readIRR(true), initControlWord(0), autoEOI(false)
++X86ISA::I8259::I8259(const Params &p) : BasicPioDevice(p, 2),
++      latency(p.pio_latency), mode(p.mode), slave(p.slave)
+ {
+     for (int i = 0; i < p.port_output_connection_count; i++) {
+         output.push_back(new IntSourcePin<I8259>(
+@@ -58,9 +54,6 @@ X86ISA::I8259::I8259(const Params &p)
+         inputs.push_back(new IntSinkPin<I8259>(
+                     csprintf("%s.inputs[%d]", name(), i), i, this));
+     }
+-
+-    for (bool &state: pinStates)
+-        state = false;
+ }
+ 
+ AddrRangeList
+diff --git a/src/dev/x86/i8259.hh b/src/dev/x86/i8259.hh
+index afd4894..485664d 100644
+--- a/src/dev/x86/i8259.hh
++++ b/src/dev/x86/i8259.hh
+@@ -43,8 +43,8 @@ namespace X86ISA
+ class I8259 : public BasicPioDevice
+ {
+   protected:
+-    static const int NumLines = 8;
+-    bool pinStates[NumLines];
++    static const inline int NumLines = 8;
++    bool pinStates[NumLines] = {};
+ 
+     void init() override;
+ 
+@@ -52,33 +52,33 @@ class I8259 : public BasicPioDevice
+     std::vector<IntSourcePin<I8259> *> output;
+     std::vector<IntSinkPin<I8259> *> inputs;
+     enums::X86I8259CascadeMode mode;
+-    I8259 *slave;
++    I8259 *slave = nullptr;
+ 
+     // Interrupt Request Register
+-    uint8_t IRR;
++    uint8_t IRR = 0;
+     // In Service Register
+-    uint8_t ISR;
++    uint8_t ISR = 0;
+     // Interrupt Mask Register
+-    uint8_t IMR;
++    uint8_t IMR = 0;
+ 
+     // The higher order bits of the vector to return
+-    uint8_t vectorOffset;
++    uint8_t vectorOffset = 0;
+ 
+-    bool cascadeMode;
++    bool cascadeMode = false;
+     // A bit vector of lines with responders attached, or the
+     // responder id, depending
+     // on if this is a requestor or responder PIC.
+-    uint8_t cascadeBits;
++    uint8_t cascadeBits = 0;
+ 
+-    bool edgeTriggered;
+-    bool readIRR;
++    bool edgeTriggered = true;
++    bool readIRR = true;
+ 
+     // State machine information for reading in initialization control words.
+-    bool expectICW4;
+-    int initControlWord;
++    bool expectICW4 = false;
++    int initControlWord = 0;
+ 
+     // Whether or not the PIC is in auto EOI mode.
+-    bool autoEOI;
++    bool autoEOI = false;
+ 
+     void requestInterrupt(int line);
+     void handleEOI(int line);
+-- 
+1.8.3.1
+

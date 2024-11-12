@@ -1,0 +1,56 @@
+From e5187e279a0c29762d3a266c59690f603690e328 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 23 Nov 2021 04:09:46 -0800
+Subject: [PATCH 099/757] tests: Decrease the iterations of the checkpoint test
+ to 3.
+
+Currently, the test in realview64-simple-atomic-checkpoint.py runs the
+default number of checkpoint cycles which is 5. Each of these cycles
+takes a long time to run (approximately 5 minutes) which makes this test
+take a long time to run to completion. We would get almost all of the
+benefit of this test in a fraction of the time if we reduce the number
+of iterations down to 3. This still has enough iterations to catch bugs
+which would happen in one, a different class of bugs which happen when
+checkpointing more than once, and even a third iteration for safety.
+Because this test is one of the (if not the) most time consuming test in
+the quick tests, reducing its length will significantly improve turn
+around time when running all those tests.
+
+That is especially valuable when running the tests multiple times to try
+to iterate on a bug, or when sweeping through a series of changes trying
+to identify the source of breakages. In cases where we might need to
+identify failures which don't effect the end product of a series, ie where
+a problem is introduced and then coincidentally fixed in a later change,
+this is especially important since every individual change needs to be
+checked, not just log(n) of the changes like in a binary search.
+
+Ideally in the future we will also try to figure out why taking and
+restoring from checkpoints takes so long so that each iteration of this
+test is substantially less expensive. If we do that, we could consider
+increasing the iteration count again.
+
+Change-Id: Icfa2a391a4a7457d893f2063fab231d22e572deb
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53123
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ tests/gem5/configs/realview64-simple-atomic-checkpoint.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/gem5/configs/realview64-simple-atomic-checkpoint.py b/tests/gem5/configs/realview64-simple-atomic-checkpoint.py
+index 2a3ee7a..37dcbc6 100644
+--- a/tests/gem5/configs/realview64-simple-atomic-checkpoint.py
++++ b/tests/gem5/configs/realview64-simple-atomic-checkpoint.py
+@@ -43,5 +43,5 @@ root = LinuxArmFSSystemUniprocessor(mem_mode='atomic',
+                                     mem_class=SimpleMemory,
+                                     cpu_class=AtomicSimpleCPU).create_root()
+ 
+-run_test = functools.partial(checkpoint.run_test, interval=0.2)
+-
++run_test = functools.partial(checkpoint.run_test, interval=0.2,
++                             max_checkpoints=3)
+-- 
+1.8.3.1
+

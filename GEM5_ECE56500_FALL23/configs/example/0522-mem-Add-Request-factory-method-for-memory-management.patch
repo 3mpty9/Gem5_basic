@@ -1,0 +1,50 @@
+From 574782229254b737bb42259a41f16d8174a9e3a5 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 24 Mar 2022 13:20:21 +0000
+Subject: [PATCH 522/757] mem: Add Request factory method for memory management
+ command
+
+This should be used to construct memory management Requests
+(Not requiring an address nor a size)
+
+Change-Id: Id1b6f1032c1390210a216cd77c7dd0cec14e962f
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58357
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 9f02c53..3d097a4 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -523,6 +523,22 @@ class Request
+     ~Request() {}
+ 
+     /**
++     * Factory method for creating memory management requests, with
++     * unspecified addr and size.
++     */
++    static RequestPtr
++    createMemManagement(Flags flags, RequestorID id)
++    {
++        auto mgmt_req = std::make_shared<Request>();
++        mgmt_req->_flags.set(flags);
++        mgmt_req->_requestorId = id;
++        mgmt_req->_time = curTick();
++
++        assert(mgmt_req->isMemMgmt());
++        return mgmt_req;
++    }
++
++    /**
+      * Set up Context numbers.
+      */
+     void
+-- 
+1.8.3.1
+

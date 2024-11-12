@@ -1,0 +1,35 @@
+From 373cc39a92f852d0127854aef704cd511beb770c Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Thu, 2 Jun 2022 23:40:33 +0000
+Subject: [PATCH 682/757] arch-arm: Improve error message when KVM failed to be
+ initialized
+
+Change-Id: If7f87cbd6c4e01134b17875e7c69f6147a5ed1f6
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60312
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+---
+ src/arch/arm/kvm/base_cpu.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/arm/kvm/base_cpu.cc b/src/arch/arm/kvm/base_cpu.cc
+index 1c4dd16..d5c76aa 100644
+--- a/src/arch/arm/kvm/base_cpu.cc
++++ b/src/arch/arm/kvm/base_cpu.cc
+@@ -220,7 +220,8 @@ void
+ BaseArmKvmCPU::kvmArmVCpuInit(const struct kvm_vcpu_init &init)
+ {
+     if (ioctl(KVM_ARM_VCPU_INIT, (void *)&init) == -1)
+-        panic("KVM: Failed to initialize vCPU\n");
++        panic("KVM: Failed to initialize vCPU; errno %d (%s)\n",
++            errno, strerror(errno));
+ }
+ 
+ bool
+-- 
+1.8.3.1
+

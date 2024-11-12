@@ -1,0 +1,48 @@
+From c8518e486d08efd1f69702d2c3d8a22e46e2bdae Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 4 Nov 2021 10:06:44 -0500
+Subject: [PATCH 475/757] dev-amdgpu: Always mark interrupts enabled
+
+The driver will check this bit is set after initializing IPs. Currently
+the MMIO trace will cause this bit to be set at the correct time,
+however this is not portable access different ROCm versions. Therefore
+we modify the value to always set the bit indicating interrupts are
+enabled.
+
+Change-Id: Iae0baf1936720fbe9835ae4acadbf1b3bdc52896
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57530
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/amdgpu_device.cc | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 442e417..2badb6b 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -212,6 +212,20 @@ AMDGPUDevice::readMMIO(PacketPtr pkt, Addr offset)
+     mmioReader.readFromTrace(pkt, MMIO_BAR, offset);
+ 
+     switch (aperture) {
++      case NBIO_BASE:
++        switch (aperture_offset) {
++          // This is a PCIe status register. At some point during driver init
++          // the driver checks that interrupts are enabled. This is only
++          // checked once, so if the MMIO trace does not exactly line up with
++          // what the driver is doing in gem5, this may still have the first
++          // bit zero causing driver to fail. Therefore, we always set this
++          // bit to one as there is no harm to do so.
++          case 0x3c: // mmPCIE_DATA2 << 2
++            uint32_t value = pkt->getLE<uint32_t>() | 0x1;
++            DPRINTF(AMDGPUDevice, "Marking interrupts enabled: %#lx\n", value);
++            pkt->setLE<uint32_t>(value);
++            break;
++        } break;
+       case GRBM_BASE:
+         gpuvm.readMMIO(pkt, aperture_offset >> GRBM_OFFSET_SHIFT);
+         break;
+-- 
+1.8.3.1
+

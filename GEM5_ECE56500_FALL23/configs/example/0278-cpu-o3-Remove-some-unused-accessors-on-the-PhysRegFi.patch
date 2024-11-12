@@ -1,0 +1,45 @@
+From 9950d58e1694be0acf6918890c51389a34c0312f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 05:07:58 -0700
+Subject: [PATCH 278/757] cpu-o3: Remove some unused accessors on the
+ PhysRegFile.
+
+Change-Id: I2d3d4845ae1a7e4329985a1d8bc011e2f5cf83d1
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49704
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/o3/regfile.hh | 16 ----------------
+ 1 file changed, 16 deletions(-)
+
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index f6c28f7..9cb8fc2 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -154,22 +154,6 @@ class PhysRegFile
+     /** Initialize the free list */
+     void initFreeList(UnifiedFreeList *freeList);
+ 
+-    /** @return the number of integer physical registers. */
+-    unsigned numIntPhysRegs() const { return numPhysicalIntRegs; }
+-
+-    /** @return the number of floating-point physical registers. */
+-    unsigned numFloatPhysRegs() const { return numPhysicalFloatRegs; }
+-    /** @return the number of vector physical registers. */
+-    unsigned numVecPhysRegs() const { return numPhysicalVecRegs; }
+-    /** @return the number of predicate physical registers. */
+-    unsigned numPredPhysRegs() const { return numPhysicalVecPredRegs; }
+-
+-    /** @return the number of vector physical registers. */
+-    unsigned numVecElemPhysRegs() const { return numPhysicalVecElemRegs; }
+-
+-    /** @return the number of condition-code physical registers. */
+-    unsigned numCCPhysRegs() const { return numPhysicalCCRegs; }
+-
+     /** @return the total number of physical registers. */
+     unsigned totalNumPhysRegs() const { return totalNumRegs; }
+ 
+-- 
+1.8.3.1
+

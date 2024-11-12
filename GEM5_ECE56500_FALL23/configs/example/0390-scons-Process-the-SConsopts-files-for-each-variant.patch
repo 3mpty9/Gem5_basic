@@ -1,0 +1,135 @@
+From a8602e3b63aa182e6c16d8c7a3f4fa4cb3856da6 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 10 Feb 2022 22:34:36 -0800
+Subject: [PATCH 390/757] scons: Process the SConsopts files for each variant.
+
+The SConsopts files that need to be processed is affected by the EXTRAS
+setting, and if all settings are going to be local to the variants, that
+means each variant can have a different set of SConsopts files to use.
+
+This does result in Configure type output showing up repeatedly when
+building multiple variants, but that's uncommon for users, and will
+hopefully become unnecessary for developers over time.
+
+Change-Id: I7df287c37fc32e91576dced80d0a9e56806c4581
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56751
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+---
+ SConstruct | 92 +++++++++++++++++++++++++++++++-------------------------------
+ 1 file changed, 46 insertions(+), 46 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index fe7b3ab..ec36532 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -597,52 +597,6 @@ if not GetOption('without_tcmalloc'):
+ 
+ ########################################################################
+ #
+-# Read and process SConsopts files. These can add new settings which
+-# affect each variant directory independently.
+-#
+-########################################################################
+-
+-# Register a callback which is called after all SConsopts files have been read.
+-after_sconsopts_callbacks = []
+-def AfterSConsopts(cb):
+-    after_sconsopts_callbacks.append(cb)
+-Export('AfterSConsopts')
+-
+-# Sticky variables get saved in the variables file so they persist from
+-# one invocation to the next (unless overridden, in which case the new
+-# value becomes sticky).
+-sticky_vars = Variables(args=ARGUMENTS)
+-Export('sticky_vars')
+-
+-# Sticky variables that should be exported to #defines in config/*.hh
+-# (see src/SConscript).
+-export_vars = []
+-Export('export_vars')
+-
+-# Walk the tree and execute all SConsopts scripts that wil add to the
+-# above variables
+-if GetOption('verbose'):
+-    print("Reading SConsopts")
+-for bdir in [ base_dir ] + extras_dir_list:
+-    if not isdir(bdir):
+-        error("Directory '%s' does not exist." % bdir)
+-    for root, dirs, files in os.walk(bdir):
+-        if 'SConsopts' in files:
+-            if GetOption('verbose'):
+-                print("Reading", os.path.join(root, 'SConsopts'))
+-            SConscript(os.path.join(root, 'SConsopts'))
+-
+-# Call any callbacks which the SConsopts files registered.
+-for cb in after_sconsopts_callbacks:
+-    cb()
+-
+-# Add any generic sticky variables here.
+-sticky_vars.Add(BoolVariable('USE_EFENCE',
+-    'Link with Electric Fence malloc debugger', False))
+-
+-
+-########################################################################
+-#
+ # Define build environments for required variants.
+ #
+ ########################################################################
+@@ -659,6 +613,52 @@ for variant_path in variant_paths:
+     # determine the build parameters (e.g., 'X86')
+     (build_root, variant_dir) = os.path.split(variant_path)
+ 
++    ####################################################################
++    #
++    # Read and process SConsopts files. These can add new settings which
++    # affect each variant directory independently.
++    #
++    ####################################################################
++
++    # Register a callback to call after all SConsopts files have been read.
++    after_sconsopts_callbacks = []
++    def AfterSConsopts(cb):
++        after_sconsopts_callbacks.append(cb)
++    Export('AfterSConsopts')
++
++    # Sticky variables get saved in the variables file so they persist from
++    # one invocation to the next (unless overridden, in which case the new
++    # value becomes sticky).
++    sticky_vars = Variables(args=ARGUMENTS)
++    Export('sticky_vars')
++
++    # Sticky variables that should be exported to #defines in config/*.hh
++    # (see src/SConscript).
++    export_vars = []
++    Export('export_vars')
++
++    # Walk the tree and execute all SConsopts scripts that wil add to the
++    # above variables
++    if GetOption('verbose'):
++        print("Reading SConsopts")
++    for bdir in [ base_dir ] + extras_dir_list:
++        if not isdir(bdir):
++            error("Directory '%s' does not exist." % bdir)
++        for root, dirs, files in os.walk(bdir):
++            if 'SConsopts' in files:
++                if GetOption('verbose'):
++                    print("Reading", os.path.join(root, 'SConsopts'))
++                SConscript(os.path.join(root, 'SConsopts'),
++                        exports={'main': env})
++
++    # Call any callbacks which the SConsopts files registered.
++    for cb in after_sconsopts_callbacks:
++        cb()
++
++    # Add any generic sticky variables here.
++    sticky_vars.Add(BoolVariable('USE_EFENCE',
++        'Link with Electric Fence malloc debugger', False))
++
+     # Set env variables according to the build directory config.
+     sticky_vars.files = []
+     # Variables for $BUILD_ROOT/$VARIANT_DIR are stored in
+-- 
+1.8.3.1
+

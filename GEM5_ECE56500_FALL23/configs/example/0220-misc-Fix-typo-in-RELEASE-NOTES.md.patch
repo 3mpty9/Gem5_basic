@@ -1,0 +1,28 @@
+From 141cc37c2d4b93959d4c249b8f7e6a8b2ef75338 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Tue, 8 Feb 2022 11:41:10 -0800
+Subject: [PATCH 220/757] misc: Fix typo in RELEASE-NOTES.md
+
+"21.0.1" -> "21.2.1".
+
+Change-Id: Ia5d7780015bf803931e393d0716cafb51ac7a7d2
+---
+ RELEASE-NOTES.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/RELEASE-NOTES.md b/RELEASE-NOTES.md
+index 76bfeda..156494b 100644
+--- a/RELEASE-NOTES.md
++++ b/RELEASE-NOTES.md
+@@ -1,7 +1,7 @@
+ 
+ # Version 21.2.1.0
+ 
+-Version 21.0.1 is a minor gem5 release consisting of bug fixes. The 21.0.1 release:
++Version 21.2.1 is a minor gem5 release consisting of bug fixes. The 21.2.1 release:
+ 
+ * Fixes a bug in which [a RCV instruction is wrongly regarded as a branch](https://gem5.atlassian.net/browse/GEM5-1137).
+ * Removes outdated and incomplete standard library documentation.
+-- 
+1.8.3.1
+

@@ -1,0 +1,303 @@
+From 93bebf86ccf632f45e72f428759f79817bb1ddd3 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 20 Aug 2021 04:18:09 -0700
+Subject: [PATCH 120/757] scons,sim: Eliminate the generated cxx_config/init.cc
+ file.
+
+This file populated the "cxx_config_directory" map from type names to
+directory entry generating types. It used a comprehensive list of
+includes of all SimObject headers, and a comprehensive list of the
+generating types to fill everything in.
+
+Instead, this change creates a new singleton helper class which, when
+instantiated as a static member of a CxxConfigParams subclass, will
+install a pointer to a CxxConfigDirectoryEntry to that map during global
+object construction time.
+
+Also, this change renames the map to cxxConfigDirectory which is in
+compliance with the style guide, and puts it behind an accessor which
+returns a static variable which is the actual map. This avoids any
+problems that might come from global object construction order.
+
+Change-Id: Iaa913fbe5af1b11d90ca618e29420eeb7cb0faed
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49455
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ build_tools/cxx_config_hh.py      | 10 ++---
+ build_tools/cxx_config_init_cc.py | 77 ---------------------------------------
+ src/SConscript                    | 34 -----------------
+ src/sim/cxx_config.cc             |  7 +++-
+ src/sim/cxx_config.hh             | 23 ++++++++----
+ src/sim/cxx_manager.cc            |  6 +--
+ 6 files changed, 27 insertions(+), 130 deletions(-)
+ delete mode 100644 build_tools/cxx_config_init_cc.py
+
+diff --git a/build_tools/cxx_config_hh.py b/build_tools/cxx_config_hh.py
+index 4e47f87..652c488 100644
+--- a/build_tools/cxx_config_hh.py
++++ b/build_tools/cxx_config_hh.py
+@@ -85,6 +85,9 @@ class ${param_class} : public CxxConfigParams, public ${sim_object_name}Params
+         }
+     };
+ 
++    static inline AddToConfigDir dirEntry
++        {"${sim_object_name}", new DirectoryEntry};
++
+   public:
+     bool setSimObject(const std::string &name, SimObject *simObject);
+ 
+@@ -104,13 +107,6 @@ class ${param_class} : public CxxConfigParams, public ${sim_object_name}Params
+     bool setPortConnectionCount(const std::string &name, unsigned int count);
+ 
+     SimObject *simObjectCreate();
+-
+-    static CxxConfigDirectoryEntry *
+-    makeDirectoryEntry()
+-    {
+-        return new DirectoryEntry;
+-    }
+-
+ };
+ 
+ } // namespace gem5
+diff --git a/build_tools/cxx_config_init_cc.py b/build_tools/cxx_config_init_cc.py
+deleted file mode 100644
+index aab8d29..0000000
+--- a/build_tools/cxx_config_init_cc.py
++++ /dev/null
+@@ -1,77 +0,0 @@
+-# Copyright 2004-2006 The Regents of The University of Michigan
+-# Copyright 2010-20013 Advanced Micro Devices, Inc.
+-# Copyright 2013 Mark D. Hill and David A. Wood
+-# Copyright 2017-2020 ARM Limited
+-# Copyright 2021 Google, Inc.
+-#
+-# The license below extends only to copyright in the software and shall
+-# not be construed as granting a license to any other intellectual
+-# property including but not limited to intellectual property relating
+-# to a hardware implementation of the functionality of the software
+-# licensed hereunder.  You may use the software subject to the license
+-# terms below provided that you ensure that this notice is replicated
+-# unmodified and in its entirety in all distributions of the software,
+-# modified or unmodified, in source code or in binary form.
+-#
+-# Redistribution and use in source and binary forms, with or without
+-# modification, are permitted provided that the following conditions are
+-# met: redistributions of source code must retain the above copyright
+-# notice, this list of conditions and the following disclaimer;
+-# redistributions in binary form must reproduce the above copyright
+-# notice, this list of conditions and the following disclaimer in the
+-# documentation and/or other materials provided with the distribution;
+-# neither the name of the copyright holders nor the names of its
+-# contributors may be used to endorse or promote products derived from
+-# this software without specific prior written permission.
+-#
+-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+-# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+-# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+-# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+-# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+-# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-
+-import argparse
+-import sys
+-
+-from code_formatter import code_formatter
+-
+-parser = argparse.ArgumentParser()
+-parser.add_argument('cxx_config_init_cc',
+-        help='cxx config init cc file to generate')
+-parser.add_argument('sim_objects', help='all simobjects to include', nargs='*')
+-
+-args = parser.parse_args()
+-
+-code = code_formatter()
+-
+-for sim_object in args.sim_objects:
+-    code('#include "cxx_config/${sim_object}.hh"')
+-
+-code('''
+-namespace gem5
+-{
+-
+-void
+-cxxConfigInit()
+-{
+-''')
+-
+-code.indent()
+-for sim_object in args.sim_objects:
+-    code('cxx_config_directory["${sim_object}"] = '
+-         '${sim_object}CxxConfigParams::makeDirectoryEntry();')
+-code.dedent()
+-
+-code('''
+-}
+-
+-} // namespace gem5
+-''')
+-
+-code.write(args.cxx_config_init_cc)
+diff --git a/src/SConscript b/src/SConscript
+index ff8e5a5..61585ec 100644
+--- a/src/SConscript
++++ b/src/SConscript
+@@ -133,10 +133,6 @@ class SimObject(PySource):
+     '''Add a SimObject python file as a python source object and add
+     it to a list of sim object modules'''
+ 
+-    fixed = False
+-
+-    sim_objects = []
+-
+     def __init__(self, source, *, sim_objects=None, enums=None,
+             tags=None, add_tags=None):
+         '''Specify the source file and any tags (automatically in
+@@ -150,10 +146,6 @@ class SimObject(PySource):
+             enums = []
+ 
+         super().__init__('m5.objects', source, tags, add_tags)
+-        if self.fixed:
+-            error("Too late to call SimObject now.")
+-
+-        SimObject.sim_objects.extend(sim_objects)
+ 
+         build_dir = Dir(env['BUILDDIR'])
+         module = self.modpath
+@@ -587,13 +579,6 @@ def makeTheGPUISA(source, target, env):
+ env.Command('config/the_gpu_isa.hh', [],
+             MakeAction(makeTheGPUISA, Transform("CFG ISA", 0)))
+ 
+-########################################################################
+-#
+-# Prevent any SimObjects from being added after this point, they
+-# should all have been added in the SConscripts above
+-#
+-SimObject.fixed = True
+-
+ 
+ ########################################################################
+ #
+@@ -631,25 +616,6 @@ m5_module_source = \
+ m5_module_static = list(map(lambda s: s.static(gem5py_env), m5_module_source))
+ gem5py_env.Program(gem5py_m5, [ 'python/gem5py.cc' ] + m5_module_static)
+ 
+-########################################################################
+-#
+-# Create the CXX config init.cc.
+-#
+-
+-all_sim_objects = sorted(SimObject.sim_objects)
+-sim_object_args = list(f'"{sim_object}"' for sim_object in all_sim_objects)
+-cc_file = File('cxx_config/init.cc')
+-gem5py_env.Command([ "${CXXCONFIGINIT_CC}" ],
+-        [ "${GEM5PY}", "${CXXCONFIGINITCC_PY}" ],
+-        MakeAction('"${GEM5PY}" "${CXXCONFIGINITCC_PY}" "${TARGET}" '
+-                '${SIM_OBJECTS}',
+-            Transform("CXXCINIT", 0)),
+-        CXXCONFIGINITCC_PY=build_tools.File('cxx_config_init_cc.py'),
+-        SIM_OBJECTS=' '.join(sim_object_args),
+-        CXXCONFIGINIT_CC=cc_file)
+-if GetOption('with_cxx_config'):
+-    Source(cc_file)
+-
+ 
+ # version tags
+ tags = \
+diff --git a/src/sim/cxx_config.cc b/src/sim/cxx_config.cc
+index dc25402..2f14ae9 100644
+--- a/src/sim/cxx_config.cc
++++ b/src/sim/cxx_config.cc
+@@ -43,6 +43,11 @@ namespace gem5
+ const std::string CxxConfigParams::invalidName = "<invalid>";
+ 
+ /** Directory of all SimObject classes config details */
+-std::map<std::string, CxxConfigDirectoryEntry *> cxx_config_directory;
++std::map<std::string, CxxConfigDirectoryEntry *> &
++cxxConfigDirectory()
++{
++    static std::map<std::string, CxxConfigDirectoryEntry *> dir;
++    return dir;
++}
+ 
+ } // namespace gem5
+diff --git a/src/sim/cxx_config.hh b/src/sim/cxx_config.hh
+index 081860a..ba34919 100644
+--- a/src/sim/cxx_config.hh
++++ b/src/sim/cxx_config.hh
+@@ -119,6 +119,9 @@ class CxxConfigDirectoryEntry
+     virtual ~CxxConfigDirectoryEntry() { }
+ };
+ 
++/** Directory of all SimObject classes config details */
++std::map<std::string, CxxConfigDirectoryEntry *> &cxxConfigDirectory();
++
+ /** Base for peer classes of SimObjectParams derived classes with parameter
+  *  modifying member functions. C++ configuration will offer objects of
+  *  these classes to SimObjects as params rather than SimObjectParams
+@@ -128,6 +131,18 @@ class CxxConfigParams
+   private:
+     static const std::string invalidName;
+ 
++  protected:
++    struct AddToConfigDir
++    {
++        AddToConfigDir(const std::string &name, CxxConfigDirectoryEntry *entry)
++        {
++            auto it_success = cxxConfigDirectory().insert({name, entry});
++            panic_if(!it_success.second,
++                    "Failed to insert config directory entry %s (duplicate?).",
++                    name);
++        }
++    };
++
+   public:
+     /** Flags passable to setParam... to smooth over any parsing difference
+      *  between different config files */
+@@ -229,14 +244,6 @@ class CxxConfigFileBase
+     virtual CxxConfigParams::Flags getFlags() const { return 0; }
+ };
+ 
+-/** Directory of all SimObject classes config details */
+-extern std::map<std::string, CxxConfigDirectoryEntry *>
+-    cxx_config_directory;
+-
+-/** Initialise cxx_config_directory.  This is defined in the
+- *  auto-generated .../cxx_config/init.cc */
+-void cxxConfigInit();
+-
+ } // namespace gem5
+ 
+ #endif // __SIM_CXX_CONFIG_HH__
+diff --git a/src/sim/cxx_manager.cc b/src/sim/cxx_manager.cc
+index 9c25091..609b939 100644
+--- a/src/sim/cxx_manager.cc
++++ b/src/sim/cxx_manager.cc
+@@ -65,14 +65,14 @@ CxxConfigManager::findObjectType(const std::string &object_name,
+     if (!configFile.getParam(object_name, "type", object_type))
+         throw Exception(object_name, "Sim object has no 'type' field");
+ 
+-    if (cxx_config_directory.find(object_type) ==
+-        cxx_config_directory.end())
++    if (cxxConfigDirectory().find(object_type) ==
++        cxxConfigDirectory().end())
+     {
+         throw Exception(object_name, csprintf(
+             "No sim object type %s is available", object_type));
+     }
+ 
+-    const CxxConfigDirectoryEntry *entry = cxx_config_directory[object_type];
++    const CxxConfigDirectoryEntry *entry = cxxConfigDirectory()[object_type];
+ 
+     return *entry;
+ }
+-- 
+1.8.3.1
+

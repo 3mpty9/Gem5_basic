@@ -1,0 +1,186 @@
+From 4a3a1b92b4366daaba8e2549e032317627055004 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 21 Aug 2021 03:51:49 -0700
+Subject: [PATCH 339/757] arch: Put operand properties into an object
+ constructed with the list.
+
+Currently, to specify operands for an ISA, you define a dict from
+operand names to properties in the ISA description. The properties are
+in a list which has well defined positions for each entry, some of which
+are optional.
+
+These lists are fairly opaque since they don't have any way to, for
+instance, accept keyword arguments. Also, these specifications simply
+list as their first element what type of operand they're going to be.
+
+This change is the first step in turning these specifications into
+something more robust like a small temporary object. This object can be
+constructed from a class which has a proper constructor that can take
+keyword arguments, can have defaults, and can be subclassed.
+
+Change-Id: I5f24d0b41f3e30b24a1ddd10157965d700d6c906
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49724
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/isa_parser.py    | 54 ++++-----------------------------
+ src/arch/isa_parser/operand_types.py | 58 +++++++++++++++++++++++++++++++++++-
+ 2 files changed, 62 insertions(+), 50 deletions(-)
+
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index ee7f21f..90808c0 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -1447,58 +1447,14 @@ StaticInstPtr
+         operand_name = {}
+         for op_name, val in user_dict.items():
+ 
++            base_cls_name = val[0]
+             # Check if extra attributes have been specified.
+             if len(val) > 9:
+                 error(lineno, 'error: too many attributes for operand "%s"' %
+                       base_cls_name)
+ 
+-            # Pad val with None in case optional args are missing
+-            val += (None, None, None, None)
+-            base_cls_name, dflt_ext, reg_spec, flags, sort_pri, \
+-            read_code, write_code, read_predicate, write_predicate = val[:9]
+-
+-            # Canonical flag structure is a triple of lists, where each list
+-            # indicates the set of flags implied by this operand always, when
+-            # used as a source, and when used as a dest, respectively.
+-            # For simplicity this can be initialized using a variety of fairly
+-            # obvious shortcuts; we convert these to canonical form here.
+-            if not flags:
+-                # no flags specified (e.g., 'None')
+-                flags = ( [], [], [] )
+-            elif isinstance(flags, str):
+-                # a single flag: assumed to be unconditional
+-                flags = ( [ flags ], [], [] )
+-            elif isinstance(flags, list):
+-                # a list of flags: also assumed to be unconditional
+-                flags = ( flags, [], [] )
+-            elif isinstance(flags, tuple):
+-                # it's a tuple: it should be a triple,
+-                # but each item could be a single string or a list
+-                (uncond_flags, src_flags, dest_flags) = flags
+-                flags = (makeList(uncond_flags),
+-                         makeList(src_flags), makeList(dest_flags))
+-
+-            # Accumulate attributes of new operand class in tmp_dict
+-            tmp_dict = {}
+-            attrList = ['reg_spec', 'flags', 'sort_pri',
+-                        'read_code', 'write_code',
+-                        'read_predicate', 'write_predicate']
+-            if dflt_ext:
+-                dflt_ctype = self.operandTypeMap[dflt_ext]
+-                attrList.extend(['dflt_ctype', 'dflt_ext'])
+-            # reg_spec is either just a string or a dictionary
+-            # (for elems of vector)
+-            if isinstance(reg_spec, tuple):
+-                (reg_spec, elem_spec) = reg_spec
+-                if isinstance(elem_spec, str):
+-                    attrList.append('elem_spec')
+-                else:
+-                    assert(isinstance(elem_spec, dict))
+-                    elems = elem_spec
+-                    attrList.append('elems')
+-            for attr in attrList:
+-                tmp_dict[attr] = eval(attr)
+-            tmp_dict['base_name'] = op_name
++            op_desc = OperandDesc(*val)
++            op_desc.setName(op_name)
+ 
+             # New class name will be e.g. "IntReg_Ra"
+             cls_name = base_cls_name + '_' + op_name
+@@ -1512,8 +1468,8 @@ StaticInstPtr
+                       'error: unknown operand base class "%s"' % base_cls_name)
+             # The following statement creates a new class called
+             # <cls_name> as a subclass of <base_cls> with the attributes
+-            # in tmp_dict, just as if we evaluated a class declaration.
+-            operand_name[op_name] = type(cls_name, (base_cls,), tmp_dict)
++            # in op_desc.attrs, just as if we evaluated a class declaration.
++            operand_name[op_name] = type(cls_name, (base_cls,), op_desc.attrs)
+ 
+         self.operandNameMap.update(operand_name)
+ 
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 13f7108..275309a 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -37,6 +37,62 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
++class OperandDesc(object):
++    def __init__(self, base_cls_name, dflt_ext, reg_spec, flags=None,
++            sort_pri=None, read_code=None, write_code=None,
++            read_predicate=None, write_predicate=None):
++
++        from .isa_parser import makeList
++
++        # Canonical flag structure is a triple of lists, where each list
++        # indicates the set of flags implied by this operand always, when
++        # used as a source, and when used as a dest, respectively.
++        # For simplicity this can be initialized using a variety of fairly
++        # obvious shortcuts; we convert these to canonical form here.
++        if not flags:
++            # no flags specified (e.g., 'None')
++            flags = ( [], [], [] )
++        elif isinstance(flags, str):
++            # a single flag: assumed to be unconditional
++            flags = ( [ flags ], [], [] )
++        elif isinstance(flags, list):
++            # a list of flags: also assumed to be unconditional
++            flags = ( flags, [], [] )
++        elif isinstance(flags, tuple):
++            # it's a tuple: it should be a triple,
++            # but each item could be a single string or a list
++            (uncond_flags, src_flags, dest_flags) = flags
++            flags = (makeList(uncond_flags),
++                     makeList(src_flags), makeList(dest_flags))
++
++        attrs = {}
++        # reg_spec is either just a string or a dictionary
++        # (for elems of vector)
++        if isinstance(reg_spec, tuple):
++            (reg_spec, elem_spec) = reg_spec
++            if isinstance(elem_spec, str):
++                attrs['elem_spec'] = elem_spec
++            else:
++                assert(isinstance(elem_spec, dict))
++                attrs['elems'] = elem_spec
++
++        attrs.update({
++            'base_cls_name': base_cls_name,
++            'dflt_ext': dflt_ext,
++            'reg_spec': reg_spec,
++            'flags': flags,
++            'sort_pri': sort_pri,
++            'read_code': read_code,
++            'write_code': write_code,
++            'read_predicate': read_predicate,
++            'write_predicate': write_predicate,
++        })
++        self.attrs = attrs
++
++    def setName(self, name):
++        self.attrs['base_name'] = name
++
++
+ class Operand(object):
+     '''Base class for operand descriptors.  An instance of this class
+     (or actually a class derived from this one) represents a specific
+@@ -73,7 +129,7 @@ class Operand(object):
+             %s final_val = %s;
+             %s;
+             if (traceData) { traceData->setData(final_val); }
+-        }''' % (self.dflt_ctype, self.base_name, code)
++        }''' % (self.ctype, self.base_name, code)
+ 
+     def __init__(self, parser, full_name, ext, is_src, is_dest):
+         self.parser = parser
+-- 
+1.8.3.1
+

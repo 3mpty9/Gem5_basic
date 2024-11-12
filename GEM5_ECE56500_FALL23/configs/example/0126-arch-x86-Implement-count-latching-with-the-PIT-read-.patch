@@ -1,0 +1,87 @@
+From 946edc794ff39f8d36c938b90c0d4ae664e3d0fc Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 9 Jan 2022 17:54:38 -0800
+Subject: [PATCH 126/757] arch-x86: Implement count latching with the PIT read
+ back command.
+
+This command can trigger count latching for any of the PIT channels
+together with a single command, and can also latch a status byte. The
+status byte is not implemented here, but there is already functionality
+for latching the count which this can use.
+
+Change-Id: Ic2ad7c73d0c521fdd6fe5f62cb478c6718f3b90c
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55283
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/intel_8254_timer.cc | 20 ++++++++++++++++----
+ src/dev/intel_8254_timer.hh | 12 ++++++++++++
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/src/dev/intel_8254_timer.cc b/src/dev/intel_8254_timer.cc
+index c0fc773..f64c0fe 100644
+--- a/src/dev/intel_8254_timer.cc
++++ b/src/dev/intel_8254_timer.cc
+@@ -58,12 +58,24 @@ Intel8254Timer::writeControl(const CtrlReg data)
+ {
+     int sel = data.sel;
+ 
+-    if (sel == ReadBackCommand)
+-       panic("PITimer Read-Back Command is not implemented.\n");
++    if (sel == ReadBackCommand) {
++        ReadBackCommandVal rb_val = static_cast<uint8_t>(data);
+ 
+-    if (data.rw == LatchCommand)
++        panic_if(!rb_val.status,
++                "Latching the PIT status byte is not implemented.");
++
++        if (!rb_val.count) {
++            for (auto &cnt: counter) {
++                if (bits((uint8_t)rb_val.select, cnt->index()))
++                    cnt->latchCount();
++            }
++        }
++        return;
++    }
++
++    if (data.rw == LatchCommand) {
+         counter[sel]->latchCount();
+-    else {
++    } else {
+         counter[sel]->setRW(data.rw);
+         counter[sel]->setMode(data.mode);
+         counter[sel]->setBCD(data.bcd);
+diff --git a/src/dev/intel_8254_timer.hh b/src/dev/intel_8254_timer.hh
+index 9876d13..e02a4cc 100644
+--- a/src/dev/intel_8254_timer.hh
++++ b/src/dev/intel_8254_timer.hh
+@@ -53,6 +53,16 @@ class Intel8254Timer : public EventManager
+         Bitfield<0> bcd;
+     EndBitUnion(CtrlReg)
+ 
++    BitUnion8(ReadBackCommandVal)
++        Bitfield<4> status; // Active low.
++        Bitfield<5> count; // Active low.
++        SubBitUnion(select, 3, 1)
++            Bitfield<3> cnt2;
++            Bitfield<2> cnt1;
++            Bitfield<1> cnt0;
++        EndSubBitUnion(select)
++    EndBitUnion(ReadBackCommandVal)
++
+     enum SelectVal
+     {
+         SelectCounter0,
+@@ -152,6 +162,8 @@ class Intel8254Timer : public EventManager
+       public:
+         Counter(Intel8254Timer *p, const std::string &name, unsigned int num);
+ 
++        unsigned int index() const { return num; }
++
+         /** Latch the current count (if one is not already latched) */
+         void latchCount();
+ 
+-- 
+1.8.3.1
+

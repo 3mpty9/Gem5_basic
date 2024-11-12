@@ -1,0 +1,46 @@
+From 322f1d8fe7002992a66acdbf475d012947e025b1 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:25:02 -0700
+Subject: [PATCH 267/757] arm: Use custom RegClassOps for vector and vector
+ pred registers.
+
+Change-Id: Icef429d5c9c036541472c470d5009c8d29a74548
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49695
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa.cc | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/isa.cc b/src/arch/arm/isa.cc
+index ed4cf24..0db133b 100644
+--- a/src/arch/arm/isa.cc
++++ b/src/arch/arm/isa.cc
+@@ -81,6 +81,8 @@ class MiscRegClassOps : public RegClassOps
+ } miscRegClassOps;
+ 
+ VecElemRegClassOps<ArmISA::VecElem> vecRegElemClassOps(NumVecElemPerVecReg);
++TypedRegClassOps<ArmISA::VecRegContainer> vecRegClassOps;
++TypedRegClassOps<ArmISA::VecPredRegContainer> vecPredRegClassOps;
+ 
+ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+     _decoderFlavor(p.decoderFlavor), pmu(p.pmu), impdefAsNop(p.impdef_nop),
+@@ -88,10 +90,12 @@ ISA::ISA(const Params &p) : BaseISA(p), system(NULL),
+ {
+     _regClasses.emplace_back(NUM_INTREGS, INTREG_ZERO);
+     _regClasses.emplace_back(0);
+-    _regClasses.emplace_back(NumVecRegs, -1, sizeof(VecRegContainer));
++    _regClasses.emplace_back(NumVecRegs, vecRegClassOps, -1,
++            sizeof(VecRegContainer));
+     _regClasses.emplace_back(NumVecRegs * NumVecElemPerVecReg,
+             vecRegElemClassOps);
+-    _regClasses.emplace_back(NumVecPredRegs, -1, sizeof(VecPredRegContainer));
++    _regClasses.emplace_back(NumVecPredRegs, vecPredRegClassOps, -1,
++            sizeof(VecPredRegContainer));
+     _regClasses.emplace_back(NUM_CCREGS);
+     _regClasses.emplace_back(NUM_MISCREGS, miscRegClassOps);
+ 
+-- 
+1.8.3.1
+

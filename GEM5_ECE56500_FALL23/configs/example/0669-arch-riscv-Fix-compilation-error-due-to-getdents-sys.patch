@@ -1,0 +1,75 @@
+From 96870d4713f3239c189ab1333dbbc5d28b9a3f3a Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Wed, 1 Jun 2022 00:29:47 +0000
+Subject: [PATCH 669/757] arch-riscv: Fix compilation error due to getdents*
+ syscalls
+
+In src/sim/syscall_emul.*, getdents and getdents64 are guarded
+by #ifdefs. Similar #ifdefs should be in se_workload.cc for each
+arch.
+
+Change-Id: Ie636a739235711c3e6d8256fd7929b7d8b4ec953
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60189
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/linux/se_workload.cc | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/arch/riscv/linux/se_workload.cc b/src/arch/riscv/linux/se_workload.cc
+index f8053d4..dd9a8a2 100644
+--- a/src/arch/riscv/linux/se_workload.cc
++++ b/src/arch/riscv/linux/se_workload.cc
+@@ -185,7 +185,11 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs64 = {
+     { 58,   "vhangup" },
+     { 59,   "pipe2", pipe2Func },
+     { 60,   "quotactl" },
++#if defined(SYS_getdents64)
+     { 61,   "getdents64", getdents64Func },
++#else
++    { 61,   "getdents64" },
++#endif
+     { 62,   "lseek", lseekFunc },
+     { 63,   "read", readFunc<RiscvLinux64> },
+     { 64,   "write", writeFunc<RiscvLinux64> },
+@@ -436,7 +440,11 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs64 = {
+     { 1062, "time", timeFunc<RiscvLinux64> },
+     { 1063, "utime" },
+     { 1064, "creat" },
++#if defined(SYS_getdents)
+     { 1065, "getdents", getdentsFunc },
++#else
++    { 1065, "getdents" },
++#endif
+     { 1066, "futimesat" },
+     { 1067, "select", selectFunc<RiscvLinux64> },
+     { 1068, "poll", pollFunc<RiscvLinux64> },
+@@ -516,7 +524,11 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs32 = {
+     { 58,   "vhangup" },
+     { 59,   "pipe2", pipe2Func },
+     { 60,   "quotactl" },
++#if defined(SYS_getdents64)
+     { 61,   "getdents64", getdents64Func },
++#else
++    { 61,   "getdents64" },
++#endif
+     { 62,   "lseek", lseekFunc },
+     { 63,   "read", readFunc<RiscvLinux32> },
+     { 64,   "write", writeFunc<RiscvLinux32> },
+@@ -767,7 +779,11 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs32 = {
+     { 1062, "time", timeFunc<RiscvLinux32> },
+     { 1063, "utime" },
+     { 1064, "creat" },
++#if defined(SYS_getdents)
+     { 1065, "getdents", getdentsFunc },
++#else
++    { 1065, "getdents" },
++#endif
+     { 1066, "futimesat" },
+     { 1067, "select", selectFunc<RiscvLinux32> },
+     { 1068, "poll", pollFunc<RiscvLinux32> },
+-- 
+1.8.3.1
+

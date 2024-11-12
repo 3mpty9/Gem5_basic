@@ -1,0 +1,59 @@
+From eafc6ea626ef0f70eab74a7d4e8d1466412a23a1 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:53:02 +0000
+Subject: [PATCH 526/757] cpu: Handle external TLBI Sync requests in TimingCPU
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I4e92f7886a296f119720b8bcda6bea722df76153
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57291
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/simple/timing.cc | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/src/cpu/simple/timing.cc b/src/cpu/simple/timing.cc
+index 9ce7140..188611f 100644
+--- a/src/cpu/simple/timing.cc
++++ b/src/cpu/simple/timing.cc
+@@ -1097,14 +1097,31 @@ TimingSimpleCPU::DcachePort::recvTimingSnoopReq(PacketPtr pkt)
+     }
+ 
+     // Making it uniform across all CPUs:
+-    // The CPUs need to be woken up only on an invalidation packet (when using caches)
+-    // or on an incoming write packet (when not using caches)
+-    // It is not necessary to wake up the processor on all incoming packets
++    // The CPUs need to be woken up only on an invalidation packet
++    // (when using caches) or on an incoming write packet (when not
++    // using caches) It is not necessary to wake up the processor on
++    // all incoming packets
+     if (pkt->isInvalidate() || pkt->isWrite()) {
+         for (auto &t_info : cpu->threadInfo) {
+             t_info->thread->getIsaPtr()->handleLockedSnoop(pkt,
+                     cacheBlockMask);
+         }
++    } else if (pkt->req && pkt->req->isTlbiExtSync()) {
++        // We received a TLBI_EXT_SYNC request.
++        // In a detailed sim we would wait for memory ops to complete,
++        // but in our simple case we just respond immediately
++        auto reply_req = Request::createMemManagement(
++            Request::TLBI_EXT_SYNC_COMP,
++            cpu->dataRequestorId());
++
++        // Extra Data = the transaction ID of the Sync we're completing
++        reply_req->setExtraData(pkt->req->getExtraData());
++        PacketPtr reply_pkt = Packet::createRead(reply_req);
++
++        // TODO - reserve some credit for these responses?
++        if (!sendTimingReq(reply_pkt)) {
++            panic("Couldn't send TLBI_EXT_SYNC_COMP message");
++        }
+     }
+ }
+ 
+-- 
+1.8.3.1
+

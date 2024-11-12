@@ -1,0 +1,74 @@
+From 20e1ade7edd6c8d6089e87d63c887cd1daf0fb59 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 7 Apr 2022 11:57:40 +0100
+Subject: [PATCH 620/757] arch-arm: Do not read SCR on the critical path
+
+Change-Id: I0318563382b3c910c599f9fa16ad29553129c537
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59469
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/utility.cc | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/src/arch/arm/utility.cc b/src/arch/arm/utility.cc
+index d9649a6..db5f1de 100644
+--- a/src/arch/arm/utility.cc
++++ b/src/arch/arm/utility.cc
+@@ -84,8 +84,8 @@ isSecure(ThreadContext *tc)
+ bool
+ isSecureBelowEL3(ThreadContext *tc)
+ {
+-    SCR scr = tc->readMiscReg(MISCREG_SCR_EL3);
+-    return ArmSystem::haveEL(tc, EL3) && scr.ns == 0;
++    return ArmSystem::haveEL(tc, EL3) &&
++        static_cast<SCR>(tc->readMiscRegNoEffect(MISCREG_SCR)).ns == 0;
+ }
+ 
+ ExceptionLevel
+@@ -249,11 +249,10 @@ HaveLVA(ThreadContext *tc)
+ ExceptionLevel
+ s1TranslationRegime(ThreadContext* tc, ExceptionLevel el)
+ {
+-
+-    SCR scr = tc->readMiscReg(MISCREG_SCR);
+     if (el != EL0)
+         return el;
+-    else if (ArmSystem::haveEL(tc, EL3) && ELIs32(tc, EL3) && scr.ns == 0)
++    else if (ArmSystem::haveEL(tc, EL3) && ELIs32(tc, EL3) &&
++             static_cast<SCR>(tc->readMiscRegNoEffect(MISCREG_SCR)).ns == 0)
+         return EL3;
+     else if (HaveVirtHostExt(tc) && ELIsInHost(tc, el))
+         return EL2;
+@@ -271,11 +270,11 @@ HaveSecureEL2Ext(ThreadContext *tc)
+ bool
+ IsSecureEL2Enabled(ThreadContext *tc)
+ {
+-    SCR scr = tc->readMiscReg(MISCREG_SCR_EL3);
+     if (ArmSystem::haveEL(tc, EL2) && HaveSecureEL2Ext(tc) &&
+         !ELIs32(tc, EL2)) {
+         if (ArmSystem::haveEL(tc, EL3))
+-            return !ELIs32(tc, EL3) && scr.eel2;
++            return !ELIs32(tc, EL3) && static_cast<SCR>(
++                tc->readMiscRegNoEffect(MISCREG_SCR_EL3)).eel2;
+         else
+             return isSecure(tc);
+     }
+@@ -285,9 +284,10 @@ IsSecureEL2Enabled(ThreadContext *tc)
+ bool
+ EL2Enabled(ThreadContext *tc)
+ {
+-    SCR scr = tc->readMiscReg(MISCREG_SCR_EL3);
+     return ArmSystem::haveEL(tc, EL2) &&
+-           (!ArmSystem::haveEL(tc, EL3) || scr.ns || IsSecureEL2Enabled(tc));
++           (!ArmSystem::haveEL(tc, EL3) || static_cast<SCR>(
++                tc->readMiscRegNoEffect(MISCREG_SCR_EL3)).ns ||
++            IsSecureEL2Enabled(tc));
+ }
+ 
+ bool
+-- 
+1.8.3.1
+

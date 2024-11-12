@@ -1,0 +1,40 @@
+From 301ddefa284cc500a52fccda6970440107d54bcf Mon Sep 17 00:00:00 2001
+From: Wing Li <wingers@google.com>
+Date: Mon, 10 Jan 2022 15:43:05 -0800
+Subject: [PATCH 111/757] dev: define VectorIntSourcePin type
+
+Change-Id: Ic457593cefb4f82794d3fe4c8c91931c1bf76a63
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55363
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/IntPin.py | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/dev/IntPin.py b/src/dev/IntPin.py
+index a6851cc..80618ce 100644
+--- a/src/dev/IntPin.py
++++ b/src/dev/IntPin.py
+@@ -35,6 +35,17 @@ class IntSourcePin(VectorPort):
+     def __init__(self, desc):
+         super().__init__(INT_SOURCE_ROLE, desc, is_source=True)
+ 
++# A vector of source pins which might represent a bank of physical pins. Unlike
++# IntSourcePin, each source pin in VectorIntSourcePin can only connect to a
++# single sink pin. VectorIntSourcePin has the same definition as IntSourcePin
++# right now, but will likely be implemented differently in the future.
++# VectorIntSourcePin is defined as its own separate type to differentiate it
++# from IntSourcePin and make it clear to the user how it should be interpreted
++# and used.
++class VectorIntSourcePin(VectorPort):
++    def __init__(self, desc):
++        super().__init__(INT_SOURCE_ROLE, desc, is_source=True)
++
+ # Each "physical" pin can be driven by a single source pin since there are no
+ # provisions for resolving competing signals running to the same pin.
+ class IntSinkPin(Port):
+-- 
+1.8.3.1
+

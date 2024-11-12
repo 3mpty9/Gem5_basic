@@ -1,0 +1,54 @@
+From eb0b4ba65793316f188e33de7f70fb1aa4502d7c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 22 Sep 2021 14:05:28 +0100
+Subject: [PATCH 548/757] mem-ruby: CHI fix for WUs on local+upstream line
+
+Fix for WriteUnique operations on cache lines that are both local and
+upstream
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I99def32948d3f0ced9cfc7f7712a0f4ae9aab0cd
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57299
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index c4eb8ff..0f1a7c6 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -337,7 +337,7 @@ transition({I, SC, UC, SD, UD, RU, RSC, RSD, RUSD, RUSC,
+ 
+ // WriteUniquePtl
+ 
+-transition({UD,UD_RU,UD_RSD,UD_RSC,UC,UC_RU,UC_RSC},
++transition({UD,UD_RSD,UD_RSC,UC,UC_RSC},
+            {WriteUnique, WriteUniquePtl_PoC, WriteUniqueFull_PoC, WriteUniqueFull_PoC_Alloc},
+            BUSY_BLKD) {
+   Initiate_Request;
+@@ -347,6 +347,16 @@ transition({UD,UD_RU,UD_RSD,UD_RSC,UC,UC_RU,UC_RSC},
+   ProcessNextState;
+ }
+ 
++transition({UD_RU,UC_RU},
++           {WriteUnique, WriteUniquePtl_PoC, WriteUniqueFull_PoC, WriteUniqueFull_PoC_Alloc},
++           BUSY_BLKD) {
++  Initiate_Request;
++  Initiate_WriteUnique_LocalWrite;
++  Profile_Miss;
++  Pop_ReqRdyQueue;
++  ProcessNextState;
++}
++
+ transition({SD, SD_RSD, SD_RSC, SC, SC_RSC},
+            {WriteUniquePtl_PoC, WriteUniqueFull_PoC, WriteUniqueFull_PoC_Alloc},
+            BUSY_BLKD) {
+-- 
+1.8.3.1
+

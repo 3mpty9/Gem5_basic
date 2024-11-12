@@ -1,0 +1,195 @@
+From 65f8bf4460383fda235a7fc4be1656d338c0a768 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Tue, 2 Nov 2021 08:50:39 +0000
+Subject: [PATCH 543/757] mem-ruby: Support for unaddressed mem requests in the
+ RubyRequest
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: I5aa44186888b95f81bec524ff57e8dbf4c9166f8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57293
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/RubySlicc_Exports.sm     |  7 +++++
+ src/mem/ruby/protocol/RubySlicc_Types.sm       |  7 +++++
+ src/mem/ruby/slicc_interface/RubyRequest.hh    | 36 +++++++++++++++++++++++---
+ src/mem/ruby/slicc_interface/RubySlicc_Util.hh | 29 +++++++++++++++++++++
+ 4 files changed, 76 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/RubySlicc_Exports.sm b/src/mem/ruby/protocol/RubySlicc_Exports.sm
+index cea6c04..ef83e01 100644
+--- a/src/mem/ruby/protocol/RubySlicc_Exports.sm
++++ b/src/mem/ruby/protocol/RubySlicc_Exports.sm
+@@ -183,16 +183,23 @@ enumeration(RubyRequestType, desc="...", default="RubyRequestType_NULL") {
+   HTM_Commit,        desc="hardware memory transaction: commit";
+   HTM_Cancel,        desc="hardware memory transaction: cancel";
+   HTM_Abort,         desc="hardware memory transaction: abort";
++  TLBI,              desc="TLB Invalidation - Initiation";
++  TLBI_SYNC,         desc="TLB Invalidation Sync operation - Potential initiation";
++  TLBI_EXT_SYNC,      desc="TLB Invalidation Sync operation - External Sync has been requested";
++  TLBI_EXT_SYNC_COMP, desc="TLB Invalidation Sync operation - External Sync has been completed";
+ }
+ 
+ bool isWriteRequest(RubyRequestType type);
+ bool isDataReadRequest(RubyRequestType type);
+ bool isReadRequest(RubyRequestType type);
+ bool isHtmCmdRequest(RubyRequestType type);
++bool isTlbiRequest(RubyRequestType type);
+ 
+ // hardware transactional memory
+ RubyRequestType htmCmdToRubyRequestType(Packet *pkt);
+ 
++RubyRequestType tlbiCmdToRubyRequestType(Packet *pkt);
++
+ enumeration(HtmCallbackMode, desc="...", default="HtmCallbackMode_NULL") {
+   HTM_CMD,          desc="htm command";
+   LD_FAIL,          desc="htm transaction failed - inform via read";
+diff --git a/src/mem/ruby/protocol/RubySlicc_Types.sm b/src/mem/ruby/protocol/RubySlicc_Types.sm
+index e5ecb00..8d76f78 100644
+--- a/src/mem/ruby/protocol/RubySlicc_Types.sm
++++ b/src/mem/ruby/protocol/RubySlicc_Types.sm
+@@ -139,6 +139,11 @@ structure (Sequencer, external = "yes") {
+                      Cycles, Cycles, Cycles);
+   void writeUniqueCallback(Addr, DataBlock);
+ 
++  void unaddressedCallback(Addr, RubyRequestType);
++  void unaddressedCallback(Addr, RubyRequestType, MachineType);
++  void unaddressedCallback(Addr, RubyRequestType, MachineType,
++                    Cycles, Cycles, Cycles);
++
+   // ll/sc support
+   void writeCallbackScFail(Addr, DataBlock);
+   bool llscCheckMonitor(Addr);
+@@ -170,6 +175,8 @@ structure(RubyRequest, desc="...", interface="Message", external="yes") {
+   PacketPtr pkt,             desc="Packet associated with this request";
+   bool htmFromTransaction,   desc="Memory request originates within a HTM transaction";
+   int htmTransactionUid,     desc="Used to identify the unique HTM transaction that produced this request";
++  bool isTlbi,               desc="Memory request is a TLB shootdown (invalidation) operation";
++  Addr tlbiTransactionUid,   desc="Unique identifier of the TLB shootdown operation that produced this request";
+ 
+   RequestPtr getRequestPtr();
+ }
+diff --git a/src/mem/ruby/slicc_interface/RubyRequest.hh b/src/mem/ruby/slicc_interface/RubyRequest.hh
+index 8324f6e..2345c22 100644
+--- a/src/mem/ruby/slicc_interface/RubyRequest.hh
++++ b/src/mem/ruby/slicc_interface/RubyRequest.hh
+@@ -76,6 +76,9 @@ class RubyRequest : public Message
+     uint64_t m_instSeqNum;
+     bool m_htmFromTransaction;
+     uint64_t m_htmTransactionUid;
++    bool m_isTlbi;
++    // Should be uint64, but SLICC complains about casts
++    Addr m_tlbiTransactionUid;
+ 
+     RubyRequest(Tick curTime, uint64_t _paddr, int _len,
+         uint64_t _pc, RubyRequestType _type, RubyAccessMode _access_mode,
+@@ -91,11 +94,34 @@ class RubyRequest : public Message
+           m_pkt(_pkt),
+           m_contextId(_core_id),
+           m_htmFromTransaction(false),
+-          m_htmTransactionUid(0)
++          m_htmTransactionUid(0),
++          m_isTlbi(false),
++          m_tlbiTransactionUid(0)
+     {
+         m_LineAddress = makeLineAddress(m_PhysicalAddress);
+     }
+ 
++    /** RubyRequest for memory management commands */
++    RubyRequest(Tick curTime,
++        uint64_t _pc, RubyRequestType _type, RubyAccessMode _access_mode,
++        PacketPtr _pkt, ContextID _proc_id, ContextID _core_id)
++        : Message(curTime),
++          m_PhysicalAddress(0),
++          m_Type(_type),
++          m_ProgramCounter(_pc),
++          m_AccessMode(_access_mode),
++          m_Size(0),
++          m_Prefetch(PrefetchBit_No),
++          m_pkt(_pkt),
++          m_contextId(_core_id),
++          m_htmFromTransaction(false),
++          m_htmTransactionUid(0),
++          m_isTlbi(false),
++          m_tlbiTransactionUid(0)
++    {
++        assert(m_pkt->req->isMemMgmt());
++    }
++
+     RubyRequest(Tick curTime, uint64_t _paddr, int _len,
+         uint64_t _pc, RubyRequestType _type,
+         RubyAccessMode _access_mode, PacketPtr _pkt, PrefetchBit _pb,
+@@ -117,7 +143,9 @@ class RubyRequest : public Message
+           m_wfid(_proc_id),
+           m_instSeqNum(_instSeqNum),
+           m_htmFromTransaction(false),
+-          m_htmTransactionUid(0)
++          m_htmTransactionUid(0),
++          m_isTlbi(false),
++          m_tlbiTransactionUid(0)
+     {
+         m_LineAddress = makeLineAddress(m_PhysicalAddress);
+     }
+@@ -144,7 +172,9 @@ class RubyRequest : public Message
+           m_wfid(_proc_id),
+           m_instSeqNum(_instSeqNum),
+           m_htmFromTransaction(false),
+-          m_htmTransactionUid(0)
++          m_htmTransactionUid(0),
++          m_isTlbi(false),
++          m_tlbiTransactionUid(0)
+     {
+         m_LineAddress = makeLineAddress(m_PhysicalAddress);
+     }
+diff --git a/src/mem/ruby/slicc_interface/RubySlicc_Util.hh b/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
+index d146b4e..79efe1c 100644
+--- a/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
++++ b/src/mem/ruby/slicc_interface/RubySlicc_Util.hh
+@@ -161,6 +161,19 @@ isHtmCmdRequest(RubyRequestType type)
+     }
+ }
+ 
++inline bool
++isTlbiCmdRequest(RubyRequestType type)
++{
++    if ((type == RubyRequestType_TLBI)  ||
++        (type == RubyRequestType_TLBI_SYNC) ||
++        (type == RubyRequestType_TLBI_EXT_SYNC) ||
++        (type == RubyRequestType_TLBI_EXT_SYNC_COMP)) {
++            return true;
++    } else {
++            return false;
++    }
++}
++
+ inline RubyRequestType
+ htmCmdToRubyRequestType(const Packet *pkt)
+ {
+@@ -178,6 +191,22 @@ htmCmdToRubyRequestType(const Packet *pkt)
+     }
+ }
+ 
++inline RubyRequestType
++tlbiCmdToRubyRequestType(const Packet *pkt)
++{
++    if (pkt->req->isTlbi()) {
++        return RubyRequestType_TLBI;
++    } else if (pkt->req->isTlbiSync()) {
++        return RubyRequestType_TLBI_SYNC;
++    } else if (pkt->req->isTlbiExtSync()) {
++        return RubyRequestType_TLBI_EXT_SYNC;
++    } else if (pkt->req->isTlbiExtSyncComp()) {
++        return RubyRequestType_TLBI_EXT_SYNC_COMP;
++    } else {
++        panic("invalid ruby packet type\n");
++    }
++}
++
+ inline int
+ addressOffset(Addr addr, Addr base)
+ {
+-- 
+1.8.3.1
+

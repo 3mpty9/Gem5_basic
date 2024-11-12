@@ -1,0 +1,63 @@
+diff --git a/src/cpu/minor/execute.cc b/src/cpu/minor/execute.cc
+index d320e67..b23571a 100644
+--- a/src/cpu/minor/execute.cc
++++ b/src/cpu/minor/execute.cc
+@@ -38,6 +38,8 @@
+ #include "cpu/minor/execute.hh"
+ 
+ #include <functional>
++#include <cstdlib>  // for rand() and srand()
++#include <ctime>    // for time()
+ 
+ #include "cpu/minor/cpu.hh"
+ #include "cpu/minor/exec_context.hh"
+@@ -54,6 +56,8 @@
+ #include "debug/MinorTrace.hh"
+ #include "debug/PCEvent.hh"
+ 
++
++
+ namespace gem5
+ {
+ 
+@@ -271,8 +275,25 @@ Execute::tryToBranch(MinorDynInstPtr inst, Fault fault, BranchData &branch)
+                 " inst: %s\n",
+                 inst->pc->instAddr(), inst->predictedTarget->instAddr(),
+                 *inst);
++        
++        /*Modification for part2*/
++        /*100%*/
++        //    reason = BranchData::CorrectlyPredictedBranch;
++
++        /*50%*/
++        
++        //    int outcome = std::rand()%2;
++        //    if (outcome == 0){
++        //        reason = BranchData::CorrectlyPredictedBranch;
++        //    }
++        //    else {
++        //        reason = BranchData::BadlyPredictedBranchTarget;
++        //    }
++        
++        // 0%
++            reason = BranchData::BadlyPredictedBranchTarget;
+ 
+-            reason = BranchData::CorrectlyPredictedBranch;
++       
+         } else {
+             /* Branch prediction got the wrong target */
+             DPRINTF(Branch, "Predicted a branch from 0x%x to 0x%x"
+@@ -286,13 +307,11 @@ Execute::tryToBranch(MinorDynInstPtr inst, Fault fault, BranchData &branch)
+         /* Unpredicted branch */
+         DPRINTF(Branch, "Unpredicted branch from 0x%x to 0x%x inst: %s\n",
+             inst->pc->instAddr(), target->instAddr(), *inst);
+-
+         reason = BranchData::UnpredictedBranch;
+     } else {
+         /* No branch at all */
+         reason = BranchData::NoBranch;
+     }
+-
+     updateBranchData(inst->id.threadId, reason, inst, *target, branch);
+ }
+ 

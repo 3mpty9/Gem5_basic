@@ -1,0 +1,34 @@
+From 8a7fcd340fa1c1278d6747bb136b4dfbd259cce7 Mon Sep 17 00:00:00 2001
+From: Gabriel Busnot <gabriel.busnot@arteris.com>
+Date: Thu, 27 Jan 2022 13:32:18 +0100
+Subject: [PATCH 177/757] mem-ruby: Add missing CHI transition SD_RSC +
+ *_Stale->BUSY_BLKD
+
+Related JIRA: https://gem5.atlassian.net/browse/GEM5-1180
+
+Change-Id: Ife83bebcaa48345633fce0a0de08394e30c1a796
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56083
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index da944d5..816bbe4 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -498,7 +498,7 @@ transition({UD_RU, UC_RU, RU}, WriteEvictFull, BUSY_BLKD) {
+   ProcessNextState;
+ }
+ 
+-transition({UD_RSC, UC_RSC, SC_RSC, UD, RU, RSD, RUSD, RUSC, UD_RSD, SD_RSD, RSC, UD_RU, UC_RU, SD, UC, SC, I},
++transition({UD_RSC, UC_RSC, SC_RSC, SD_RSC, UD, RU, RSD, RUSD, RUSC, UD_RSD, SD_RSD, RSC, UD_RU, UC_RU, SD, UC, SC, I},
+             {WriteBackFull_Stale, WriteEvictFull_Stale, WriteCleanFull_Stale}, BUSY_BLKD) {
+   Initiate_Request_Stale;
+   Initiate_CopyBack_Stale;
+-- 
+1.8.3.1
+

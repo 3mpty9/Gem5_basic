@@ -1,0 +1,2969 @@
+From 1be246bbe3f7232934bedcb55573bb44e0366990 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Tue, 21 Sep 2021 14:20:33 -0500
+Subject: [PATCH 451/757] dev-amdgpu: Add PM4PP, VMID, Linux definitions
+
+The PM4 packet processor is handling all non-HSA GPU packets such
+as packets for (un)mapping HSA queues. This commit pulls many
+Linux structs and defines out into their own files for clarity.
+Finally, it implements the VMID related functions in AMDGPU device.
+
+Change-Id: I5f0057209305404df58aff2c4cd07762d1a31690
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53068
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py    |    8 +
+ src/dev/amdgpu/AMDGPU.py                  |    6 +
+ src/dev/amdgpu/SConscript                 |    5 +-
+ src/dev/amdgpu/amdgpu_device.cc           |  123 +++-
+ src/dev/amdgpu/amdgpu_device.hh           |   32 +
+ src/dev/amdgpu/amdgpu_vm.cc               |    9 +-
+ src/dev/amdgpu/amdgpu_vm.hh               |   14 +-
+ src/dev/amdgpu/interrupt_handler.hh       |   27 +-
+ src/dev/amdgpu/pm4_defines.hh             |  506 ++++++++++++++
+ src/dev/amdgpu/pm4_mmio.hh                |   69 ++
+ src/dev/amdgpu/pm4_packet_processor.cc    | 1071 +++++++++++++++++++++++++++++
+ src/dev/amdgpu/pm4_packet_processor.hh    |  190 +++++
+ src/dev/amdgpu/pm4_queues.hh              |  477 +++++++++++++
+ src/dev/amdgpu/sdma_engine.cc             |    1 -
+ src/dev/amdgpu/sdma_mmio.hh               |    2 +-
+ src/dev/amdgpu/vega10/soc15_ih_clientid.h |   81 ---
+ 16 files changed, 2523 insertions(+), 98 deletions(-)
+ create mode 100644 src/dev/amdgpu/pm4_defines.hh
+ create mode 100644 src/dev/amdgpu/pm4_mmio.hh
+ create mode 100644 src/dev/amdgpu/pm4_packet_processor.cc
+ create mode 100644 src/dev/amdgpu/pm4_packet_processor.hh
+ create mode 100644 src/dev/amdgpu/pm4_queues.hh
+ delete mode 100644 src/dev/amdgpu/vega10/soc15_ih_clientid.h
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 5b26ce6..7714f91 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -98,6 +98,8 @@ def makeGpuFSSystem(args):
+     shader.dispatcher = dispatcher
+     shader.gpu_cmd_proc = gpu_cmd_proc
+ 
++    system.pc.south_bridge.gpu.cp = gpu_cmd_proc
++
+     # GPU Interrupt Handler
+     device_ih = AMDGPUInterruptHandler()
+     system.pc.south_bridge.gpu.device_ih = device_ih
+@@ -112,6 +114,10 @@ def makeGpuFSSystem(args):
+     system.pc.south_bridge.gpu.sdma0 = sdma0
+     system.pc.south_bridge.gpu.sdma1 = sdma1
+ 
++    # Setup PM4 packet processor
++    pm4_pkt_proc = PM4PacketProcessor()
++    system.pc.south_bridge.gpu.pm4_pkt_proc = pm4_pkt_proc
++
+     # GPU data path
+     gpu_mem_mgr = AMDGPUMemoryManager()
+     system.pc.south_bridge.gpu.memory_manager = gpu_mem_mgr
+@@ -123,6 +129,7 @@ def makeGpuFSSystem(args):
+     system._dma_ports.append(sdma0)
+     system._dma_ports.append(sdma1)
+     system._dma_ports.append(device_ih)
++    system._dma_ports.append(pm4_pkt_proc)
+ 
+     gpu_hsapp.pio = system.iobus.mem_side_ports
+     gpu_cmd_proc.pio = system.iobus.mem_side_ports
+@@ -130,6 +137,7 @@ def makeGpuFSSystem(args):
+     sdma0.pio = system.iobus.mem_side_ports
+     sdma1.pio = system.iobus.mem_side_ports
+     device_ih.pio = system.iobus.mem_side_ports
++    pm4_pkt_proc.pio = system.iobus.mem_side_ports
+ 
+     # Create Ruby system using Ruby.py for now
+     Ruby.create_system(args, True, system, system.iobus,
+diff --git a/src/dev/amdgpu/AMDGPU.py b/src/dev/amdgpu/AMDGPU.py
+index ffe72a6..6afce0f 100644
+--- a/src/dev/amdgpu/AMDGPU.py
++++ b/src/dev/amdgpu/AMDGPU.py
+@@ -85,6 +85,7 @@ class AMDGPUDevice(PciDevice):
+     # The config script should not create a new cp here but rather assign the
+     # same cp that is assigned to the Shader SimObject.
+     cp = Param.GPUCommandProcessor(NULL, "Command Processor")
++    pm4_pkt_proc = Param.PM4PacketProcessor("PM4 Packet Processor")
+     memory_manager = Param.AMDGPUMemoryManager("GPU Memory Manager")
+     memories = VectorParam.AbstractMemory([], "All memories in the device")
+     device_ih = Param.AMDGPUInterruptHandler("GPU Interrupt handler")
+@@ -97,6 +98,11 @@ class SDMAEngine(DmaVirtDevice):
+     gpu_device = Param.AMDGPUDevice(NULL, 'GPU Controller')
+     walker = Param.VegaPagetableWalker("Page table walker")
+ 
++class PM4PacketProcessor(DmaVirtDevice):
++    type = 'PM4PacketProcessor'
++    cxx_header = "dev/amdgpu/pm4_packet_processor.hh"
++    cxx_class = 'gem5::PM4PacketProcessor'
++
+ class AMDGPUMemoryManager(ClockedObject):
+     type = 'AMDGPUMemoryManager'
+     cxx_header = 'dev/amdgpu/memory_manager.hh'
+diff --git a/src/dev/amdgpu/SConscript b/src/dev/amdgpu/SConscript
+index 2177bb5..2dc73a7 100644
+--- a/src/dev/amdgpu/SConscript
++++ b/src/dev/amdgpu/SConscript
+@@ -35,16 +35,19 @@ if not env['BUILD_GPU']:
+ # Controllers
+ SimObject('AMDGPU.py', sim_objects=['AMDGPUDevice', 'AMDGPUInterruptHandler',
+                                     'AMDGPUMemoryManager', 'AMDGPUSystemHub',
+-                                    'SDMAEngine'], tags='x86 isa')
++                                    'SDMAEngine', 'PM4PacketProcessor'],
++                                    tags='x86 isa')
+ 
+ Source('amdgpu_device.cc', tags='x86 isa')
+ Source('amdgpu_vm.cc', tags='x86 isa')
+ Source('interrupt_handler.cc', tags='x86 isa')
+ Source('memory_manager.cc', tags='x86 isa')
+ Source('mmio_reader.cc', tags='x86 isa')
++Source('pm4_packet_processor.cc', tags='x86 isa')
+ Source('sdma_engine.cc', tags='x86 isa')
+ Source('system_hub.cc', tags='x86 isa')
+ 
+ DebugFlag('AMDGPUDevice', tags='x86 isa')
+ DebugFlag('AMDGPUMem', tags='x86 isa')
++DebugFlag('PM4PacketProcessor', tags='x86 isa')
+ DebugFlag('SDMAEngine', tags='x86 isa')
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 5265f51..81fe9f4 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -36,7 +36,10 @@
+ #include "debug/AMDGPUDevice.hh"
+ #include "dev/amdgpu/amdgpu_vm.hh"
+ #include "dev/amdgpu/interrupt_handler.hh"
++#include "dev/amdgpu/pm4_packet_processor.hh"
+ #include "dev/amdgpu/sdma_engine.hh"
++#include "dev/hsa/hw_scheduler.hh"
++#include "gpu-compute/gpu_command_processor.hh"
+ #include "mem/packet.hh"
+ #include "mem/packet_access.hh"
+ #include "params/AMDGPUDevice.hh"
+@@ -48,9 +51,9 @@ namespace gem5
+ 
+ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+     : PciDevice(p), gpuMemMgr(p.memory_manager), deviceIH(p.device_ih),
+-      sdma0(p.sdma0), sdma1(p.sdma1),
++      sdma0(p.sdma0), sdma1(p.sdma1), pm4PktProc(p.pm4_pkt_proc), cp(p.cp),
+       checkpoint_before_mmios(p.checkpoint_before_mmios),
+-      init_interrupt_count(0)
++      init_interrupt_count(0), _lastVMID(0)
+ {
+     // Loading the rom binary dumped from hardware.
+     std::ifstream romBin;
+@@ -73,6 +76,7 @@ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+     sdma1->setGPUDevice(this);
+     sdma1->setId(1);
+     deviceIH->setGPUDevice(this);
++    pm4PktProc->setGPUDevice(this);
+ }
+ 
+ void
+@@ -233,6 +237,14 @@ AMDGPUDevice::writeDoorbell(PacketPtr pkt, Addr offset)
+         DPRINTF(AMDGPUDevice, "Doorbell offset %p queue: %d\n",
+                               offset, q_type);
+         switch (q_type) {
++          case Compute:
++            pm4PktProc->process(pm4PktProc->getQueue(offset),
++                                pkt->getLE<uint64_t>());
++          break;
++          case Gfx:
++            pm4PktProc->process(pm4PktProc->getQueue(offset, true),
++                                pkt->getLE<uint64_t>());
++          break;
+           case SDMAGfx: {
+             SDMAEngine *sdmaEng = getSDMAEngine(offset);
+             sdmaEng->processGfx(pkt->getLE<uint64_t>());
+@@ -241,9 +253,18 @@ AMDGPUDevice::writeDoorbell(PacketPtr pkt, Addr offset)
+             SDMAEngine *sdmaEng = getSDMAEngine(offset);
+             sdmaEng->processPage(pkt->getLE<uint64_t>());
+           } break;
++          case ComputeAQL: {
++            cp->hsaPacketProc().hwScheduler()->write(offset,
++                pkt->getLE<uint64_t>() + 1);
++            pm4PktProc->updateReadIndex(offset, pkt->getLE<uint64_t>() + 1);
++          } break;
+           case InterruptHandler:
+             deviceIH->updateRptr(pkt->getLE<uint32_t>());
+             break;
++          case RLC: {
++            panic("RLC queues not yet supported. Run with the environment "
++                  "variable HSA_ENABLE_SDMA set to False");
++          } break;
+           default:
+             panic("Write to unkown queue type!");
+         }
+@@ -269,6 +290,11 @@ AMDGPUDevice::writeMMIO(PacketPtr pkt, Addr offset)
+       case SDMA1_BASE:
+         sdma1->writeMMIO(pkt, aperture_offset >> SDMA_OFFSET_SHIFT);
+         break;
++      /* Write a general register to the graphics register bus manager. */
++      case GRBM_BASE:
++        gpuvm.writeMMIO(pkt, aperture_offset >> GRBM_OFFSET_SHIFT);
++        pm4PktProc->writeMMIO(pkt, aperture_offset >> GRBM_OFFSET_SHIFT);
++        break;
+       /* Write a register to the interrupt handler. */
+       case IH_BASE:
+         deviceIH->writeMMIO(pkt, aperture_offset >> IH_OFFSET_SHIFT);
+@@ -346,6 +372,19 @@ AMDGPUDevice::write(PacketPtr pkt)
+     return pioDelay;
+ }
+ 
++uint32_t
++AMDGPUDevice::getRegVal(uint32_t addr)
++{
++    return regs[addr];
++}
++void
++AMDGPUDevice::setRegVal(uint32_t addr, uint32_t value)
++{
++    DPRINTF(AMDGPUDevice, "Setting register 0x%lx to %x\n",
++            addr, value);
++    regs[addr] = value;
++}
++
+ void
+ AMDGPUDevice::setDoorbellType(uint32_t offset, QueueType qt)
+ {
+@@ -360,6 +399,28 @@ AMDGPUDevice::setSDMAEngine(Addr offset, SDMAEngine *eng)
+ }
+ 
+ SDMAEngine*
++AMDGPUDevice::getSDMAById(int id)
++{
++    /**
++     * PM4 packets selected SDMAs using an integer ID. This method simply maps
++     * the integer ID to a pointer to the SDMA and checks for invalid IDs.
++     */
++    switch (id) {
++        case 0:
++            return sdma0;
++            break;
++        case 1:
++            return sdma1;
++            break;
++        default:
++            panic("No SDMA with id %d\n", id);
++            break;
++    }
++
++    return nullptr;
++}
++
++SDMAEngine*
+ AMDGPUDevice::getSDMAEngine(Addr offset)
+ {
+     return sdmaEngs[offset];
+@@ -385,4 +446,62 @@ AMDGPUDevice::unserialize(CheckpointIn &cp)
+     PciDevice::unserialize(cp);
+ }
+ 
++uint16_t
++AMDGPUDevice::allocateVMID(uint16_t pasid)
++{
++    for (uint16_t vmid = 1; vmid < AMDGPU_VM_COUNT; vmid++) {
++        auto result = usedVMIDs.find(vmid);
++        if (result == usedVMIDs.end()) {
++            idMap.insert(std::make_pair(pasid, vmid));
++            usedVMIDs[vmid] = {};
++            _lastVMID = vmid;
++            return vmid;
++        }
++    }
++    panic("All VMIDs have been assigned");
++}
++
++void
++AMDGPUDevice::deallocateVmid(uint16_t vmid)
++{
++    usedVMIDs.erase(vmid);
++}
++
++void
++AMDGPUDevice::deallocatePasid(uint16_t pasid)
++{
++    auto result = idMap.find(pasid);
++    assert(result != idMap.end());
++    if (result == idMap.end()) return;
++    uint16_t vmid = result->second;
++
++    idMap.erase(result);
++    usedVMIDs.erase(vmid);
++}
++
++void
++AMDGPUDevice::deallocateAllQueues()
++{
++    idMap.erase(idMap.begin(), idMap.end());
++    usedVMIDs.erase(usedVMIDs.begin(), usedVMIDs.end());
++}
++
++void
++AMDGPUDevice::mapDoorbellToVMID(Addr doorbell, uint16_t vmid)
++{
++    doorbellVMIDMap[doorbell] = vmid;
++}
++
++std::unordered_map<uint16_t, std::set<int>>&
++AMDGPUDevice::getUsedVMIDs()
++{
++    return usedVMIDs;
++}
++
++void
++AMDGPUDevice::insertQId(uint16_t vmid, int id)
++{
++    usedVMIDs[vmid].insert(id);
++}
++
+ } // namespace gem5
+diff --git a/src/dev/amdgpu/amdgpu_device.hh b/src/dev/amdgpu/amdgpu_device.hh
+index 29b633a..09c13c9 100644
+--- a/src/dev/amdgpu/amdgpu_device.hh
++++ b/src/dev/amdgpu/amdgpu_device.hh
+@@ -112,6 +112,8 @@ class AMDGPUDevice : public PciDevice
+     SDMAEngine *sdma0;
+     SDMAEngine *sdma1;
+     std::unordered_map<uint32_t, SDMAEngine *> sdmaEngs;
++    PM4PacketProcessor *pm4PktProc;
++    GPUCommandProcessor *cp;
+ 
+     /**
+      * Initial checkpoint support variables.
+@@ -129,6 +131,16 @@ class AMDGPUDevice : public PciDevice
+     uint64_t mmhubBase = 0x0;
+     uint64_t mmhubTop = 0x0;
+ 
++    // VMIDs data structures
++    // map of pasids to vmids
++    std::unordered_map<uint16_t, uint16_t> idMap;
++    // map of doorbell offsets to vmids
++    std::unordered_map<Addr, uint16_t> doorbellVMIDMap;
++    // map of vmid to all queue ids using that vmid
++    std::unordered_map<uint16_t, std::set<int>> usedVMIDs;
++    // last vmid allocated by map_process PM4 packet
++    uint16_t _lastVMID;
++
+   public:
+     AMDGPUDevice(const AMDGPUDeviceParams &p);
+ 
+@@ -155,9 +167,11 @@ class AMDGPUDevice : public PciDevice
+      * Get handles to GPU blocks.
+      */
+     AMDGPUInterruptHandler* getIH() { return deviceIH; }
++    SDMAEngine* getSDMAById(int id);
+     SDMAEngine* getSDMAEngine(Addr offset);
+     AMDGPUVM &getVM() { return gpuvm; }
+     AMDGPUMemoryManager* getMemMgr() { return gpuMemMgr; }
++    GPUCommandProcessor* CP() { return cp; }
+ 
+     /**
+      * Set handles to GPU blocks.
+@@ -166,9 +180,27 @@ class AMDGPUDevice : public PciDevice
+     void setSDMAEngine(Addr offset, SDMAEngine *eng);
+ 
+     /**
++     * Register value getter/setter. Used by other GPU blocks to change
++     * values from incoming driver/user packets.
++     */
++    uint32_t getRegVal(uint32_t addr);
++    void setRegVal(uint32_t addr, uint32_t value);
++
++    /**
+      * Methods related to translations and system/device memory.
+      */
+     RequestorID vramRequestorId() { return gpuMemMgr->getRequestorID(); }
++
++    /* HW context stuff */
++    uint16_t lastVMID() { return _lastVMID; }
++    uint16_t allocateVMID(uint16_t pasid);
++    void deallocateVmid(uint16_t vmid);
++    void deallocatePasid(uint16_t pasid);
++    void deallocateAllQueues();
++    void mapDoorbellToVMID(Addr doorbell, uint16_t vmid);
++    uint16_t getVMID(Addr doorbell) { return doorbellVMIDMap[doorbell]; }
++    std::unordered_map<uint16_t, std::set<int>>& getUsedVMIDs();
++    void insertQId(uint16_t vmid, int id);
+ };
+ 
+ } // namespace gem5
+diff --git a/src/dev/amdgpu/amdgpu_vm.cc b/src/dev/amdgpu/amdgpu_vm.cc
+index c29343c..596558a 100644
+--- a/src/dev/amdgpu/amdgpu_vm.cc
++++ b/src/dev/amdgpu/amdgpu_vm.cc
+@@ -248,7 +248,7 @@ AMDGPUVM::AGPTranslationGen::translate(Range &range) const
+     range.size = std::min(range.size, next - range.vaddr);
+     range.paddr = range.vaddr - vm->getAGPBot() + vm->getAGPBase();
+ 
+-    printf("AMDGPUVM: AGP translation %#lx -> %#lx\n",
++    DPRINTF(AMDGPUDevice, "AMDGPUVM: AGP translation %#lx -> %#lx\n",
+             range.vaddr, range.paddr);
+ }
+ 
+@@ -284,7 +284,7 @@ AMDGPUVM::GARTTranslationGen::translate(Range &range) const
+         range.paddr = (bits(pte, 47, 12) << 12) | lower_bits;
+     }
+ 
+-    printf("AMDGPUVM: GART translation %#lx -> %#lx\n",
++    DPRINTF(AMDGPUDevice, "AMDGPUVM: GART translation %#lx -> %#lx\n",
+             range.vaddr, range.paddr);
+ }
+ 
+@@ -300,7 +300,7 @@ AMDGPUVM::MMHUBTranslationGen::translate(Range &range) const
+     range.size = std::min(range.size, next - range.vaddr);
+     range.paddr = range.vaddr - vm->getMMHUBBase();
+ 
+-    printf("AMDGPUVM: MMHUB translation %#lx -> %#lx\n",
++    DPRINTF(AMDGPUDevice, "AMDGPUVM: MMHUB translation %#lx -> %#lx\n",
+             range.vaddr, range.paddr);
+ }
+ 
+@@ -310,7 +310,8 @@ AMDGPUVM::UserTranslationGen::translate(Range &range) const
+     // Get base address of the page table for this vmid
+     Addr base = vm->getPageTableBase(vmid);
+     Addr start = vm->getPageTableStart(vmid);
+-    printf("User tl base %#lx start %#lx walker %p\n", base, start, walker);
++    DPRINTF(AMDGPUDevice, "User tl base %#lx start %#lx walker %p\n",
++            base, start, walker);
+ 
+     bool dummy;
+     unsigned logBytes;
+diff --git a/src/dev/amdgpu/amdgpu_vm.hh b/src/dev/amdgpu/amdgpu_vm.hh
+index a0f08bc..72745f0 100644
+--- a/src/dev/amdgpu/amdgpu_vm.hh
++++ b/src/dev/amdgpu/amdgpu_vm.hh
+@@ -45,10 +45,10 @@
+  * MMIO offsets for graphics register bus manager (GRBM). These values were
+  * taken from linux header files. The header files can be found here:
+  *
+- * https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/
+- *      asic_reg/gc/gc_9_0_offset.h
+- * https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/
+- *      asic_reg/mmhub/mmhub_1_0_offset.h
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ *      drivers/gpu/drm/amd/include/ asic_reg/gc/gc_9_0_offset.h
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ *      drivers/gpu/drm/amd/include/ asic_reg/mmhub/mmhub_1_0_offset.h
+  */
+ 
+ #define mmVM_INVALIDATE_ENG17_ACK                                     0x08c6
+@@ -256,6 +256,12 @@ class AMDGPUVM : public Serializable
+     /**
+      * Page table base/start accessors for user VMIDs.
+      */
++    void
++    setPageTableBase(uint16_t vmid, Addr ptBase)
++    {
++        vmContexts[vmid].ptBase = ptBase;
++    }
++
+     Addr
+     getPageTableBase(uint16_t vmid)
+     {
+diff --git a/src/dev/amdgpu/interrupt_handler.hh b/src/dev/amdgpu/interrupt_handler.hh
+index c64076d..1b38dc3 100644
+--- a/src/dev/amdgpu/interrupt_handler.hh
++++ b/src/dev/amdgpu/interrupt_handler.hh
+@@ -48,11 +48,27 @@
+ namespace gem5
+ {
+ 
+-/*
++/**
++ * Defines from driver code. Taken from
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ *     drivers/gpu/drm/amd/include/soc15_ih_clientid.h
++ */
++enum soc15_ih_clientid
++{
++    SOC15_IH_CLIENTID_RLC       = 0x07,
++    SOC15_IH_CLIENTID_SDMA0     = 0x08,
++    SOC15_IH_CLIENTID_SDMA1     = 0x09
++};
++
++enum ihSourceId
++{
++    TRAP_ID                     = 224
++};
++
++/**
+  * MSI-style interrupts. Send a "cookie" response to clear interrupts.
+- * From [1] we know the size of the struct is 8 dwords. Then we can look at
+- * the register shift offsets in [2] to guess the rest. Or we can also look
+- * at [3].
++ * From [1] we know the size of the struct is 8 dwords. Then we can look at the register shift offsets in [2] to guess the rest.
++ * Or we can also look at [3].
+  *
+  * [1] https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/roc-4.3.x/
+  *         drivers/gpu/drm/amd/amdkfd/kfd_device.c#L316
+@@ -83,6 +99,9 @@ typedef struct
+     uint32_t source_data_dw4;
+ } AMDGPUInterruptCookie;
+ 
++/**
++ * Struct to contain all interrupt handler related registers.
++ */
+ typedef struct
+ {
+     uint32_t IH_Cntl;
+diff --git a/src/dev/amdgpu/pm4_defines.hh b/src/dev/amdgpu/pm4_defines.hh
+new file mode 100644
+index 0000000..b7e9952
+--- /dev/null
++++ b/src/dev/amdgpu/pm4_defines.hh
+@@ -0,0 +1,506 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_AMDGPU_PM4_DEFINES_H__
++#define __DEV_AMDGPU_PM4_DEFINES_H__
++
++#include <cstdlib>
++#include <iostream>
++#include <vector>
++
++#include "base/types.hh"
++
++namespace gem5
++{
++
++/**
++ * PM4 opcodes. Taken from linux tree at
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ *     drivers/gpu/drm/amd/amdkfd/kfd_pm4_opcodes.h
++ */
++enum it_opcode_type
++{
++    IT_NOP                               = 0x10,
++    IT_WRITE_DATA                        = 0x37,
++    IT_WAIT_REG_MEM                      = 0x3C,
++    IT_INDIRECT_BUFFER                   = 0x3F,
++    IT_RELEASE_MEM                       = 0x49,
++    IT_SET_UCONFIG_REG                   = 0x79,
++    IT_SWITCH_BUFFER                     = 0x8B,
++    IT_MAP_PROCESS                       = 0xA1,
++    IT_MAP_QUEUES                        = 0xA2,
++    IT_UNMAP_QUEUES                      = 0xA3,
++    IT_QUERY_STATUS                      = 0xA4,
++    IT_RUN_LIST                          = 0xA5,
++};
++
++/**
++ * Value from vega10/pm4_header.h.
++ */
++#define PACKET3_SET_UCONFIG_REG_START                   0x0000c000
++
++/**
++ * PM4 packets
++ */
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint16_t predicated : 1;
++            uint16_t shader : 1;
++            uint16_t reserved : 6;
++            uint16_t opcode : 8;
++            uint16_t count : 14;
++            uint16_t type : 2;
++        };
++        uint32_t ordinal;
++    };
++} PM4Header;
++static_assert(sizeof(PM4Header) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t reserved1 : 8;
++    uint32_t destSel : 4;
++    uint32_t reserved2 : 4;
++    uint32_t addrIncr : 1;
++    uint32_t reserved3 : 2;
++    uint32_t resume : 1;
++    uint32_t writeConfirm : 1;
++    uint32_t reserved4 : 4;
++    uint32_t cachePolicy : 2;
++    uint32_t reserved5 : 5;
++    union
++    {
++        struct
++        {
++            uint32_t destAddrLo;
++            uint32_t destAddrHi;
++        };
++        uint64_t destAddr;
++    };
++    uint32_t data;
++}  PM4WriteData;
++static_assert(sizeof(PM4WriteData) == 16);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t reserved1 : 4;
++    uint32_t queueSel : 2;
++    uint32_t reserved2 : 2;
++    uint32_t vmid : 4;
++    uint32_t reserved3 : 1;
++    uint32_t me : 1;
++    uint32_t pipe : 2;
++    uint32_t queueSlot : 3;
++    uint32_t reserved6 : 2;
++    uint32_t queueType : 3;
++    uint32_t allocFormat : 2;
++    uint32_t engineSel : 3;
++    uint32_t numQueues : 3;
++    uint32_t reserved4 : 1;
++    uint32_t checkDisable : 1;
++    uint32_t doorbellOffset : 26;
++    uint32_t reserved5 : 4;
++    union
++    {
++        struct
++        {
++            uint32_t mqdAddrLo : 32;
++            uint32_t mqdAddrHi : 32;
++        };
++        uint64_t mqdAddr;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t wptrAddrLo : 32;
++            uint32_t wptrAddrHi : 32;
++        };
++        uint64_t wptrAddr;
++    };
++}  PM4MapQueues;
++static_assert(sizeof(PM4MapQueues) == 24);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t action : 2;
++    uint32_t reserved : 2;
++    uint32_t queueSel : 2;
++    uint32_t reserved1 : 20;
++    uint32_t engineSel : 3;
++    uint32_t numQueues : 3;
++    union
++    {
++        struct
++        {
++            uint32_t pasid : 16;
++            uint32_t reserved2 : 16;
++        };
++        struct
++        {
++            uint32_t reserved3 : 2;
++            uint32_t doorbellOffset0 : 26;
++            uint32_t reserved4 : 4;
++        };
++    };
++    uint32_t reserved5 : 2;
++    uint32_t doorbellOffset1 : 26;
++    uint32_t reserved6 : 4;
++    uint32_t reserved7 : 2;
++    uint32_t doorbellOffset2 : 26;
++    uint32_t reserved8 : 4;
++    uint32_t reserved9 : 2;
++    uint32_t doorbellOffset3 : 26;
++    uint32_t reserved10 : 4;
++}  PM4UnmapQueues;
++static_assert(sizeof(PM4UnmapQueues) == 20);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t vmidMask : 16;
++    uint32_t unmapLatency : 8;
++    uint32_t reserved : 5;
++    uint32_t queueType : 3;
++    union
++    {
++        struct
++        {
++            uint32_t queueMaskLo;
++            uint32_t queueMaskHi;
++        };
++        uint64_t queueMask;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t gwsMaskLo;
++            uint32_t gwsMaskHi;
++        };
++        uint64_t gwsMask;
++    };
++    uint16_t oacMask;
++    uint16_t reserved1;
++    uint32_t gdsHeapBase : 6;
++    uint32_t reserved2 : 5;
++    uint32_t gdsHeapSize : 6;
++    uint32_t reserved3 : 15;
++}  PM4SetResources;
++static_assert(sizeof(PM4SetResources) == 28);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t pasid : 16;
++    uint32_t reserved0 : 8;
++    uint32_t diq : 1;
++    uint32_t processQuantum : 7;
++    union
++    {
++        struct
++        {
++            uint32_t ptBaseLo;
++            uint32_t ptBaseHi;
++        };
++        uint64_t ptBase;
++    };
++    uint32_t shMemBases;
++    uint32_t shMemConfig;
++    uint32_t reserved1;
++    uint32_t reserved2;
++    uint32_t reserved3;
++    uint32_t reserved4;
++    uint32_t reserved5;
++    union
++    {
++        struct
++        {
++            uint32_t gdsAddrLo;
++            uint32_t gdsAddrHi;
++        };
++        uint64_t gdsAddr;
++    };
++    uint32_t numGws : 6;
++    uint32_t reserved7 : 2;
++    uint32_t numOac : 4;
++    uint32_t reserved8 : 4;
++    uint32_t gdsSize : 6;
++    uint32_t numQueues : 10;
++    union
++    {
++        struct
++        {
++            uint32_t completionSignalLo;
++            uint32_t completionSignalHi;
++        };
++        uint64_t completionSignal;
++    };
++}  PM4MapProcess;
++static_assert(sizeof(PM4MapProcess) == 60);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t function : 4;
++    uint32_t memSpace : 2;
++    uint32_t operation : 2;
++    uint32_t reserved1 : 24;
++    union
++    {
++        struct
++        {
++            uint32_t regAddr1 : 18;
++            uint32_t reserved2 : 14;
++        };
++        uint32_t memAddrLo;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t regAddr2 : 18;
++            uint32_t reserved3 : 14;
++        };
++        uint32_t memAddrHi;
++    };
++    uint32_t reference;
++    uint32_t mask;
++    uint32_t pollInterval;
++}  PM4WaitRegMem;
++static_assert(sizeof(PM4WaitRegMem) == 24);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t regOffset : 16;
++    uint32_t reserved : 16;
++    uint32_t regData;
++}  PM4SetUConfig;
++static_assert(sizeof(PM4SetUConfig) == 8);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t ibBaseLo;
++            uint32_t ibBaseHi;
++        };
++        uint64_t ibBase;
++    };
++    uint32_t ibSize : 20;
++    uint32_t chain : 1;
++    uint32_t poll : 1;
++    uint32_t reserved0 : 1;
++    uint32_t valid: 1;
++    uint32_t vmid : 4;
++    uint32_t cachePolicy : 2;
++    uint32_t reserved1 : 1;
++    uint32_t priv : 1;
++}  PM4IndirectBuf;
++static_assert(sizeof(PM4IndirectBuf) == 12);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t tmz : 1;
++            uint32_t reserved : 31;
++        };
++        uint32_t dummy;
++    };
++}  PM4SwitchBuf;
++static_assert(sizeof(PM4SwitchBuf) == 4);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t ibBaseLo;
++            uint32_t ibBaseHi;
++        };
++        uint64_t ibBase;
++    };
++    uint32_t ibSize : 20;
++    uint32_t chain : 1;
++    uint32_t ena : 1;
++    uint32_t reserved1 : 2;
++    uint32_t vmid : 4;
++    uint32_t cachePolicy : 2;
++    uint32_t preResume : 1;
++    uint32_t priv : 1;
++}  PM4IndirectBufConst;
++static_assert(sizeof(PM4IndirectBufConst) == 12);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t tmz : 1;
++    uint32_t reserved : 27;
++    uint32_t command : 4;
++}  PM4FrameCtrl;
++static_assert(sizeof(PM4FrameCtrl) == 4);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t event : 6;
++    uint32_t reserved0 : 2;
++    uint32_t eventIdx : 4;
++    uint32_t l1Volatile : 1;
++    uint32_t l2Volatile : 1;
++    uint32_t reserved1 : 1;
++    uint32_t l2WB : 1;
++    uint32_t l1Inv : 1;
++    uint32_t l2Inv : 1;
++    uint32_t reserved2 : 1;
++    uint32_t l2NC : 1;
++    uint32_t l2WC : 1;
++    uint32_t l2Meta : 1;
++    uint32_t reserved3 : 3;
++    uint32_t cachePolicy : 2;
++    uint32_t reserved4 : 1;
++    uint32_t execute : 1;
++    uint32_t reserved5 : 3;
++    uint32_t reserved6 : 16;
++    uint32_t destSelect : 2;
++    uint32_t reserved7 : 6;
++    uint32_t intSelect : 3;
++    uint32_t reserved8 : 2;
++    uint32_t dataSelect : 3;
++    union
++    {
++        struct
++        {
++            uint32_t addrLo;
++            uint32_t addrHi;
++        };
++        uint64_t addr;
++    };
++    union
++    {
++        struct
++        {
++            union
++            {
++                struct
++                {
++                    uint32_t dwOffset : 16;
++                    uint32_t numDws : 16;
++                };
++                uint32_t dataLo : 32;
++            };
++            uint32_t dataHi;
++        };
++        uint64_t data;
++    };
++    uint32_t intCtxId;
++}  PM4ReleaseMem;
++static_assert(sizeof(PM4ReleaseMem) == 28);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t offset : 16;
++    uint32_t reserved : 16;
++    uint32_t data;
++}  PM4SetUconfigReg;
++static_assert(sizeof(PM4SetUconfigReg) == 8);
++
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t ibBaseLo;
++            uint32_t ibBaseHi;
++        };
++        uint64_t ibBase;
++    };
++    uint32_t ibSize : 20;
++    uint32_t chain : 1;
++    uint32_t offleadPolling : 1;
++    uint32_t reserved1 : 1;
++    uint32_t valid : 1;
++    uint32_t processCnt : 4;
++    uint32_t reserved2 : 4;
++}  PM4RunList;
++static_assert(sizeof(PM4RunList) == 12);
++
++typedef struct GEM5_PACKED
++{
++    uint32_t contextId : 28;
++    uint32_t interruptSel : 2;
++    uint32_t command : 2;
++    union
++    {
++        struct
++        {
++            uint32_t pasid : 16;
++            uint32_t reserved0 : 16;
++        };
++        struct
++        {
++            uint32_t reserved1 : 2;
++            uint32_t doorbellOffset : 26;
++            uint32_t engineSel : 3;
++            uint32_t reserved2 : 1;
++        };
++    };
++    union
++    {
++        struct
++        {
++            uint32_t addrLo;
++            uint32_t addrHi;
++        };
++        uint64_t addr;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t dataLo;
++            uint32_t dataHi;
++        };
++        uint64_t data;
++    };
++}  PM4QueryStatus;
++static_assert(sizeof(PM4QueryStatus) == 24);
++
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_PM4_DEFINES_HH__
+diff --git a/src/dev/amdgpu/pm4_mmio.hh b/src/dev/amdgpu/pm4_mmio.hh
+new file mode 100644
+index 0000000..a3ce5f1
+--- /dev/null
++++ b/src/dev/amdgpu/pm4_mmio.hh
+@@ -0,0 +1,69 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_AMDGPU_PM4_MMIO_HH__
++#define __DEV_AMDGPU_PM4_MMIO_HH__
++
++namespace gem5
++{
++
++#define mmCP_RB0_BASE                                                 0x1040
++#define mmCP_RB0_CNTL                                                 0x1041
++#define mmCP_RB_WPTR_POLL_ADDR_LO                                     0x1046
++#define mmCP_RB_WPTR_POLL_ADDR_HI                                     0x1047
++#define mmCP_RB_VMID                                                  0x1051
++#define mmCP_RB0_RPTR_ADDR                                            0x1043
++#define mmCP_RB0_RPTR_ADDR_HI                                         0x1044
++#define mmCP_RB0_WPTR                                                 0x1054
++#define mmCP_RB0_WPTR_HI                                              0x1055
++#define mmCP_RB_DOORBELL_CONTROL                                      0x1059
++#define mmCP_RB_DOORBELL_RANGE_LOWER                                  0x105a
++#define mmCP_RB_DOORBELL_RANGE_UPPER                                  0x105b
++#define mmCP_RB0_BASE_HI                                              0x10b1
++
++#define mmCP_HQD_ACTIVE                                               0x1247
++#define mmCP_HQD_VMID                                                 0x1248
++#define mmCP_HQD_PQ_BASE                                              0x124d
++#define mmCP_HQD_PQ_BASE_HI                                           0x124e
++#define mmCP_HQD_PQ_DOORBELL_CONTROL                                  0x1254
++#define mmCP_HQD_PQ_RPTR                                              0x124f
++#define mmCP_HQD_PQ_RPTR_REPORT_ADDR                                  0x1250
++#define mmCP_HQD_PQ_RPTR_REPORT_ADDR_HI                               0x1251
++#define mmCP_HQD_PQ_WPTR_POLL_ADDR                                    0x1252
++#define mmCP_HQD_PQ_WPTR_POLL_ADDR_HI                                 0x1253
++#define mmCP_HQD_IB_CONTROL                                           0x125a
++#define mmCP_HQD_PQ_WPTR_LO                                           0x127b
++#define mmCP_HQD_PQ_WPTR_HI                                           0x127c
++
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_PM4_MMIO_HH__
+diff --git a/src/dev/amdgpu/pm4_packet_processor.cc b/src/dev/amdgpu/pm4_packet_processor.cc
+new file mode 100644
+index 0000000..d076944
+--- /dev/null
++++ b/src/dev/amdgpu/pm4_packet_processor.cc
+@@ -0,0 +1,1071 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#include "dev/amdgpu/pm4_packet_processor.hh"
++
++#include "debug/PM4PacketProcessor.hh"
++#include "dev/amdgpu/amdgpu_device.hh"
++#include "dev/amdgpu/interrupt_handler.hh"
++#include "dev/amdgpu/pm4_mmio.hh"
++#include "dev/amdgpu/sdma_engine.hh"
++#include "dev/hsa/hw_scheduler.hh"
++#include "enums/GfxVersion.hh"
++#include "gpu-compute/gpu_command_processor.hh"
++#include "mem/packet.hh"
++#include "mem/packet_access.hh"
++
++namespace gem5
++{
++
++PM4PacketProcessor::PM4PacketProcessor(const PM4PacketProcessorParams &p)
++    : DmaVirtDevice(p)
++{
++    memset(&kiq, 0, sizeof(QueueDesc));
++    memset(&pq, 0, sizeof(QueueDesc));
++}
++
++/**
++ * AMDGPUDevice will perform DMA operations on VAs, and because
++ * page faults are not currently supported for Vega 10, we
++ * must be able to find the pages mapped for the process.
++ */
++TranslationGenPtr
++PM4PacketProcessor::translate(Addr vaddr, Addr size)
++{
++    if (gpuDevice->getVM().inAGP(vaddr)) {
++        // Use AGP translation gen
++        return TranslationGenPtr(
++            new AMDGPUVM::AGPTranslationGen(&gpuDevice->getVM(), vaddr, size));
++    }
++
++    // Assume GART otherwise as this is the only other translation aperture
++    // available to the PM4 packet processor.
++    return TranslationGenPtr(
++        new AMDGPUVM::GARTTranslationGen(&gpuDevice->getVM(), vaddr, size));
++}
++
++AddrRangeList
++PM4PacketProcessor::getAddrRanges() const
++{
++    AddrRangeList ranges;
++    return ranges;
++}
++
++void
++PM4PacketProcessor::setGPUDevice(AMDGPUDevice *gpu_device)
++{
++    gpuDevice = gpu_device;
++}
++
++Addr
++PM4PacketProcessor::getGARTAddr(Addr addr) const
++{
++    if (!gpuDevice->getVM().inAGP(addr)) {
++        Addr low_bits = bits(addr, 11, 0);
++        addr = (((addr >> 12) << 3) << 12) | low_bits;
++    }
++    return addr;
++}
++
++PM4Queue *
++PM4PacketProcessor::getQueue(Addr offset, bool gfx)
++{
++    auto result = queuesMap.find(offset);
++    if (result == queuesMap.end()) {
++        if (gfx)
++            mapPq(offset);
++        else
++            mapKiq(offset);
++        return queuesMap[offset];
++    }
++    return result->second;
++}
++
++void
++PM4PacketProcessor::mapKiq(Addr offset)
++{
++    DPRINTF(PM4PacketProcessor, "Mapping KIQ\n");
++    newQueue((QueueDesc *)&kiq, offset);
++}
++
++void
++PM4PacketProcessor::mapPq(Addr offset)
++{
++    DPRINTF(PM4PacketProcessor, "Mapping PQ\n");
++    newQueue((QueueDesc *)&pq, offset);
++}
++
++void
++PM4PacketProcessor::newQueue(QueueDesc *mqd, Addr offset,
++                             PM4MapQueues *pkt, int id)
++{
++    if (id == -1)
++        id = queues.size();
++
++    /* 256 bytes aligned address */
++    mqd->base <<= 8;
++    PM4Queue *q = new PM4Queue(id, mqd, offset, pkt);
++
++    queuesMap[offset] = q;
++    queues[id] = q;
++
++    /* we are assumming only compute queues can be map from MQDs */
++    QueueType qt;
++    qt = mqd->aql ? QueueType::ComputeAQL
++                  : QueueType::Compute;
++    gpuDevice->setDoorbellType(offset, qt);
++
++    DPRINTF(PM4PacketProcessor, "New PM4 queue %d, base: %p offset: %p\n",
++            id, q->base(), q->offset());
++}
++
++void
++PM4PacketProcessor::process(PM4Queue *q, Addr wptrOffset)
++{
++    q->wptr(wptrOffset * sizeof(uint32_t));
++
++    if (!q->processing()) {
++        q->processing(true);
++        decodeNext(q);
++    }
++}
++
++void
++PM4PacketProcessor::decodeNext(PM4Queue *q)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 decode queue %d rptr %p, wptr %p\n",
++            q->id(), q->rptr(), q->wptr());
++
++    if (q->rptr() < q->wptr()) {
++        PM4Header h{0, 0, 0, 0, 0, 0};
++        auto cb = new DmaVirtCallback<PM4Header>(
++            [ = ] (PM4Header header)
++                { decodeHeader(q, header); }, h);
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(uint32_t), cb,
++                    &cb->dmaBuffer);
++    } else {
++        q->processing(false);
++        if (q->ib()) {
++            q->ib(false);
++            decodeNext(q);
++        }
++    }
++}
++
++void
++PM4PacketProcessor::decodeHeader(PM4Queue *q, PM4Header header)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 packet %p\n", header.opcode);
++
++    q->incRptr(sizeof(PM4Header));
++
++    DmaVirtCallback<uint64_t> *cb = nullptr;
++    void *dmaBuffer = nullptr;
++
++    switch(header.opcode) {
++      case IT_NOP: {
++        DPRINTF(PM4PacketProcessor, "PM4 nop, count %p\n", header.count);
++        DPRINTF(PM4PacketProcessor, "rptr %p wptr %p\n", q->rptr(), q->wptr());
++        if (header.count == 0x3fff) {
++            q->fastforwardRptr();
++        } else {
++            q->incRptr((header.count + 1) * sizeof(uint32_t));
++        }
++        decodeNext(q);
++        } break;
++      case IT_WRITE_DATA: {
++        dmaBuffer = new PM4WriteData();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { writeData(q, (PM4WriteData *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4WriteData), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_MAP_QUEUES: {
++        dmaBuffer = new PM4MapQueues();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { mapQueues(q, (PM4MapQueues *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4MapQueues), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_RELEASE_MEM: {
++        dmaBuffer = new PM4ReleaseMem();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { releaseMem(q, (PM4ReleaseMem *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4ReleaseMem), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_INDIRECT_BUFFER: {
++        dmaBuffer = new PM4IndirectBuf();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { indirectBuffer(q, (PM4IndirectBuf *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4IndirectBuf), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_SWITCH_BUFFER: {
++        dmaBuffer = new PM4SwitchBuf();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { switchBuffer(q, (PM4SwitchBuf *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4SwitchBuf), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_SET_UCONFIG_REG: {
++        dmaBuffer = new PM4SetUconfigReg();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { setUconfigReg(q, (PM4SetUconfigReg *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4SetUconfigReg), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_WAIT_REG_MEM: {
++        dmaBuffer = new PM4WaitRegMem();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { waitRegMem(q, (PM4WaitRegMem *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4WaitRegMem), cb,
++                    dmaBuffer);
++        } break;
++      case IT_MAP_PROCESS: {
++        dmaBuffer = new PM4MapProcess();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { mapProcess(q, (PM4MapProcess *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4MapProcess), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_UNMAP_QUEUES: {
++        dmaBuffer = new PM4UnmapQueues();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { unmapQueues(q, (PM4UnmapQueues *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4UnmapQueues), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_RUN_LIST: {
++        dmaBuffer = new PM4RunList();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { runList(q, (PM4RunList *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4RunList), cb,
++                    dmaBuffer);
++        } break;
++
++      case IT_QUERY_STATUS: {
++        dmaBuffer = new PM4QueryStatus();
++        cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &)
++                { queryStatus(q, (PM4QueryStatus *)dmaBuffer); });
++        dmaReadVirt(getGARTAddr(q->rptr()), sizeof(PM4QueryStatus), cb,
++                    dmaBuffer);
++        } break;
++
++      default: {
++        warn("PM4 packet opcode 0x%x not supported.\n", header.opcode);
++        DPRINTF(PM4PacketProcessor, "PM4 packet opcode 0x%x not supported.\n",
++                header.opcode);
++        q->incRptr((header.count + 1) * sizeof(uint32_t));
++        decodeNext(q);
++        } break;
++    }
++}
++
++void
++PM4PacketProcessor::writeData(PM4Queue *q, PM4WriteData *pkt)
++{
++    q->incRptr(sizeof(PM4WriteData));
++
++    Addr addr = getGARTAddr(pkt->destAddr);
++    DPRINTF(PM4PacketProcessor, "PM4 write addr: %p data: %p.\n", addr,
++            pkt->data);
++    auto cb = new DmaVirtCallback<uint32_t>(
++        [ = ](const uint32_t &) { writeDataDone(q, pkt, addr); });
++    //TODO: the specs indicate that pkt->data holds the number of dword that
++    //need to be written.
++    dmaWriteVirt(addr, sizeof(uint32_t), cb, &pkt->data);
++
++    if (!pkt->writeConfirm)
++        decodeNext(q);
++}
++
++void
++PM4PacketProcessor::writeDataDone(PM4Queue *q, PM4WriteData *pkt, Addr addr)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 write completed to %p, %p.\n", addr,
++            pkt->data);
++
++    if (pkt->writeConfirm)
++        decodeNext(q);
++
++    delete pkt;
++}
++
++void
++PM4PacketProcessor::mapQueues(PM4Queue *q, PM4MapQueues *pkt)
++{
++    q->incRptr(sizeof(PM4MapQueues));
++
++    DPRINTF(PM4PacketProcessor, "MAPQueues queueSel: %d, vmid: %d, me: %d, "
++            "pipe: %d, queueSlot: %d, queueType: %d, allocFormat: %d, "
++            "engineSel: %d, numQueues: %d, checkDisable: %d, doorbellOffset:"
++            " %d, mqdAddr: %lx, wptrAddr: %lx\n", pkt->queueSel, pkt->vmid,
++            pkt->me, pkt->pipe, pkt->queueSlot, pkt->queueType,
++            pkt->allocFormat, pkt->engineSel, pkt->numQueues,
++            pkt->checkDisable, pkt->doorbellOffset, pkt->mqdAddr,
++            pkt->wptrAddr);
++
++    // Partially reading the mqd with an offset of 96 dwords
++    if (pkt->engineSel == 0 || pkt->engineSel == 1 || pkt->engineSel == 4) {
++        Addr addr = getGARTAddr(pkt->mqdAddr + 96 * sizeof(uint32_t));
++
++        DPRINTF(PM4PacketProcessor,
++                "Mapping mqd from %p %p (vmid %d - last vmid %d).\n",
++                addr, pkt->mqdAddr, pkt->vmid, gpuDevice->lastVMID());
++
++        gpuDevice->mapDoorbellToVMID(pkt->doorbellOffset,
++                                     gpuDevice->lastVMID());
++
++        QueueDesc *mqd = new QueueDesc();
++        memset(mqd, 0, sizeof(QueueDesc));
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ] (const uint32_t &) {
++                processMQD(pkt, q, addr, mqd, gpuDevice->lastVMID()); });
++        dmaReadVirt(addr, sizeof(QueueDesc), cb, mqd);
++    } else if (pkt->engineSel == 2 || pkt->engineSel == 3) {
++        SDMAQueueDesc *sdmaMQD = new SDMAQueueDesc();
++        memset(sdmaMQD, 0, sizeof(SDMAQueueDesc));
++
++        Addr addr = pkt->mqdAddr;
++
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ] (const uint32_t &) {
++                processSDMAMQD(pkt, q, addr, sdmaMQD,
++                               gpuDevice->lastVMID()); });
++        dmaReadVirt(addr, sizeof(SDMAQueueDesc), cb, sdmaMQD);
++    } else {
++        panic("Unknown engine for MQD: %d\n", pkt->engineSel);
++    }
++
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::processMQD(PM4MapQueues *pkt, PM4Queue *q, Addr addr,
++    QueueDesc *mqd, uint16_t vmid)
++{
++    DPRINTF(PM4PacketProcessor, "MQDbase: %lx, active: %d, vmid: %d, base: "
++            "%lx, rptr: %x aqlPtr: %lx\n", mqd->mqdBase, mqd->hqd_active,
++            mqd->hqd_vmid, mqd->base, mqd->rptr, mqd->aqlRptr);
++
++    Addr offset = mqd->doorbell & 0x1ffffffc;
++    newQueue(mqd, offset, pkt);
++    PM4Queue *new_q = queuesMap[offset];
++    gpuDevice->insertQId(vmid, new_q->id());
++
++    if (mqd->aql) {
++        // Note: The size of the AQL queue is currently hardcoded to 64k. This
++        // can cause issues if the AQL queue is larger since it will not wrap
++        // around at the right time in the HSAPacketProcessor.
++        auto &hsa_pp = gpuDevice->CP()->hsaPacketProc();
++        hsa_pp.setDeviceQueueDesc(mqd->aqlRptr, mqd->base, new_q->id(),
++                                  65536, 8, GfxVersion::gfx900, offset,
++                                  mqd->mqdReadIndex);
++    }
++
++    DPRINTF(PM4PacketProcessor, "PM4 mqd read completed, base %p, mqd %p, "
++            "hqdAQL %d.\n", mqd->base, mqd->mqdBase, mqd->aql);
++}
++
++void
++PM4PacketProcessor::processSDMAMQD(PM4MapQueues *pkt, PM4Queue *q, Addr addr,
++    SDMAQueueDesc *mqd, uint16_t vmid)
++{
++    DPRINTF(PM4PacketProcessor, "SDMAMQD: rb base: %#lx rptr: %#x/%#x wptr: "
++            "%#x/%#x ib: %#x/%#x size: %d ctrl: %#x\n", mqd->rb_base,
++            mqd->sdmax_rlcx_rb_rptr, mqd->sdmax_rlcx_rb_rptr_hi,
++            mqd->sdmax_rlcx_rb_wptr, mqd->sdmax_rlcx_rb_wptr_hi,
++            mqd->sdmax_rlcx_ib_base_lo, mqd->sdmax_rlcx_ib_base_hi,
++            mqd->sdmax_rlcx_ib_size, mqd->sdmax_rlcx_rb_cntl);
++
++    // Engine 2 points to SDMA0 while engine 3 points to SDMA1
++    assert(pkt->engineSel == 2 || pkt->engineSel == 3);
++    SDMAEngine *sdma_eng = gpuDevice->getSDMAById(pkt->engineSel - 2);
++
++    // Register RLC queue with SDMA
++    sdma_eng->registerRLCQueue(pkt->doorbellOffset << 2,
++                               mqd->rb_base << 8);
++
++    // Register doorbell with GPU device
++    gpuDevice->setSDMAEngine(pkt->doorbellOffset << 2, sdma_eng);
++    gpuDevice->setDoorbellType(pkt->doorbellOffset << 2, RLC);
++}
++
++void
++PM4PacketProcessor::releaseMem(PM4Queue *q, PM4ReleaseMem *pkt)
++{
++    q->incRptr(sizeof(PM4ReleaseMem));
++
++    Addr addr = getGARTAddr(pkt->addr);
++    DPRINTF(PM4PacketProcessor, "PM4 release_mem event %d eventIdx %d intSel "
++            "%d destSel %d dataSel %d, address %p data %p, intCtx %p\n",
++            pkt->event, pkt->eventIdx, pkt->intSelect, pkt->destSelect,
++            pkt->dataSelect, addr, pkt->dataLo, pkt->intCtxId);
++
++    DPRINTF(PM4PacketProcessor,
++            "PM4 release_mem destSel 0 bypasses caches to MC.\n");
++
++    if (pkt->dataSelect == 1) {
++        auto cb = new DmaVirtCallback<uint32_t>(
++            [ = ](const uint32_t &) { releaseMemDone(q, pkt, addr); },
++            pkt->dataLo);
++        dmaWriteVirt(addr, sizeof(uint32_t), cb, &cb->dmaBuffer);
++    } else {
++        panic("Unimplemented PM4ReleaseMem.dataSelect");
++    }
++}
++
++void
++PM4PacketProcessor::releaseMemDone(PM4Queue *q, PM4ReleaseMem *pkt, Addr addr)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 release_mem wrote %d to %p\n",
++            pkt->dataLo, addr);
++    if (pkt->intSelect == 2) {
++        DPRINTF(PM4PacketProcessor, "PM4 interrupt, ctx: %d, me: %d, pipe: "
++                "%d, queueSlot:%d\n", pkt->intCtxId, q->me(), q->pipe(),
++                q->queue());
++        // Rearranging the queue field of PM4MapQueues as the interrupt RingId
++        // format specified in PM4ReleaseMem pkt.
++        uint32_t ringId = (q->me() << 6) | (q->pipe() << 4) | q->queue();
++        gpuDevice->getIH()->prepareInterruptCookie(pkt->intCtxId, ringId,
++            SOC15_IH_CLIENTID_RLC, TRAP_ID);
++        gpuDevice->getIH()->submitInterruptCookie();
++    }
++
++    delete pkt;
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::updateReadIndex(Addr offset, uint64_t rd_idx)
++{
++    assert(queuesMap.count(offset));
++    queuesMap[offset]->getMQD()->mqdReadIndex = rd_idx;
++}
++
++void
++PM4PacketProcessor::unmapQueues(PM4Queue *q, PM4UnmapQueues *pkt)
++{
++    q->incRptr(sizeof(PM4UnmapQueues));
++
++    DPRINTF(PM4PacketProcessor, "PM4 unmap_queues queueSel: %d numQueues: %d "
++            "pasid: %p doorbellOffset0 %p \n",
++            pkt->queueSel, pkt->numQueues, pkt->pasid, pkt->doorbellOffset0);
++
++    switch (pkt->queueSel) {
++      case 0:
++        switch (pkt->numQueues) {
++          case 1:
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset0));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset1));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset2));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset3));
++            break;
++          case 2:
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset1));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset2));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset3));
++            break;
++          case 3:
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset2));
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset3));
++            break;
++          case 4:
++            gpuDevice->deallocateVmid(
++                    gpuDevice->getVMID(pkt->doorbellOffset3));
++            break;
++          default:
++            panic("Unrecognized number of queues %d\n", pkt->numQueues);
++        }
++        break;
++      case 1:
++        gpuDevice->deallocatePasid(pkt->pasid);
++        break;
++      case 2:
++        break;
++      case 3: {
++        auto &hsa_pp = gpuDevice->CP()->hsaPacketProc();
++        for (auto iter : gpuDevice->getUsedVMIDs()) {
++            for (auto id : iter.second) {
++                assert(queues.count(id));
++
++                // Do not unmap KMD queues
++                if (queues[id]->privileged()) {
++                    continue;
++                }
++                QueueDesc *mqd = queues[id]->getMQD();
++                DPRINTF(PM4PacketProcessor, "Unmapping queue %d with read "
++                        "index %ld\n", id, mqd->mqdReadIndex);
++                // Partially writing the mqd with an offset of 96 dwords
++                Addr addr = getGARTAddr(queues[id]->mqdBase() +
++                                        96 * sizeof(uint32_t));
++                Addr mqd_base = queues[id]->mqdBase();
++                auto cb = new DmaVirtCallback<uint32_t>(
++                    [ = ] (const uint32_t &) {
++                        doneMQDWrite(mqd_base, addr);
++                    });
++                mqd->base >>= 8;
++                dmaWriteVirt(addr, sizeof(QueueDesc), cb, mqd);
++                queues.erase(id);
++                hsa_pp.unsetDeviceQueueDesc(id, 8);
++            }
++        }
++        gpuDevice->deallocateAllQueues();
++      } break;
++      default:
++        panic("Unrecognized options\n");
++        break;
++    }
++
++    delete pkt;
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::doneMQDWrite(Addr mqdAddr, Addr addr) {
++    DPRINTF(PM4PacketProcessor, "PM4 unmap_queues MQD %p wrote to addr %p\n",
++            mqdAddr, addr);
++}
++
++void
++PM4PacketProcessor::mapProcess(PM4Queue *q, PM4MapProcess *pkt)
++{
++    q->incRptr(sizeof(PM4MapProcess));
++    uint16_t vmid = gpuDevice->allocateVMID(pkt->pasid);
++
++    DPRINTF(PM4PacketProcessor, "PM4 map_process pasid: %p vmid: %d quantum: "
++            "%d pt: %p signal: %p\n", pkt->pasid, vmid, pkt->processQuantum,
++            pkt->ptBase, pkt->completionSignal);
++
++    gpuDevice->getVM().setPageTableBase(vmid, pkt->ptBase);
++
++    delete pkt;
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::runList(PM4Queue *q, PM4RunList *pkt)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 run_list base: %p size: %d\n",
++            pkt->ibBase, pkt->ibSize);
++
++    q->incRptr(sizeof(PM4RunList));
++
++    q->ib(true);
++    q->ibBase(pkt->ibBase);
++    q->rptr(0);
++    q->wptr(pkt->ibSize * sizeof(uint32_t));
++
++    delete pkt;
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::indirectBuffer(PM4Queue *q, PM4IndirectBuf *pkt)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 indirect buffer, base: %p.\n",
++            pkt->ibBase);
++
++    q->incRptr(sizeof(PM4IndirectBuf));
++
++    q->ib(true);
++    q->ibBase(pkt->ibBase);
++    q->wptr(pkt->ibSize * sizeof(uint32_t));
++
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::switchBuffer(PM4Queue *q, PM4SwitchBuf *pkt)
++{
++    q->incRptr(sizeof(PM4SwitchBuf));
++
++    q->ib(true);
++    DPRINTF(PM4PacketProcessor, "PM4 switching buffer, rptr: %p.\n",
++            q->wptr());
++
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::setUconfigReg(PM4Queue *q, PM4SetUconfigReg *pkt)
++{
++    q->incRptr(sizeof(PM4SetUconfigReg));
++
++    // SET_UCONFIG_REG_START and pkt->offset are dword addresses
++    uint32_t reg_addr = (PACKET3_SET_UCONFIG_REG_START + pkt->offset) * 4;
++
++    gpuDevice->setRegVal(reg_addr, pkt->data);
++
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::waitRegMem(PM4Queue *q, PM4WaitRegMem *pkt)
++{
++    q->incRptr(sizeof(PM4WaitRegMem));
++
++    DPRINTF(PM4PacketProcessor, "PM4 WAIT_REG_MEM\nfunc: %d memSpace: %d op: "
++            "%d\n", pkt->function, pkt->memSpace, pkt->operation);
++    DPRINTF(PM4PacketProcessor, "    AddrLo/Reg1: %lx\n", pkt->memAddrLo);
++    DPRINTF(PM4PacketProcessor, "    AddrHi/Reg2: %lx\n", pkt->memAddrHi);
++    DPRINTF(PM4PacketProcessor, "    Reference: %lx\n", pkt->reference);
++    DPRINTF(PM4PacketProcessor, "    Mask: %lx\n", pkt->mask);
++    DPRINTF(PM4PacketProcessor, "    Poll Interval: %lx\n", pkt->pollInterval);
++
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::queryStatus(PM4Queue *q, PM4QueryStatus *pkt)
++{
++    q->incRptr(sizeof(PM4QueryStatus));
++
++    DPRINTF(PM4PacketProcessor, "PM4 query status contextId: %d, interruptSel:"
++            " %d command: %d, pasid: %d, doorbellOffset: %d, engineSel: %d "
++            "addr: %lx, data: %lx\n", pkt->contextId, pkt->interruptSel,
++            pkt->command, pkt->pasid, pkt->doorbellOffset, pkt->engineSel,
++            pkt->addr, pkt->data);
++
++    if (pkt->interruptSel == 0 && pkt->command == 2) {
++        // Write data value to fence address
++        Addr addr = getGARTAddr(pkt->addr);
++        DPRINTF(PM4PacketProcessor, "Using GART addr %lx\n", addr);
++        auto cb = new DmaVirtCallback<uint64_t>(
++            [ = ] (const uint64_t &) { queryStatusDone(q, pkt); }, pkt->data);
++        dmaWriteVirt(addr, sizeof(uint64_t), cb, &cb->dmaBuffer);
++    } else {
++        // No other combinations used in amdkfd v9
++        panic("query_status with interruptSel %d command %d not supported",
++              pkt->interruptSel, pkt->command);
++    }
++}
++
++void
++PM4PacketProcessor::queryStatusDone(PM4Queue *q, PM4QueryStatus *pkt)
++{
++    DPRINTF(PM4PacketProcessor, "PM4 query status complete\n");
++
++    delete pkt;
++    decodeNext(q);
++}
++
++void
++PM4PacketProcessor::writeMMIO(PacketPtr pkt, Addr mmio_offset)
++{
++    switch (mmio_offset) {
++      /* Hardware queue descriptor (HQD) registers */
++      case mmCP_HQD_VMID:
++        setHqdVmid(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_ACTIVE:
++        setHqdActive(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_BASE:
++        setHqdPqBase(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_BASE_HI:
++        setHqdPqBaseHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_DOORBELL_CONTROL:
++        setHqdPqDoorbellCtrl(pkt->getLE<uint32_t>());
++        gpuDevice->setDoorbellType(getKiqDoorbellOffset(), Compute);
++        break;
++      case mmCP_HQD_PQ_RPTR:
++        setHqdPqPtr(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_WPTR_LO:
++        setHqdPqWptrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_WPTR_HI:
++        setHqdPqWptrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_RPTR_REPORT_ADDR:
++        setHqdPqRptrReportAddr(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_RPTR_REPORT_ADDR_HI:
++        setHqdPqRptrReportAddrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_WPTR_POLL_ADDR:
++        setHqdPqWptrPollAddr(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_PQ_WPTR_POLL_ADDR_HI:
++        setHqdPqWptrPollAddrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_HQD_IB_CONTROL:
++        setHqdIbCtrl(pkt->getLE<uint32_t>());
++        break;
++      /* Ring buffer registers */
++      case mmCP_RB_VMID:
++        setRbVmid(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_CNTL:
++        setRbCntl(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_WPTR:
++        setRbWptrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_WPTR_HI:
++        setRbWptrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_RPTR_ADDR:
++        setRbRptrAddrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_RPTR_ADDR_HI:
++        setRbRptrAddrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB_WPTR_POLL_ADDR_LO:
++        setRbWptrPollAddrLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB_WPTR_POLL_ADDR_HI:
++        setRbWptrPollAddrHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_BASE:
++        setRbBaseLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB0_BASE_HI:
++        setRbBaseHi(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB_DOORBELL_CONTROL:
++        setRbDoorbellCntrl(pkt->getLE<uint32_t>());
++        gpuDevice->setDoorbellType(getPqDoorbellOffset(), Gfx);
++        break;
++      case mmCP_RB_DOORBELL_RANGE_LOWER:
++        setRbDoorbellRangeLo(pkt->getLE<uint32_t>());
++        break;
++      case mmCP_RB_DOORBELL_RANGE_UPPER:
++        setRbDoorbellRangeHi(pkt->getLE<uint32_t>());
++        break;
++      default:
++        break;
++    }
++}
++
++void
++PM4PacketProcessor::setHqdVmid(uint32_t data)
++{
++    kiq.hqd_vmid = data;
++}
++
++void
++PM4PacketProcessor::setHqdActive(uint32_t data)
++{
++    kiq.hqd_active = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqBase(uint32_t data)
++{
++    kiq.hqd_pq_base_lo = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqBaseHi(uint32_t data)
++{
++    kiq.hqd_pq_base_hi = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqDoorbellCtrl(uint32_t data)
++{
++    kiq.hqd_pq_doorbell_control = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqPtr(uint32_t data)
++{
++    kiq.rptr = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqWptrLo(uint32_t data)
++{
++    /* Write pointer communicated through doorbell value. */
++}
++
++void
++PM4PacketProcessor::setHqdPqWptrHi(uint32_t data)
++{
++    /* Write pointer communicated through doorbell value. */
++}
++
++void
++PM4PacketProcessor::setHqdPqRptrReportAddr(uint32_t data)
++{
++    kiq.hqd_pq_rptr_report_addr_lo = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqRptrReportAddrHi(uint32_t data)
++{
++    kiq.hqd_pq_rptr_report_addr_hi = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqWptrPollAddr(uint32_t data)
++{
++    kiq.hqd_pq_wptr_poll_addr_lo = data;
++}
++
++void
++PM4PacketProcessor::setHqdPqWptrPollAddrHi(uint32_t data)
++{
++    kiq.hqd_pq_wptr_poll_addr_hi = data;
++}
++
++void
++PM4PacketProcessor::setHqdIbCtrl(uint32_t data)
++{
++    kiq.hqd_ib_control = data;
++}
++
++void
++PM4PacketProcessor::setRbVmid(uint32_t data)
++{
++    pq.hqd_vmid = data;
++}
++
++void
++PM4PacketProcessor::setRbCntl(uint32_t data)
++{
++    pq.hqd_pq_control = data;
++}
++
++void
++PM4PacketProcessor::setRbWptrLo(uint32_t data)
++{
++    pq.queueWptrLo = data;
++}
++
++void
++PM4PacketProcessor::setRbWptrHi(uint32_t data)
++{
++    pq.queueWptrHi = data;
++}
++
++void
++PM4PacketProcessor::setRbRptrAddrLo(uint32_t data)
++{
++    pq.queueRptrAddrLo = data;
++}
++
++void
++PM4PacketProcessor::setRbRptrAddrHi(uint32_t data)
++{
++    pq.queueRptrAddrHi = data;
++}
++
++void
++PM4PacketProcessor::setRbWptrPollAddrLo(uint32_t data)
++{
++    pq.hqd_pq_wptr_poll_addr_lo = data;
++}
++
++void
++PM4PacketProcessor::setRbWptrPollAddrHi(uint32_t data)
++{
++    pq.hqd_pq_wptr_poll_addr_hi = data;
++}
++
++void
++PM4PacketProcessor::setRbBaseLo(uint32_t data)
++{
++    pq.hqd_pq_base_lo = data;
++}
++
++void
++PM4PacketProcessor::setRbBaseHi(uint32_t data)
++{
++    pq.hqd_pq_base_hi = data;
++}
++
++void
++PM4PacketProcessor::setRbDoorbellCntrl(uint32_t data)
++{
++    pq.hqd_pq_doorbell_control = data;
++    pq.doorbellOffset = data & 0x1ffffffc;
++}
++
++void
++PM4PacketProcessor::setRbDoorbellRangeLo(uint32_t data)
++{
++    pq.doorbellRangeLo = data;
++}
++
++void
++PM4PacketProcessor::setRbDoorbellRangeHi(uint32_t data)
++{
++    pq.doorbellRangeHi = data;
++}
++
++void
++PM4PacketProcessor::serialize(CheckpointOut &cp) const
++{
++    // Serialize the DmaVirtDevice base class
++    DmaVirtDevice::serialize(cp);
++
++    int num_queues = queues.size();
++    Addr id[num_queues];
++    Addr mqd_base[num_queues];
++    Addr base[num_queues];
++    Addr rptr[num_queues];
++    Addr wptr[num_queues];
++    Addr ib_base[num_queues];
++    Addr ib_rptr[num_queues];
++    Addr ib_wptr[num_queues];
++    Addr offset[num_queues];
++    bool processing[num_queues];
++    bool ib[num_queues];
++
++    int i = 0;
++    for (auto iter : queues) {
++        PM4Queue *q = iter.second;
++        id[i] = q->id();
++        mqd_base[i] = q->mqdBase();
++        bool cur_state = q->ib();
++        q->ib(false);
++        base[i] = q->base() >> 8;
++        rptr[i] = q->getRptr();
++        wptr[i] = q->getWptr();
++        q->ib(true);
++        ib_base[i] = q->ibBase();
++        ib_rptr[i] = q->getRptr();
++        ib_wptr[i] = q->getWptr();
++        q->ib(cur_state);
++        offset[i] = q->offset();
++        processing[i] = q->processing();
++        ib[i] = q->ib();
++        i++;
++    }
++
++    SERIALIZE_SCALAR(num_queues);
++    SERIALIZE_ARRAY(id, num_queues);
++    SERIALIZE_ARRAY(mqd_base, num_queues);
++    SERIALIZE_ARRAY(base, num_queues);
++    SERIALIZE_ARRAY(rptr, num_queues);
++    SERIALIZE_ARRAY(wptr, num_queues);
++    SERIALIZE_ARRAY(ib_base, num_queues);
++    SERIALIZE_ARRAY(ib_rptr, num_queues);
++    SERIALIZE_ARRAY(ib_wptr, num_queues);
++    SERIALIZE_ARRAY(offset, num_queues);
++    SERIALIZE_ARRAY(processing, num_queues);
++    SERIALIZE_ARRAY(ib, num_queues);
++}
++
++void
++PM4PacketProcessor::unserialize(CheckpointIn &cp)
++{
++    // Serialize the DmaVirtDevice base class
++    DmaVirtDevice::unserialize(cp);
++
++    int num_queues = 0;
++    UNSERIALIZE_SCALAR(num_queues);
++
++    Addr id[num_queues];
++    Addr mqd_base[num_queues];
++    Addr base[num_queues];
++    Addr rptr[num_queues];
++    Addr wptr[num_queues];
++    Addr ib_base[num_queues];
++    Addr ib_rptr[num_queues];
++    Addr ib_wptr[num_queues];
++    Addr offset[num_queues];
++    bool processing[num_queues];
++    bool ib[num_queues];
++
++    UNSERIALIZE_ARRAY(id, num_queues);
++    UNSERIALIZE_ARRAY(mqd_base, num_queues);
++    UNSERIALIZE_ARRAY(base, num_queues);
++    UNSERIALIZE_ARRAY(rptr, num_queues);
++    UNSERIALIZE_ARRAY(wptr, num_queues);
++    UNSERIALIZE_ARRAY(ib_base, num_queues);
++    UNSERIALIZE_ARRAY(ib_rptr, num_queues);
++    UNSERIALIZE_ARRAY(ib_wptr, num_queues);
++    UNSERIALIZE_ARRAY(offset, num_queues);
++    UNSERIALIZE_ARRAY(processing, num_queues);
++    UNSERIALIZE_ARRAY(ib, num_queues);
++
++    for (int i = 0; i < num_queues; i++) {
++        QueueDesc *mqd = new QueueDesc();
++        memset(mqd, 0, sizeof(QueueDesc));
++
++        mqd->mqdBase = mqd_base[i] >> 8;
++        mqd->base = base[i];
++        mqd->rptr = rptr[i];
++        mqd->ibBase = ib_base[i];
++        mqd->ibRptr = ib_rptr[i];
++
++        newQueue(mqd, offset[i], nullptr, id[i]);
++
++        queues[id[i]]->ib(false);
++        queues[id[i]]->wptr(wptr[i]);
++        queues[id[i]]->ib(true);
++        queues[id[i]]->wptr(ib_wptr[i]);
++        queues[id[i]]->offset(offset[i]);
++        queues[id[i]]->processing(processing[i]);
++        queues[id[i]]->ib(ib[i]);
++        DPRINTF(PM4PacketProcessor, "PM4 queue %d, rptr: %p wptr: %p\n",
++                queues[id[i]]->id(), queues[id[i]]->rptr(),
++                queues[id[i]]->wptr());
++    }
++}
++
++} // namespace gem5
+diff --git a/src/dev/amdgpu/pm4_packet_processor.hh b/src/dev/amdgpu/pm4_packet_processor.hh
+new file mode 100644
+index 0000000..c77edd2
+--- /dev/null
++++ b/src/dev/amdgpu/pm4_packet_processor.hh
+@@ -0,0 +1,190 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_AMDGPU_PM4_PACKET_PROCESSOR__
++#define __DEV_AMDGPU_PM4_PACKET_PROCESSOR__
++
++#include <unordered_map>
++
++#include "dev/amdgpu/amdgpu_device.hh"
++#include "dev/amdgpu/pm4_defines.hh"
++#include "dev/amdgpu/pm4_queues.hh"
++#include "dev/dma_virt_device.hh"
++#include "params/PM4PacketProcessor.hh"
++
++namespace gem5
++{
++
++class AMDGPUDevice;
++
++
++
++
++class PM4PacketProcessor : public DmaVirtDevice
++{
++    AMDGPUDevice *gpuDevice;
++    /* First graphics queue */
++    PrimaryQueue pq;
++    /* First compute queue */
++    QueueDesc kiq;
++
++    /* All PM4 queues, indexed by VMID */
++    std::unordered_map<uint16_t, PM4Queue *> queues;
++    /* A map of PM4 queues based on doorbell offset */
++    std::unordered_map<uint32_t, PM4Queue *> queuesMap;
++  public:
++    PM4PacketProcessor(const PM4PacketProcessorParams &p);
++
++    void setGPUDevice(AMDGPUDevice *gpu_device);
++
++    /**
++     * Inherited methods.
++     */
++    Tick write(PacketPtr pkt) override { return 0; }
++    Tick read(PacketPtr pkt) override { return 0; }
++    AddrRangeList getAddrRanges() const override;
++    void serialize(CheckpointOut &cp) const override;
++    void unserialize(CheckpointIn &cp) override;
++
++    /**
++     * Method for functional translation.
++     */
++    TranslationGenPtr translate(Addr vaddr, Addr size) override;
++
++    uint32_t getKiqDoorbellOffset() { return kiq.doorbell & 0x1ffffffc; }
++    uint32_t getPqDoorbellOffset() { return pq.doorbellOffset; }
++
++    Addr getGARTAddr(Addr addr) const;
++
++    /**
++     * Based on an offset communicated through doorbell write, the
++     * PM4PacketProcessor identifies which queue needs processing.
++     */
++    PM4Queue* getQueue(Addr offset, bool gfx = false);
++    /**
++     * The first graphics queue, the Primary Queueu a.k.a. RB0, needs to be
++     * mapped since all queue details are communicated through MMIOs to
++     * special registers.
++     */
++    void mapPq(Addr offset);
++    /**
++     * The first compute queue, the Kernel Interface Queueu a.k.a. KIQ, needs
++     * to be mapped since all queue details are communicated through MMIOs to
++     * special registers.
++     */
++    void mapKiq(Addr offset);
++    /**
++     * This method creates a new PM4Queue based on a queue descriptor and an
++     * offset.
++     */
++    void newQueue(QueueDesc *q, Addr offset, PM4MapQueues *pkt = nullptr,
++                  int id = -1);
++
++    /**
++     * This method start processing a PM4Queue from the current read pointer
++     * to the newly communicated write pointer (i.e., wptrOffset).
++     */
++    void process(PM4Queue *q, Addr wptrOffset);
++
++    /**
++     * Update read index on doorbell rings. We use write index, however read
++     * index == write index when the queue is empty. This allows us to save
++     * previous read index when a queue is remapped. The remapped queue will
++     * read from the previous read index rather than reset to zero.
++     */
++    void updateReadIndex(Addr offset, uint64_t rd_idx);
++
++    /**
++     * This method decodes the next packet in a PM4Queue.
++     */
++    void decodeNext(PM4Queue *q);
++    /**
++     * This method calls other PM4 packet processing methods based on the
++     * header of a PM4 packet.
++     */
++    void decodeHeader(PM4Queue *q, PM4Header header);
++
++    /* Methods that implement PM4 packets */
++    void writeData(PM4Queue *q, PM4WriteData *pkt);
++    void writeDataDone(PM4Queue *q, PM4WriteData *pkt, Addr addr);
++    void mapQueues(PM4Queue *q, PM4MapQueues *pkt);
++    void unmapQueues(PM4Queue *q, PM4UnmapQueues *pkt);
++    void doneMQDWrite(Addr mqdAddr, Addr addr);
++    void mapProcess(PM4Queue *q, PM4MapProcess *pkt);
++    void processMQD(PM4MapQueues *pkt, PM4Queue *q, Addr addr, QueueDesc *mqd,
++                    uint16_t vmid);
++    void processSDMAMQD(PM4MapQueues *pkt, PM4Queue *q, Addr addr,
++                        SDMAQueueDesc *mqd, uint16_t vmid);
++    void releaseMem(PM4Queue *q, PM4ReleaseMem *pkt);
++    void releaseMemDone(PM4Queue *q, PM4ReleaseMem *pkt, Addr addr);
++    void runList(PM4Queue *q, PM4RunList *pkt);
++    void indirectBuffer(PM4Queue *q, PM4IndirectBuf *pkt);
++    void switchBuffer(PM4Queue *q, PM4SwitchBuf *pkt);
++    void setUconfigReg(PM4Queue *q, PM4SetUconfigReg *pkt);
++    void waitRegMem(PM4Queue *q, PM4WaitRegMem *pkt);
++    void queryStatus(PM4Queue *q, PM4QueryStatus *pkt);
++    void queryStatusDone(PM4Queue *q, PM4QueryStatus *pkt);
++
++    /* Methods that implement MMIO regs */
++    void writeMMIO(PacketPtr pkt, Addr mmio_offset);
++
++    void setHqdVmid(uint32_t data);
++    void setHqdActive(uint32_t data);
++    void setHqdPqBase(uint32_t data);
++    void setHqdPqBaseHi(uint32_t data);
++    void setHqdPqDoorbellCtrl(uint32_t data);
++    void setHqdPqPtr(uint32_t data);
++    void setHqdPqWptrLo(uint32_t data);
++    void setHqdPqWptrHi(uint32_t data);
++    void setHqdPqRptrReportAddr(uint32_t data);
++    void setHqdPqRptrReportAddrHi(uint32_t data);
++    void setHqdPqWptrPollAddr(uint32_t data);
++    void setHqdPqWptrPollAddrHi(uint32_t data);
++    void setHqdIbCtrl(uint32_t data);
++    void setRbVmid(uint32_t data);
++    void setRbCntl(uint32_t data);
++    void setRbWptrLo(uint32_t data);
++    void setRbWptrHi(uint32_t data);
++    void setRbRptrAddrLo(uint32_t data);
++    void setRbRptrAddrHi(uint32_t data);
++    void setRbWptrPollAddrLo(uint32_t data);
++    void setRbWptrPollAddrHi(uint32_t data);
++    void setRbBaseLo(uint32_t data);
++    void setRbBaseHi(uint32_t data);
++    void setRbDoorbellCntrl(uint32_t data);
++    void setRbDoorbellRangeLo(uint32_t data);
++    void setRbDoorbellRangeHi(uint32_t data);
++};
++
++} // namespace gem5
++
++#endif //__DEV_AMDGPU_PM4_PACKET_PROCESSOR__
+diff --git a/src/dev/amdgpu/pm4_queues.hh b/src/dev/amdgpu/pm4_queues.hh
+new file mode 100644
+index 0000000..4af5e30
+--- /dev/null
++++ b/src/dev/amdgpu/pm4_queues.hh
+@@ -0,0 +1,477 @@
++/*
++ * Copyright (c) 2021 Advanced Micro Devices, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are met:
++ *
++ * 1. Redistributions of source code must retain the above copyright notice,
++ * this list of conditions and the following disclaimer.
++ *
++ * 2. Redistributions in binary form must reproduce the above copyright notice,
++ * this list of conditions and the following disclaimer in the documentation
++ * and/or other materials provided with the distribution.
++ *
++ * 3. Neither the name of the copyright holder nor the names of its
++ * contributors may be used to endorse or promote products derived from this
++ * software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#ifndef __DEV_AMDGPU_PM4_QUEUES_HH__
++#define __DEV_AMDGPU_PM4_QUEUES_HH__
++
++namespace gem5
++{
++
++/**
++ * Queue descriptor with relevant MQD attributes. Taken from
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
++ *     drivers/gpu/drm/amd/include/v9_structs.h
++ */
++typedef struct GEM5_PACKED
++{
++    union
++    {
++        struct
++        {
++            uint32_t cp_mqd_readindex_lo;
++            uint32_t cp_mqd_readindex_hi;
++        };
++        uint64_t mqdReadIndex;
++    };
++    uint32_t cp_mqd_save_start_time_lo;
++    uint32_t cp_mqd_save_start_time_hi;
++    uint32_t cp_mqd_save_end_time_lo;
++    uint32_t cp_mqd_save_end_time_hi;
++    uint32_t cp_mqd_restore_start_time_lo;
++    uint32_t cp_mqd_restore_start_time_hi;
++    uint32_t cp_mqd_restore_end_time_lo;
++    uint32_t cp_mqd_restore_end_time_hi;
++    uint32_t disable_queue;
++    uint32_t reserved_107;
++    uint32_t gds_cs_ctxsw_cnt0;
++    uint32_t gds_cs_ctxsw_cnt1;
++    uint32_t gds_cs_ctxsw_cnt2;
++    uint32_t gds_cs_ctxsw_cnt3;
++    uint32_t reserved_112;
++    uint32_t reserved_113;
++    uint32_t cp_pq_exe_status_lo;
++    uint32_t cp_pq_exe_status_hi;
++    uint32_t cp_packet_id_lo;
++    uint32_t cp_packet_id_hi;
++    uint32_t cp_packet_exe_status_lo;
++    uint32_t cp_packet_exe_status_hi;
++    uint32_t gds_save_base_addr_lo;
++    uint32_t gds_save_base_addr_hi;
++    uint32_t gds_save_mask_lo;
++    uint32_t gds_save_mask_hi;
++    uint32_t ctx_save_base_addr_lo;
++    uint32_t ctx_save_base_addr_hi;
++    uint32_t dynamic_cu_mask_addr_lo;
++    uint32_t dynamic_cu_mask_addr_hi;
++    union
++    {
++        struct
++        {
++            uint32_t mqd_base_addr_lo;
++            uint32_t mqd_base_addr_hi;
++        };
++        uint64_t mqdBase;
++    };
++    uint32_t hqd_active;
++    uint32_t hqd_vmid;
++    uint32_t hqd_persistent_state;
++    uint32_t hqd_pipe_priority;
++    uint32_t hqd_queue_priority;
++    uint32_t hqd_quantum;
++    union
++    {
++        struct
++        {
++            uint32_t hqd_pq_base_lo;
++            uint32_t hqd_pq_base_hi;
++        };
++        uint64_t base;
++    };
++    union
++    {
++        uint32_t hqd_pq_rptr;
++        uint32_t rptr;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t hqd_pq_rptr_report_addr_lo;
++            uint32_t hqd_pq_rptr_report_addr_hi;
++        };
++        uint64_t aqlRptr;
++    };
++    uint32_t hqd_pq_wptr_poll_addr_lo;
++    uint32_t hqd_pq_wptr_poll_addr_hi;
++    union
++    {
++        uint32_t hqd_pq_doorbell_control;
++        uint32_t doorbell;
++    };
++    uint32_t reserved_144;
++    uint32_t hqd_pq_control;
++    union
++    {
++        struct
++        {
++            uint32_t hqd_ib_base_addr_lo;
++            uint32_t hqd_ib_base_addr_hi;
++        };
++        Addr ibBase;
++    };
++    union
++    {
++        uint32_t hqd_ib_rptr;
++        uint32_t ibRptr;
++    };
++    uint32_t hqd_ib_control;
++    uint32_t hqd_iq_timer;
++    uint32_t hqd_iq_rptr;
++    uint32_t cp_hqd_dequeue_request;
++    uint32_t cp_hqd_dma_offload;
++    uint32_t cp_hqd_sema_cmd;
++    uint32_t cp_hqd_msg_type;
++    uint32_t cp_hqd_atomic0_preop_lo;
++    uint32_t cp_hqd_atomic0_preop_hi;
++    uint32_t cp_hqd_atomic1_preop_lo;
++    uint32_t cp_hqd_atomic1_preop_hi;
++    uint32_t cp_hqd_hq_status0;
++    uint32_t cp_hqd_hq_control0;
++    uint32_t cp_mqd_control;
++    uint32_t cp_hqd_hq_status1;
++    uint32_t cp_hqd_hq_control1;
++    uint32_t cp_hqd_eop_base_addr_lo;
++    uint32_t cp_hqd_eop_base_addr_hi;
++    uint32_t cp_hqd_eop_control;
++    uint32_t cp_hqd_eop_rptr;
++    uint32_t cp_hqd_eop_wptr;
++    uint32_t cp_hqd_eop_done_events;
++    uint32_t cp_hqd_ctx_save_base_addr_lo;
++    uint32_t cp_hqd_ctx_save_base_addr_hi;
++    uint32_t cp_hqd_ctx_save_control;
++    uint32_t cp_hqd_cntl_stack_offset;
++    uint32_t cp_hqd_cntl_stack_size;
++    uint32_t cp_hqd_wg_state_offset;
++    uint32_t cp_hqd_ctx_save_size;
++    uint32_t cp_hqd_gds_resource_state;
++    uint32_t cp_hqd_error;
++    uint32_t cp_hqd_eop_wptr_mem;
++    union
++    {
++        uint32_t cp_hqd_aql_control;
++        uint32_t aql;
++    };
++    uint32_t cp_hqd_pq_wptr_lo;
++    uint32_t cp_hqd_pq_wptr_hi;
++} QueueDesc;
++
++/**
++ * Queue descriptor for SDMA-based user queues (RLC queues). Taken from
++ * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.2.0/
++ *     drivers/gpu/drm/amd/include/v9_structs.h
++ */
++typedef struct GEM5_PACKED
++{
++    uint32_t sdmax_rlcx_rb_cntl;
++    union
++    {
++        struct
++        {
++            uint32_t sdmax_rlcx_rb_base;
++            uint32_t sdmax_rlcx_rb_base_hi;
++        };
++        uint64_t rb_base;
++    };
++    uint32_t sdmax_rlcx_rb_rptr;
++    uint32_t sdmax_rlcx_rb_rptr_hi;
++    uint32_t sdmax_rlcx_rb_wptr;
++    uint32_t sdmax_rlcx_rb_wptr_hi;
++    uint32_t sdmax_rlcx_rb_wptr_poll_cntl;
++    uint32_t sdmax_rlcx_rb_rptr_addr_hi;
++    uint32_t sdmax_rlcx_rb_rptr_addr_lo;
++    uint32_t sdmax_rlcx_ib_cntl;
++    uint32_t sdmax_rlcx_ib_rptr;
++    uint32_t sdmax_rlcx_ib_offset;
++    uint32_t sdmax_rlcx_ib_base_lo;
++    uint32_t sdmax_rlcx_ib_base_hi;
++    uint32_t sdmax_rlcx_ib_size;
++    uint32_t sdmax_rlcx_skip_cntl;
++    uint32_t sdmax_rlcx_context_status;
++    uint32_t sdmax_rlcx_doorbell;
++    uint32_t sdmax_rlcx_status;
++    uint32_t sdmax_rlcx_doorbell_log;
++    uint32_t sdmax_rlcx_watermark;
++    uint32_t sdmax_rlcx_doorbell_offset;
++    uint32_t sdmax_rlcx_csa_addr_lo;
++    uint32_t sdmax_rlcx_csa_addr_hi;
++    uint32_t sdmax_rlcx_ib_sub_remain;
++    uint32_t sdmax_rlcx_preempt;
++    uint32_t sdmax_rlcx_dummy_reg;
++    uint32_t sdmax_rlcx_rb_wptr_poll_addr_hi;
++    uint32_t sdmax_rlcx_rb_wptr_poll_addr_lo;
++    uint32_t sdmax_rlcx_rb_aql_cntl;
++    uint32_t sdmax_rlcx_minor_ptr_update;
++    uint32_t sdmax_rlcx_midcmd_data0;
++    uint32_t sdmax_rlcx_midcmd_data1;
++    uint32_t sdmax_rlcx_midcmd_data2;
++    uint32_t sdmax_rlcx_midcmd_data3;
++    uint32_t sdmax_rlcx_midcmd_data4;
++    uint32_t sdmax_rlcx_midcmd_data5;
++    uint32_t sdmax_rlcx_midcmd_data6;
++    uint32_t sdmax_rlcx_midcmd_data7;
++    uint32_t sdmax_rlcx_midcmd_data8;
++    uint32_t sdmax_rlcx_midcmd_cntl;
++    uint32_t reserved_42;
++    uint32_t reserved_43;
++    uint32_t reserved_44;
++    uint32_t reserved_45;
++    uint32_t reserved_46;
++    uint32_t reserved_47;
++    uint32_t reserved_48;
++    uint32_t reserved_49;
++    uint32_t reserved_50;
++    uint32_t reserved_51;
++    uint32_t reserved_52;
++    uint32_t reserved_53;
++    uint32_t reserved_54;
++    uint32_t reserved_55;
++    uint32_t reserved_56;
++    uint32_t reserved_57;
++    uint32_t reserved_58;
++    uint32_t reserved_59;
++    uint32_t reserved_60;
++    uint32_t reserved_61;
++    uint32_t reserved_62;
++    uint32_t reserved_63;
++    uint32_t reserved_64;
++    uint32_t reserved_65;
++    uint32_t reserved_66;
++    uint32_t reserved_67;
++    uint32_t reserved_68;
++    uint32_t reserved_69;
++    uint32_t reserved_70;
++    uint32_t reserved_71;
++    uint32_t reserved_72;
++    uint32_t reserved_73;
++    uint32_t reserved_74;
++    uint32_t reserved_75;
++    uint32_t reserved_76;
++    uint32_t reserved_77;
++    uint32_t reserved_78;
++    uint32_t reserved_79;
++    uint32_t reserved_80;
++    uint32_t reserved_81;
++    uint32_t reserved_82;
++    uint32_t reserved_83;
++    uint32_t reserved_84;
++    uint32_t reserved_85;
++    uint32_t reserved_86;
++    uint32_t reserved_87;
++    uint32_t reserved_88;
++    uint32_t reserved_89;
++    uint32_t reserved_90;
++    uint32_t reserved_91;
++    uint32_t reserved_92;
++    uint32_t reserved_93;
++    uint32_t reserved_94;
++    uint32_t reserved_95;
++    uint32_t reserved_96;
++    uint32_t reserved_97;
++    uint32_t reserved_98;
++    uint32_t reserved_99;
++    uint32_t reserved_100;
++    uint32_t reserved_101;
++    uint32_t reserved_102;
++    uint32_t reserved_103;
++    uint32_t reserved_104;
++    uint32_t reserved_105;
++    uint32_t reserved_106;
++    uint32_t reserved_107;
++    uint32_t reserved_108;
++    uint32_t reserved_109;
++    uint32_t reserved_110;
++    uint32_t reserved_111;
++    uint32_t reserved_112;
++    uint32_t reserved_113;
++    uint32_t reserved_114;
++    uint32_t reserved_115;
++    uint32_t reserved_116;
++    uint32_t reserved_117;
++    uint32_t reserved_118;
++    uint32_t reserved_119;
++    uint32_t reserved_120;
++    uint32_t reserved_121;
++    uint32_t reserved_122;
++    uint32_t reserved_123;
++    uint32_t reserved_124;
++    uint32_t reserved_125;
++    /* reserved_126,127: repurposed for driver-internal use */
++    uint32_t sdma_engine_id;
++    uint32_t sdma_queue_id;
++} SDMAQueueDesc;
++
++/* The Primary Queue has extra attributes, which will be stored separately. */
++typedef struct PrimaryQueue : QueueDesc
++{
++    union
++    {
++        struct
++        {
++            uint32_t queueRptrAddrLo;
++            uint32_t queueRptrAddrHi;
++        };
++        Addr queueRptrAddr;
++    };
++    union
++    {
++        struct
++        {
++            uint32_t queueWptrLo;
++            uint32_t queueWptrHi;
++        };
++        Addr queueWptr;
++    };
++    uint32_t doorbellOffset;
++    uint32_t doorbellRangeLo;
++    uint32_t doorbellRangeHi;
++} PrimaryQueue;
++
++/**
++ * Class defining a PM4 queue.
++ */
++class PM4Queue
++{
++    int _id;
++
++    /* Queue descriptor read from the system memory of the simulated system. */
++    QueueDesc *q;
++
++    /**
++     * Most important fields of a PM4 queue are stored in the queue descriptor
++     * (i.e., QueueDesc). However, since the write pointers are communicated
++     * through the doorbell value, we will add separate atributes for them.
++     */
++    Addr _wptr;
++    Addr _ibWptr;
++    Addr _offset;
++    bool _processing;
++    bool _ib;
++    PM4MapQueues *_pkt;
++  public:
++    PM4Queue() : _id(0), q(nullptr), _wptr(0), _offset(0), _processing(false),
++        _ib(false), _pkt(nullptr) {}
++    PM4Queue(int id, QueueDesc *queue, Addr offset) :
++        _id(id), q(queue), _wptr(queue->rptr), _ibWptr(0), _offset(offset),
++        _processing(false), _ib(false), _pkt(nullptr) {}
++    PM4Queue(int id, QueueDesc *queue, Addr offset, PM4MapQueues *pkt) :
++        _id(id), q(queue), _wptr(queue->rptr), _ibWptr(0), _offset(offset),
++        _processing(false), _ib(false), _pkt(pkt) {}
++
++    QueueDesc *getMQD() { return q; }
++    int id() { return _id; }
++    Addr mqdBase() { return q->mqdBase; }
++    Addr base() { return q->base; }
++    Addr ibBase() { return q->ibBase; }
++
++    Addr
++    rptr()
++    {
++        if (ib()) return q->ibBase + q->ibRptr;
++        else return q->base + q->rptr;
++    }
++
++    Addr
++    wptr()
++    {
++        if (ib()) return q->ibBase + _ibWptr;
++        else return q->base + _wptr;
++    }
++
++    Addr
++    getRptr()
++    {
++        if (ib()) return q->ibRptr;
++        else return q->rptr;
++    }
++
++    Addr
++    getWptr()
++    {
++        if (ib()) return _ibWptr;
++        else return _wptr;
++    }
++
++    Addr offset() { return _offset; }
++    bool processing() { return _processing; }
++    bool ib() { return _ib; }
++
++    void id(int value) { _id = value; }
++    void base(Addr value) { q->base = value; }
++    void ibBase(Addr value) { q->ibBase = value; }
++
++    /**
++     * It seems that PM4 nop packets with count 0x3fff, not only do not
++     * consider the count value, they also fast forward the read pointer.
++     * Without proper sync packets this can potentially be dangerous, since
++     * more useful packets can be enqueued in the time between nop enqueu and
++     * nop processing.
++     */
++    void
++    fastforwardRptr()
++    {
++        if (ib()) q->ibRptr = _ibWptr;
++        else q->rptr = _wptr;
++    }
++
++    void
++    incRptr(Addr value)
++    {
++        if (ib()) q->ibRptr += value;
++        else q->rptr += value;
++    }
++
++    void
++    rptr(Addr value)
++    {
++        if (ib()) q->ibRptr = value;
++        else q->rptr = value;
++    }
++
++    void
++    wptr(Addr value)
++    {
++        if (ib()) _ibWptr = value;
++        else _wptr = value;
++    }
++
++    void offset(Addr value) { _offset = value; }
++    void processing(bool value) { _processing = value; }
++    void ib(bool value) { _ib = value; }
++    uint32_t me() { if (_pkt) return _pkt->me; else return 0; }
++    uint32_t pipe() { if (_pkt) return _pkt->pipe; else return 0; }
++    uint32_t queue() { if (_pkt) return _pkt->queueSlot; else return 0; }
++    bool privileged() { assert(_pkt); return _pkt->queueSel == 0 ? 1 : 0; }
++};
++
++} // namespace gem5
++
++#endif // __DEV_AMDGPU_PM4_QUEUES_HH__
+diff --git a/src/dev/amdgpu/sdma_engine.cc b/src/dev/amdgpu/sdma_engine.cc
+index 1226c96..df08e32 100644
+--- a/src/dev/amdgpu/sdma_engine.cc
++++ b/src/dev/amdgpu/sdma_engine.cc
+@@ -36,7 +36,6 @@
+ #include "dev/amdgpu/interrupt_handler.hh"
+ #include "dev/amdgpu/sdma_commands.hh"
+ #include "dev/amdgpu/sdma_mmio.hh"
+-#include "dev/amdgpu/vega10/soc15_ih_clientid.h"
+ #include "mem/packet.hh"
+ #include "mem/packet_access.hh"
+ #include "params/SDMAEngine.hh"
+diff --git a/src/dev/amdgpu/sdma_mmio.hh b/src/dev/amdgpu/sdma_mmio.hh
+index edd363a..a10682f 100644
+--- a/src/dev/amdgpu/sdma_mmio.hh
++++ b/src/dev/amdgpu/sdma_mmio.hh
+@@ -37,7 +37,7 @@
+  * for SDMA. The header files can be found here:
+  *
+  * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
+-*      drivers/gpu/drm/amd/include/asic_reg/sdma0/sdma0_4_0_offset.h
++ *      drivers/gpu/drm/amd/include/asic_reg/sdma0/sdma0_4_0_offset.h
+  * https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/rocm-4.3.x/
+  *     drivers/gpu/drm/amd/include/asic_reg/sdma1/sdma1_4_0_offset.h
+  */
+diff --git a/src/dev/amdgpu/vega10/soc15_ih_clientid.h b/src/dev/amdgpu/vega10/soc15_ih_clientid.h
+deleted file mode 100644
+index c08ece1..0000000
+--- a/src/dev/amdgpu/vega10/soc15_ih_clientid.h
++++ /dev/null
+@@ -1,81 +0,0 @@
+-/*
+- * Copyright 2018 Advanced Micro Devices, Inc.
+- *
+- * Permission is hereby granted, free of charge, to any person obtaining a
+- * copy of this software and associated documentation files (the "Software"),
+- * to deal in the Software without restriction, including without limitation
+- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+- * and/or sell copies of the Software, and to permit persons to whom the
+- * Software is furnished to do so, subject to the following conditions:
+- *
+- * The above copyright notice and this permission notice shall be included in
+- * all copies or substantial portions of the Software.
+- *
+- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+- * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+- * OTHER DEALINGS IN THE SOFTWARE.
+- *
+- */
+-
+-#ifndef __SOC15_IH_CLIENTID_H__
+-#define __SOC15_IH_CLIENTID_H__
+-
+-/*
+- * src: https://github.com/RadeonOpenCompute/ROCK-Kernel-Driver/blob/
+- * 89baa3f89c8cb0d76e999c01bf304301e35abc9b/drivers/gpu/drm/amd/include/
+- * soc15_ih_clientid.h
+- */
+-
+- /*
+-  * vega10+ IH clients
+- */
+-enum soc15_ih_clientid {
+-    SOC15_IH_CLIENTID_IH        = 0x00,
+-    SOC15_IH_CLIENTID_ACP       = 0x01,
+-    SOC15_IH_CLIENTID_ATHUB     = 0x02,
+-    SOC15_IH_CLIENTID_BIF       = 0x03,
+-    SOC15_IH_CLIENTID_DCE       = 0x04,
+-    SOC15_IH_CLIENTID_ISP       = 0x05,
+-    SOC15_IH_CLIENTID_PCIE0     = 0x06,
+-    SOC15_IH_CLIENTID_RLC       = 0x07,
+-    SOC15_IH_CLIENTID_SDMA0     = 0x08,
+-    SOC15_IH_CLIENTID_SDMA1     = 0x09,
+-    SOC15_IH_CLIENTID_SE0SH     = 0x0a,
+-    SOC15_IH_CLIENTID_SE1SH     = 0x0b,
+-    SOC15_IH_CLIENTID_SE2SH     = 0x0c,
+-    SOC15_IH_CLIENTID_SE3SH     = 0x0d,
+-    SOC15_IH_CLIENTID_SYSHUB    = 0x0e,
+-    SOC15_IH_CLIENTID_UVD1      = 0x0e,
+-    SOC15_IH_CLIENTID_THM       = 0x0f,
+-    SOC15_IH_CLIENTID_UVD       = 0x10,
+-    SOC15_IH_CLIENTID_VCE0      = 0x11,
+-    SOC15_IH_CLIENTID_VMC       = 0x12,
+-    SOC15_IH_CLIENTID_XDMA      = 0x13,
+-    SOC15_IH_CLIENTID_GRBM_CP   = 0x14,
+-    SOC15_IH_CLIENTID_ATS       = 0x15,
+-    SOC15_IH_CLIENTID_ROM_SMUIO = 0x16,
+-    SOC15_IH_CLIENTID_DF        = 0x17,
+-    SOC15_IH_CLIENTID_VCE1      = 0x18,
+-    SOC15_IH_CLIENTID_PWR       = 0x19,
+-    SOC15_IH_CLIENTID_UTCL2     = 0x1b,
+-    SOC15_IH_CLIENTID_EA        = 0x1c,
+-    SOC15_IH_CLIENTID_UTCL2LOG  = 0x1d,
+-    SOC15_IH_CLIENTID_MP0       = 0x1e,
+-    SOC15_IH_CLIENTID_MP1       = 0x1f,
+-
+-    SOC15_IH_CLIENTID_MAX,
+-
+-    SOC15_IH_CLIENTID_VCN       = SOC15_IH_CLIENTID_UVD
+-};
+-
+-enum ihSourceId {
+-    TRAP_ID                     = 224
+-};
+-
+-#endif
+-
+-
+-- 
+1.8.3.1
+

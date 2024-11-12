@@ -1,0 +1,80 @@
+From d657c28279d73cb24b26d57d10b98e0579020b5e Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Sun, 19 Dec 2021 14:05:45 +0100
+Subject: [PATCH 166/757] arch-arm: Add a reverse map MiscRegIndex ->
+ MiscRegNum64
+
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Change-Id: I63cdcdfca610cfd37a03769e077388a193510bc7
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55606
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/regs/misc.cc | 21 +++++++++++++++++++++
+ src/arch/arm/regs/misc.hh |  2 ++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/src/arch/arm/regs/misc.cc b/src/arch/arm/regs/misc.cc
+index 99ea64b..0e58d93 100644
+--- a/src/arch/arm/regs/misc.cc
++++ b/src/arch/arm/regs/misc.cc
+@@ -1454,6 +1454,10 @@ std::bitset<NUM_MISCREG_INFOS> miscRegInfo[NUM_MISCREGS]; // initialized below
+ 
+ namespace {
+ 
++// The map is translating a MiscRegIndex into AArch64 system register
++// numbers (op0, op1, crn, crm, op2)
++std::unordered_map<MiscRegIndex, MiscRegNum64> idxToMiscRegNum;
++
+ // The map is translating AArch64 system register numbers
+ // (op0, op1, crn, crm, op2) into a MiscRegIndex
+ std::unordered_map<MiscRegNum64, MiscRegIndex> miscRegNumToIdx{
+@@ -1947,6 +1951,17 @@ decodeAArch64SysReg(unsigned op0, unsigned op1,
+     }
+ }
+ 
++MiscRegNum64
++encodeAArch64SysReg(MiscRegIndex misc_reg)
++{
++    if (auto it = idxToMiscRegNum.find(misc_reg);
++        it != idxToMiscRegNum.end()) {
++        return it->second;
++    } else {
++        panic("Invalid MiscRegIndex: %n\n", misc_reg);
++    }
++}
++
+ void
+ ISA::initializeMiscRegMetadata()
+ {
+@@ -4585,6 +4600,12 @@ ISA::initializeMiscRegMetadata()
+     // DBGDTRTX_EL0 -> DBGDTRRXint
+     // MDCR_EL3 -> SDCR, NAM D7-2108 (the latter is unimpl. in gem5)
+ 
++    // Populate the idxToMiscRegNum map
++    assert(idxToMiscRegNum.empty());
++    for (const auto& [key, val] : miscRegNumToIdx) {
++        idxToMiscRegNum.insert({val, key});
++    }
++
+     completed = true;
+ }
+ 
+diff --git a/src/arch/arm/regs/misc.hh b/src/arch/arm/regs/misc.hh
+index 5b8d75b..ea58ad2 100644
+--- a/src/arch/arm/regs/misc.hh
++++ b/src/arch/arm/regs/misc.hh
+@@ -1199,6 +1199,8 @@ namespace ArmISA
+     MiscRegIndex decodeAArch64SysReg(unsigned op0, unsigned op1,
+                                      unsigned crn, unsigned crm,
+                                      unsigned op2);
++    MiscRegNum64 encodeAArch64SysReg(MiscRegIndex misc_reg);
++
+     // Whether a particular AArch64 system register is -always- read only.
+     bool aarch64SysRegReadOnly(MiscRegIndex miscReg);
+ 
+-- 
+1.8.3.1
+

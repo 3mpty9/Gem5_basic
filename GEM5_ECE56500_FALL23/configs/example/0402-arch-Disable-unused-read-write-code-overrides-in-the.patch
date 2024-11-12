@@ -1,0 +1,51 @@
+From 543035e90d371a4b930f8addc668ab58e459d30f Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 00:53:13 -0700
+Subject: [PATCH 402/757] arch: Disable unused read/write code overrides in the
+ ISA parser.
+
+Some operand types had read/write code overrides, I think largely by
+pattern matching other operand types, and not because that code was
+actually expected to be used or to work. Instead, we should just assert
+that that code isn't used and remove the implementation. This method of
+affecting reading and writing code is going away anyway, and if this is
+needed in the future it can be replaced in the new system.
+
+Change-Id: Idae886153aa343570109069cbe54e2c1699a34e5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49736
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/operand_types.py | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 27e0ac7..342bd6f 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -341,9 +341,7 @@ class VecRegOperand(RegOperand):
+         return c_read
+ 
+     def makeReadW(self, predWrite):
+-        func = 'getWritableRegOperand'
+-        if self.read_code != None:
+-            return self.buildReadCode(predWrite, func)
++        assert(self.read_code == None)
+ 
+         if predWrite:
+             rindex = '_destIndex++'
+@@ -454,9 +452,7 @@ class VecPredRegOperand(RegOperand):
+         return c_read
+ 
+     def makeReadW(self, predWrite):
+-        func = 'getWritableRegOperand'
+-        if self.read_code != None:
+-            return self.buildReadCode(predWrite, 'getWritableRegOperand')
++        assert(self.read_code == None)
+ 
+         if predWrite:
+             rindex = '_destIndex++'
+-- 
+1.8.3.1
+

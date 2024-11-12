@@ -1,0 +1,492 @@
+From a1b439f91c18c137f3d06e56612c87f91b7ec73d Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 15:44:31 -0700
+Subject: [PATCH 701/757] arch: Remove plumbing for operand predication.
+
+The operand predication mechanism has been replaced by mapping
+predicate-false register reads/writes to InvalidRegClass.
+
+Change-Id: I57e7aadb7a0d682c225f6a5fe673cba8ddf1c4f8
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49749
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/isa/operands.isa        | 26 +++++-----
+ src/arch/isa_parser/isa_parser.py    | 11 -----
+ src/arch/isa_parser/operand_list.py  | 12 +----
+ src/arch/isa_parser/operand_types.py | 93 +++++++++++++-----------------------
+ src/arch/x86/isa/operands.isa        |  4 +-
+ 5 files changed, 48 insertions(+), 98 deletions(-)
+
+diff --git a/src/arch/arm/isa/operands.isa b/src/arch/arm/isa/operands.isa
+index a7ce94f..f0a4c62 100644
+--- a/src/arch/arm/isa/operands.isa
++++ b/src/arch/arm/isa/operands.isa
+@@ -109,12 +109,12 @@ let {{
+ 
+     class IntReg(IntRegNPC):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             '''Maybe PC read'''
+             return f'{self.base_name} = ({self.reg_spec} == PCReg) ? ' \
+                    f'readPC(xc) : xc->getRegOperand(this, {op_idx});\n'
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''Maybe PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg)
+@@ -131,7 +131,7 @@ let {{
+ 
+     class IntRegAPC(IntReg):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             '''Maybe aligned PC read'''
+             return f'{self.base_name} = ({self.reg_spec} == PCReg) ? ' \
+                    f'(roundDown(readPC(xc), 4)) : ' \
+@@ -139,7 +139,7 @@ let {{
+ 
+     class IntRegIWPC(IntReg):
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''Maybe interworking PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg)
+@@ -152,7 +152,7 @@ let {{
+ 
+     class IntRegAIWPC(IntReg):
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''Maybe aligned interworking PC write'''
+             return f'''
+             if ({self.reg_spec} == PCReg) {"{"}
+@@ -173,12 +173,12 @@ let {{
+             return f'gem5::ArmISA::couldBeZero({self.reg_spec}) ? RegId() : ' \
+                    f'RegId({self.reg_class}, {self.reg_spec})'
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             '''aarch64 read'''
+             return f'{self.base_name} = ' \
+                    f'(xc->getRegOperand(this, {op_idx})) & mask(intWidth);\n'
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''aarch64 write'''
+             return f'''
+             xc->setRegOperand(this, {op_idx}, {self.base_name} &
+@@ -191,13 +191,13 @@ let {{
+ 
+     class IntRegX64(IntReg64):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             '''Maybe masked to 32 bit read'''
+             return f'{self.base_name} = ' \
+                    f'(xc->getRegOperand(this, {op_idx}) & ' \
+                     'mask(aarch64 ? 64 : 32));\n'
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''Maybe masked to 32 bit write'''
+             return f'''
+             xc->setRegOperand(this, {op_idx}, {self.base_name} &
+@@ -208,12 +208,12 @@ let {{
+ 
+     class IntRegW64(IntReg64):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             '''Masked to 32 bit read'''
+             return f'{self.base_name} = ' \
+                    f'(xc->getRegOperand(this, {op_idx})) & mask(32);\n'
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             '''Masked to 32 bit write'''
+             return f'''
+             xc->setRegOperand(this, {op_idx}, {self.base_name} & mask(32));
+@@ -235,11 +235,11 @@ let {{
+ 
+     class CntrlNsBankedReg(CntrlReg):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             return f'{self.base_name} = ' \
+                    f'xc->readMiscReg(snsBankedIndex(op1, xc->tcBase()));\n'
+         @overrideInOperand
+-        def makeWrite(self, predWrite, op_idx):
++        def makeWrite(self, op_idx):
+             return f'''
+             xc->setMiscReg(snsBankedIndex(dest, xc->tcBase()),
+                            {self.base_name});
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 6a81fbe..d33bcc4 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -127,17 +127,6 @@ class Template(object):
+             if operands.readPC or operands.setPC:
+                 myDict['op_decl'] += pcstate_decl
+ 
+-            # In case there are predicated register reads and write, declare
+-            # the variables for register indicies. It is being assumed that
+-            # all the operands in the OperandList are also in the
+-            # SubOperandList and in the same order. Otherwise, it is
+-            # expected that predication would not be used for the operands.
+-            if operands.predRead:
+-                myDict['op_decl'] += 'uint8_t _sourceIndex = 0;\n'
+-            if operands.predWrite:
+-                myDict['op_decl'] += \
+-                    '[[maybe_unused]] uint8_t _destIndex = 0;\n'
+-
+             is_src = lambda op: op.is_src
+             is_dest = lambda op: op.is_dest
+ 
+diff --git a/src/arch/isa_parser/operand_list.py b/src/arch/isa_parser/operand_list.py
+index c26fdf3..3438777 100755
+--- a/src/arch/isa_parser/operand_list.py
++++ b/src/arch/isa_parser/operand_list.py
+@@ -122,15 +122,10 @@ class OperandList(object):
+ 
+         self.memOperand = mem[0] if mem else None
+ 
+-        # Flags to keep track if one or more operands are to be read/written
+-        # conditionally.
+-        self.predRead = any(i.hasReadPred() for i in self.items)
+-        self.predWrite = any(i.hasWritePred() for i in self.items)
+-
+         # now make a final pass to finalize op_desc fields that may depend
+         # on the register enumeration
+         for op_desc in self.items:
+-            op_desc.finalize(self.predRead, self.predWrite)
++            op_desc.finalize()
+ 
+     def __len__(self):
+         return len(self.items)
+@@ -235,8 +230,3 @@ class SubOperandList(OperandList):
+         self.pcPart = None
+         if part: self.pcPart = True
+         if whole: self.pcPart = False
+-
+-        # Flags to keep track if one or more operands are to be read/written
+-        # conditionally.
+-        self.predRead = any(i.hasReadPred() for i in self.items)
+-        self.predWrite = any(i.hasWritePred() for i in self.items)
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 897235a..4de7121 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -45,7 +45,7 @@ overrideInOperand.overrides = dict()
+ 
+ class OperandDesc(object):
+     def __init__(self, base_cls, dflt_ext, reg_spec, flags=None,
+-            sort_pri=None, read_predicate=None, write_predicate=None):
++            sort_pri=None):
+ 
+         from .isa_parser import makeList
+ 
+@@ -96,8 +96,6 @@ class OperandDesc(object):
+             'reg_spec': reg_spec,
+             'flags': flags,
+             'sort_pri': sort_pri,
+-            'read_predicate': read_predicate,
+-            'write_predicate': write_predicate,
+         })
+         self.attrs = attrs
+ 
+@@ -143,35 +141,29 @@ class Operand(object):
+     # Finalize additional fields (primarily code fields).  This step
+     # is done separately since some of these fields may depend on the
+     # register index enumeration that hasn't been performed yet at the
+-    # time of __init__(). The register index enumeration is affected
+-    # by predicated register reads/writes. Hence, we forward the flags
+-    # that indicate whether or not predication is in use.
+-    def finalize(self, pred_read, pred_write):
++    # time of __init__().
++    def finalize(self):
+         self.flags = self.getFlags()
+-        self.constructor = self.makeConstructor(pred_read, pred_write)
++        self.constructor = self.makeConstructor()
+         self.op_decl = self.makeDecl()
+ 
+         if self.is_src:
+-            if pred_read:
+-                op_idx = '_sourceIndex++'
+-            elif hasattr(self, 'src_reg_idx'):
++            if hasattr(self, 'src_reg_idx'):
+                 op_idx = str(self.src_reg_idx)
+             else:
+                 op_idx = None
+-            self.op_rd = self.makeRead(pred_read, op_idx)
++            self.op_rd = self.makeRead(op_idx)
+             self.op_src_decl = self.makeDecl()
+         else:
+             self.op_rd = ''
+             self.op_src_decl = ''
+ 
+         if self.is_dest:
+-            if pred_read:
+-                op_idx = '_destIndex++'
+-            elif hasattr(self, 'dest_reg_idx'):
++            if hasattr(self, 'dest_reg_idx'):
+                 op_idx = str(self.dest_reg_idx)
+             else:
+                 op_idx = None
+-            self.op_wb = self.makeWrite(pred_write, op_idx)
++            self.op_wb = self.makeWrite(op_idx)
+             self.op_dest_decl = self.makeDecl()
+         else:
+             self.op_wb = ''
+@@ -189,12 +181,6 @@ class Operand(object):
+     def isPCPart(self):
+         return self.isPCState() and self.reg_spec
+ 
+-    def hasReadPred(self):
+-        return self.read_predicate != None
+-
+-    def hasWritePred(self):
+-        return self.write_predicate != None
+-
+     def getFlags(self):
+         # note the empty slice '[:]' gives us a copy of self.flags[0]
+         # instead of a reference to it
+@@ -214,27 +200,21 @@ class RegOperand(Operand):
+     def isReg(self):
+         return 1
+ 
+-    def makeConstructor(self, pred_read, pred_write):
++    def makeConstructor(self):
+         c_src = ''
+         c_dest = ''
+ 
+         if self.is_src:
+             c_src = self.src_reg_constructor % self.srcRegId()
+-            if self.hasReadPred():
+-                c_src = '\n\tif (%s) {%s\n\t}' % \
+-                        (self.read_predicate, c_src)
+ 
+         if self.is_dest:
+             c_dest = self.dst_reg_constructor % self.destRegId()
+             c_dest += f'\n\t_numTypedDestRegs[{self.reg_class}]++;'
+-            if self.hasWritePred():
+-                c_dest = '\n\tif (%s) {%s\n\t}' % \
+-                         (self.write_predicate, c_dest)
+ 
+         return c_src + c_dest
+ 
+ class RegValOperand(RegOperand):
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         reg_val = f'xc->getRegOperand(this, {op_idx})'
+ 
+         if self.ctype == 'float':
+@@ -242,12 +222,9 @@ class RegValOperand(RegOperand):
+         elif self.ctype == 'double':
+             reg_val = f'bitsToFloat64({reg_val})'
+ 
+-        if pred_read and self.hasReadPred():
+-            reg_val = f'({self.read_predicate}) ? {reg_val} : 0'
+-
+         return f'{self.base_name} = {reg_val};\n'
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         reg_val = self.base_name
+ 
+         if self.ctype == 'float':
+@@ -255,13 +232,7 @@ class RegValOperand(RegOperand):
+         elif self.ctype == 'double':
+             reg_val = f'floatToBits64({reg_val})'
+ 
+-        if pred_write and self.hasWritePred():
+-            wcond = f'if ({self.write_predicate})'
+-        else:
+-            wcond = ''
+-
+         return f'''
+-        {wcond}
+         {{
+             RegVal final_val = {reg_val};
+             xc->setRegOperand(this, {op_idx}, final_val);
+@@ -331,7 +302,7 @@ class VecRegOperand(RegOperand):
+                   (ctype, elem_name, self.base_name, elem_spec)
+         return c_read
+ 
+-    def makeReadW(self, pred_write, op_idx):
++    def makeReadW(self, op_idx):
+         c_readw = f'\t\tauto &tmp_d{op_idx} = \n' \
+                   f'\t\t    *({self.parser.namespace}::VecRegContainer *)\n' \
+                   f'\t\t    xc->getWritableRegOperand(this, {op_idx});\n'
+@@ -361,7 +332,7 @@ class VecRegOperand(RegOperand):
+                   (elem_name, name, elem_spec)
+         return c_read
+ 
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         name = self.base_name
+         if self.is_dest and self.is_src:
+             name += '_merger'
+@@ -383,18 +354,18 @@ class VecRegOperand(RegOperand):
+                     c_read += self.makeReadElem(elem, name)
+         return c_read
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         return f'''
+         if (traceData) {{
+             traceData->setData(tmp_d{op_idx});
+         }}
+         '''
+ 
+-    def finalize(self, pred_read, pred_write):
+-        super().finalize(pred_read, pred_write)
++    def finalize(self):
++        super().finalize()
+         if self.is_dest:
+             op_idx = str(self.dest_reg_idx)
+-            self.op_rd = self.makeReadW(pred_write, op_idx) + self.op_rd
++            self.op_rd = self.makeReadW(op_idx) + self.op_rd
+ 
+ class VecRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+@@ -406,7 +377,7 @@ class VecPredRegOperand(RegOperand):
+     def makeDecl(self):
+         return ''
+ 
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         c_read =  f'\t\t{self.parser.namespace}::VecPredRegContainer ' \
+                   f'\t\t        tmp_s{op_idx}; ' \
+                   f'xc->getRegOperand(this, {op_idx}, &tmp_s{op_idx});\n'
+@@ -416,7 +387,7 @@ class VecPredRegOperand(RegOperand):
+                       f'{self.parser.operandTypeMap[self.ext]}>();\n'
+         return c_read
+ 
+-    def makeReadW(self, pred_write, op_idx):
++    def makeReadW(self, op_idx):
+         c_readw = f'\t\tauto &tmp_d{op_idx} = \n' \
+                   f'\t\t    *({self.parser.namespace}::' \
+                   f'VecPredRegContainer *)xc->getWritableRegOperand(' \
+@@ -427,18 +398,18 @@ class VecPredRegOperand(RegOperand):
+                     self.parser.operandTypeMap[self.ext])
+         return c_readw
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         return f'''
+         if (traceData) {{
+             traceData->setData(tmp_d{op_idx});
+         }}
+         '''
+ 
+-    def finalize(self, pred_read, pred_write):
+-        super().finalize(pred_read, pred_write)
++    def finalize(self):
++        super().finalize()
+         if self.is_dest:
+             op_idx = str(self.dest_reg_idx)
+-            self.op_rd = self.makeReadW(pred_write, op_idx) + self.op_rd
++            self.op_rd = self.makeReadW(op_idx) + self.op_rd
+ 
+ class VecPredRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+@@ -453,7 +424,7 @@ class ControlRegOperand(Operand):
+     def isControlReg(self):
+         return 1
+ 
+-    def makeConstructor(self, pred_read, pred_write):
++    def makeConstructor(self):
+         c_src = ''
+         c_dest = ''
+ 
+@@ -465,7 +436,7 @@ class ControlRegOperand(Operand):
+ 
+         return c_src + c_dest
+ 
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         bit_select = 0
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to read control register as FP')
+@@ -473,7 +444,7 @@ class ControlRegOperand(Operand):
+         return '%s = xc->readMiscRegOperand(this, %s);\n' % \
+             (self.base_name, op_idx)
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         if (self.ctype == 'float' or self.ctype == 'double'):
+             error('Attempt to write control register as FP')
+         wb = 'xc->setMiscRegOperand(this, %s, %s);\n' % \
+@@ -491,17 +462,17 @@ class MemOperand(Operand):
+     def isMem(self):
+         return 1
+ 
+-    def makeConstructor(self, pred_read, pred_write):
++    def makeConstructor(self):
+         return ''
+ 
+     def makeDecl(self):
+         # Declare memory data variable.
+         return '%s %s = {};\n' % (self.ctype, self.base_name)
+ 
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         return ''
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         return ''
+ 
+ class MemOperandDesc(OperandDesc):
+@@ -513,10 +484,10 @@ class PCStateOperand(Operand):
+         super().__init__(parser, *args, **kwargs)
+         self.parser = parser
+ 
+-    def makeConstructor(self, pred_read, pred_write):
++    def makeConstructor(self):
+         return ''
+ 
+-    def makeRead(self, pred_read, op_idx):
++    def makeRead(self, op_idx):
+         if self.reg_spec:
+             # A component of the PC state.
+             return '%s = __parserAutoPCState.%s();\n' % \
+@@ -526,7 +497,7 @@ class PCStateOperand(Operand):
+             return f'{self.base_name} = ' \
+                     f'xc->pcState().as<{self.parser.namespace}::PCState>();\n'
+ 
+-    def makeWrite(self, pred_write, op_idx):
++    def makeWrite(self, op_idx):
+         if self.reg_spec:
+             # A component of the PC state.
+             return '__parserAutoPCState.%s(%s);\n' % \
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index 518d79d..be39b7d 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -65,7 +65,7 @@ let {{
+ 
+     class PickedReg(IntReg):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             return f'{self.base_name} = pick(xc->getRegOperand(' \
+                         f'this, {op_idx}), {self.reg_spec}, ' \
+                         f'{self.data_size});\n'
+@@ -75,7 +75,7 @@ let {{
+ 
+     class SignedPickedReg(IntReg):
+         @overrideInOperand
+-        def makeRead(self, predRead, op_idx):
++        def makeRead(self, op_idx):
+             return f'{self.base_name} = signedPick(xc->getRegOperand(' \
+                         f'this, {op_idx}), {self.reg_spec}, ' \
+                         f'{self.data_size});\n'
+-- 
+1.8.3.1
+

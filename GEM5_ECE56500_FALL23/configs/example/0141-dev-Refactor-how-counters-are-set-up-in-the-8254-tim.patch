@@ -1,0 +1,176 @@
+From ef4381aecc2b70b63b0bda5e5fa5ca10c57d4e67 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 9 Jan 2022 19:36:23 -0800
+Subject: [PATCH 141/757] dev: Refactor how counters are set up in the 8254
+ timer.
+
+Instead of dynamically allocating the channels, statically allocate them
+in a std::array. Also name them "counters" instead of "counter" so that
+that variable name can be used for an individual counter.
+
+Change-Id: I49614e192c8201b708e71331e7f70182b47546c6
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55284
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+---
+ src/dev/intel_8254_timer.cc | 53 +++++++++++++++++++--------------------------
+ src/dev/intel_8254_timer.hh | 12 +++++-----
+ 2 files changed, 27 insertions(+), 38 deletions(-)
+
+diff --git a/src/dev/intel_8254_timer.cc b/src/dev/intel_8254_timer.cc
+index f64c0fe..df9b4b3 100644
+--- a/src/dev/intel_8254_timer.cc
++++ b/src/dev/intel_8254_timer.cc
+@@ -36,22 +36,13 @@
+ namespace gem5
+ {
+ 
+-Intel8254Timer::Intel8254Timer(EventManager *em, const std::string &name,
+-    Counter *counter0, Counter *counter1, Counter *counter2) :
+-    EventManager(em), _name(name)
+-{
+-    counter[0] = counter0;
+-    counter[1] = counter1;
+-    counter[2] = counter2;
+-}
+-
+ Intel8254Timer::Intel8254Timer(EventManager *em, const std::string &name) :
+-    EventManager(em), _name(name)
+-{
+-    counter[0] = new Counter(this, name + ".counter0", 0);
+-    counter[1] = new Counter(this, name + ".counter1", 1);
+-    counter[2] = new Counter(this, name + ".counter2", 2);
+-}
++    EventManager(em), _name(name), counters{{
++            {this, name + ".counter0", 0},
++            {this, name + ".counter1", 1},
++            {this, name + ".counter2", 2}
++        }}
++{}
+ 
+ void
+ Intel8254Timer::writeControl(const CtrlReg data)
+@@ -65,20 +56,20 @@ Intel8254Timer::writeControl(const CtrlReg data)
+                 "Latching the PIT status byte is not implemented.");
+ 
+         if (!rb_val.count) {
+-            for (auto &cnt: counter) {
+-                if (bits((uint8_t)rb_val.select, cnt->index()))
+-                    cnt->latchCount();
++            for (auto &counter: counters) {
++                if (bits((uint8_t)rb_val.select, counter.index()))
++                    counter.latchCount();
+             }
+         }
+         return;
+     }
+ 
+     if (data.rw == LatchCommand) {
+-        counter[sel]->latchCount();
++        counters[sel].latchCount();
+     } else {
+-        counter[sel]->setRW(data.rw);
+-        counter[sel]->setMode(data.mode);
+-        counter[sel]->setBCD(data.bcd);
++        counters[sel].setRW(data.rw);
++        counters[sel].setMode(data.mode);
++        counters[sel].setBCD(data.bcd);
+     }
+ }
+ 
+@@ -86,26 +77,26 @@ void
+ Intel8254Timer::serialize(const std::string &base, CheckpointOut &cp) const
+ {
+     // serialize the counters
+-    counter[0]->serialize(base + ".counter0", cp);
+-    counter[1]->serialize(base + ".counter1", cp);
+-    counter[2]->serialize(base + ".counter2", cp);
++    counters[0].serialize(base + ".counter0", cp);
++    counters[1].serialize(base + ".counter1", cp);
++    counters[2].serialize(base + ".counter2", cp);
+ }
+ 
+ void
+ Intel8254Timer::unserialize(const std::string &base, CheckpointIn &cp)
+ {
+     // unserialze the counters
+-    counter[0]->unserialize(base + ".counter0", cp);
+-    counter[1]->unserialize(base + ".counter1", cp);
+-    counter[2]->unserialize(base + ".counter2", cp);
++    counters[0].unserialize(base + ".counter0", cp);
++    counters[1].unserialize(base + ".counter1", cp);
++    counters[2].unserialize(base + ".counter2", cp);
+ }
+ 
+ void
+ Intel8254Timer::startup()
+ {
+-    counter[0]->startup();
+-    counter[1]->startup();
+-    counter[2]->startup();
++    counters[0].startup();
++    counters[1].startup();
++    counters[2].startup();
+ }
+ 
+ Intel8254Timer::Counter::Counter(Intel8254Timer *p,
+diff --git a/src/dev/intel_8254_timer.hh b/src/dev/intel_8254_timer.hh
+index e02a4cc..7aec065 100644
+--- a/src/dev/intel_8254_timer.hh
++++ b/src/dev/intel_8254_timer.hh
+@@ -29,6 +29,7 @@
+ #ifndef __DEV_8254_HH__
+ #define __DEV_8254_HH__
+ 
++#include <array>
+ #include <iostream>
+ #include <string>
+ 
+@@ -212,7 +213,7 @@ class Intel8254Timer : public EventManager
+     const std::string &name() const { return _name; }
+ 
+     /** PIT has three seperate counters */
+-    Counter *counter[3];
++    std::array<Counter, 3> counters;
+ 
+     virtual void
+     counterInterrupt(unsigned int num)
+@@ -226,9 +227,6 @@ class Intel8254Timer : public EventManager
+     ~Intel8254Timer()
+     {}
+ 
+-    Intel8254Timer(EventManager *em, const std::string &name,
+-            Counter *counter0, Counter *counter1, Counter *counter2);
+-
+     Intel8254Timer(EventManager *em, const std::string &name);
+ 
+     /** Write control word */
+@@ -238,21 +236,21 @@ class Intel8254Timer : public EventManager
+     readCounter(unsigned int num)
+     {
+         assert(num < 3);
+-        return counter[num]->read();
++        return counters[num].read();
+     }
+ 
+     void
+     writeCounter(unsigned int num, const uint8_t data)
+     {
+         assert(num < 3);
+-        counter[num]->write(data);
++        counters[num].write(data);
+     }
+ 
+     bool
+     outputHigh(unsigned int num)
+     {
+         assert(num < 3);
+-        return counter[num]->outputHigh();
++        return counters[num].outputHigh();
+     }
+ 
+     /**
+-- 
+1.8.3.1
+

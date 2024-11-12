@@ -1,0 +1,109 @@
+From 283ea24c8e9f8b710cf1f8fdb2ee057e0261dcb7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 24 Jan 2022 04:26:14 -0800
+Subject: [PATCH 486/757] arch-x86: Expose the current CPL to the decoder.
+
+This value is already floating around, and there is essentially no
+overhead for exposing it to the decoder. With that value, we can handle
+instructions which generically need to run at CPL0.
+
+Some instructions have other more complicated permissions checks, like
+that the CPL needs to have some relation to the IOPL. Those checks will
+have to be implemented by the instructions themselves, since the decoder
+can't factor in all possible state values.
+
+Change-Id: Ie93f4f13aae002f69330606c515f369c5706c655
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55889
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/x86/decoder.hh        | 7 +++++++
+ src/arch/x86/isa/bitfields.isa | 1 +
+ src/arch/x86/types.hh          | 8 +++++++-
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/x86/decoder.hh b/src/arch/x86/decoder.hh
+index 38a5e10..29415ef 100644
+--- a/src/arch/x86/decoder.hh
++++ b/src/arch/x86/decoder.hh
+@@ -110,6 +110,8 @@ class Decoder : public InstDecoder
+     uint8_t defAddr = 0;
+     uint8_t stack = 0;
+ 
++    uint8_t cpl = 0;
++
+     uint8_t
+     getNextByte()
+     {
+@@ -256,6 +258,7 @@ class Decoder : public InstDecoder
+     Decoder(const X86DecoderParams &p) : InstDecoder(p, &fetchChunk)
+     {
+         emi.reset();
++        emi.mode.cpl = cpl;
+         emi.mode.mode = mode;
+         emi.mode.submode = submode;
+     }
+@@ -263,8 +266,10 @@ class Decoder : public InstDecoder
+     void
+     setM5Reg(HandyM5Reg m5Reg)
+     {
++        cpl = m5Reg.cpl;
+         mode = (X86Mode)(uint64_t)m5Reg.mode;
+         submode = (X86SubMode)(uint64_t)m5Reg.submode;
++        emi.mode.cpl = cpl;
+         emi.mode.mode = mode;
+         emi.mode.submode = submode;
+         altOp = m5Reg.altOp;
+@@ -298,8 +303,10 @@ class Decoder : public InstDecoder
+         Decoder *dec = dynamic_cast<Decoder *>(old);
+         assert(dec);
+ 
++        cpl = dec->cpl;
+         mode = dec->mode;
+         submode = dec->submode;
++        emi.mode.cpl = cpl;
+         emi.mode.mode = mode;
+         emi.mode.submode = submode;
+         altOp = dec->altOp;
+diff --git a/src/arch/x86/isa/bitfields.isa b/src/arch/x86/isa/bitfields.isa
+index 0404afc..dd81712 100644
+--- a/src/arch/x86/isa/bitfields.isa
++++ b/src/arch/x86/isa/bitfields.isa
+@@ -83,6 +83,7 @@ def bitfield ADDRSIZE addrSize;
+ def bitfield STACKSIZE stackSize;
+ 
+ def bitfield MODE mode;
++def bitfield CPL mode.cpl;
+ def bitfield MODE_MODE mode.mode;
+ def bitfield MODE_SUBMODE mode.submode;
+ 
+diff --git a/src/arch/x86/types.hh b/src/arch/x86/types.hh
+index a2c2771..f377806 100644
+--- a/src/arch/x86/types.hh
++++ b/src/arch/x86/types.hh
+@@ -187,6 +187,12 @@ BitUnion8(OperatingMode)
+     Bitfield<2,0> submode;
+ EndBitUnion(OperatingMode)
+ 
++BitUnion8(OperatingModeAndCPL)
++    Bitfield<5,4> cpl;
++    Bitfield<3> mode;
++    Bitfield<2,0> submode;
++EndBitUnion(OperatingModeAndCPL)
++
+ enum X86Mode
+ {
+     LongMode,
+@@ -236,7 +242,7 @@ struct ExtMachInst
+     uint8_t dispSize;
+ 
+     //Mode information
+-    OperatingMode mode;
++    OperatingModeAndCPL mode;
+ };
+ 
+ inline static std::ostream &
+-- 
+1.8.3.1
+

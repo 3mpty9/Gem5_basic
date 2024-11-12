@@ -1,0 +1,2187 @@
+From a19bb5f5ab6d0f991a4f384baaedf8cbf1fef100 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Fri, 6 Aug 2021 05:04:08 -0700
+Subject: [PATCH 242/757] arch,cpu: Turn (read|set)*Reg into inline helpers.
+
+Eliminate readFloatRegFlat and setFloatRegFlat for the Fast Model
+ThreadContext since ARM doesn't use those register types, and those
+methods are no longer required by the ThreadContext interface.
+
+Change-Id: Ic149c64e2fbf1d313066fefe480c435eef6d66e5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49113
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/iris/thread_context.cc |   8 +-
+ src/arch/arm/fastmodel/iris/thread_context.hh | 102 ++++------
+ src/cpu/checker/cpu.hh                        |  58 ++----
+ src/cpu/checker/thread_context.hh             | 182 -----------------
+ src/cpu/exec_context.hh                       |   4 +-
+ src/cpu/minor/exec_context.hh                 |   4 +-
+ src/cpu/o3/cpu.cc                             | 279 +++-----------------------
+ src/cpu/o3/cpu.hh                             |  73 +------
+ src/cpu/o3/dyn_inst.hh                        |  68 ++++---
+ src/cpu/o3/regfile.hh                         | 166 ---------------
+ src/cpu/o3/thread_context.cc                  |  97 ---------
+ src/cpu/o3/thread_context.hh                  | 119 -----------
+ src/cpu/simple/exec_context.hh                |   4 +-
+ src/cpu/simple_thread.hh                      | 240 ----------------------
+ src/cpu/thread_context.hh                     | 188 +++++++++++++----
+ 15 files changed, 291 insertions(+), 1301 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.cc b/src/arch/arm/fastmodel/iris/thread_context.cc
+index 7be65f8..eb7ba68 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.cc
++++ b/src/arch/arm/fastmodel/iris/thread_context.cc
+@@ -718,9 +718,6 @@ ThreadContext::getRegFlat(const RegId &reg, void *val) const
+       case IntRegClass:
+         *(RegVal *)val = readIntRegFlat(idx);
+         break;
+-      case FloatRegClass:
+-        *(RegVal *)val = readFloatRegFlat(idx);
+-        break;
+       case VecRegClass:
+         *(ArmISA::VecRegContainer *)val = readVecRegFlat(idx);
+         break;
+@@ -749,9 +746,6 @@ ThreadContext::setRegFlat(const RegId &reg, const void *val)
+       case IntRegClass:
+         setIntRegFlat(idx, *(RegVal *)val);
+         break;
+-      case FloatRegClass:
+-        setFloatRegFlat(idx, *(RegVal *)val);
+-        break;
+       case VecRegClass:
+         setVecRegFlat(idx, *(ArmISA::VecRegContainer *)val);
+         break;
+@@ -916,7 +910,7 @@ ThreadContext::readVecPredReg(const RegId &reg_id) const
+     return reg;
+ }
+ 
+-const ArmISA::VecPredRegContainer &
++ArmISA::VecPredRegContainer
+ ThreadContext::readVecPredRegFlat(RegIndex idx) const
+ {
+     return readVecPredReg(RegId(VecPredRegClass, idx));
+diff --git a/src/arch/arm/fastmodel/iris/thread_context.hh b/src/arch/arm/fastmodel/iris/thread_context.hh
+index ccc6a4a..6464019 100644
+--- a/src/arch/arm/fastmodel/iris/thread_context.hh
++++ b/src/arch/arm/fastmodel/iris/thread_context.hh
+@@ -286,70 +286,58 @@ class ThreadContext : public gem5::ThreadContext
+     void setReg(const RegId &reg, RegVal val) override;
+     void setReg(const RegId &reg, const void *val) override;
+ 
+-    RegVal readIntReg(RegIndex reg_idx) const override;
++    virtual RegVal readIntReg(RegIndex reg_idx) const;
+ 
+-    RegVal
+-    readFloatReg(RegIndex reg_idx) const override
+-    {
+-        panic("%s not implemented.", __FUNCTION__);
+-    }
+-
+-    const ArmISA::VecRegContainer &readVecReg(const RegId &reg) const override;
+-    ArmISA::VecRegContainer &
+-    getWritableVecReg(const RegId &reg) override
++    virtual const ArmISA::VecRegContainer &readVecReg(const RegId &reg) const;
++    virtual ArmISA::VecRegContainer &
++    getWritableVecReg(const RegId &reg)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    RegVal
+-    readVecElem(const RegId &reg) const override
++    virtual RegVal
++    readVecElem(const RegId &reg) const
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    const ArmISA::VecPredRegContainer &
+-        readVecPredReg(const RegId &reg) const override;
+-    ArmISA::VecPredRegContainer &
+-    getWritableVecPredReg(const RegId &reg) override
++    virtual const ArmISA::VecPredRegContainer &
++        readVecPredReg(const RegId &reg) const;
++    virtual ArmISA::VecPredRegContainer &
++    getWritableVecPredReg(const RegId &reg)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    RegVal
+-    readCCReg(RegIndex reg_idx) const override
++    virtual RegVal
++    readCCReg(RegIndex reg_idx) const
+     {
+         return readCCRegFlat(reg_idx);
+     }
+ 
+-    void setIntReg(RegIndex reg_idx, RegVal val) override;
++    virtual void setIntReg(RegIndex reg_idx, RegVal val);
+ 
+-    void
+-    setFloatReg(RegIndex reg_idx, RegVal val) override
++    virtual void
++    setVecReg(const RegId &reg, const ArmISA::VecRegContainer &val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    void
+-    setVecReg(const RegId &reg, const ArmISA::VecRegContainer &val) override
++    virtual void
++    setVecElem(const RegId& reg, RegVal val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    void
+-    setVecElem(const RegId& reg, RegVal val) override
+-    {
+-        panic("%s not implemented.", __FUNCTION__);
+-    }
+-
+-    void
++    virtual void
+     setVecPredReg(const RegId &reg,
+-                  const ArmISA::VecPredRegContainer &val) override
++                  const ArmISA::VecPredRegContainer &val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    void
+-    setCCReg(RegIndex reg_idx, RegVal val) override
++    virtual void
++    setCCReg(RegIndex reg_idx, RegVal val)
+     {
+         setCCRegFlat(reg_idx, val);
+     }
+@@ -412,59 +400,47 @@ class ThreadContext : public gem5::ThreadContext
+     void setRegFlat(const RegId &reg, RegVal val) override;
+     void setRegFlat(const RegId &reg, const void *val) override;
+ 
+-    RegVal readIntRegFlat(RegIndex idx) const override;
+-    void setIntRegFlat(RegIndex idx, uint64_t val) override;
+-
+-    RegVal
+-    readFloatRegFlat(RegIndex idx) const override
+-    {
+-        panic("%s not implemented.", __FUNCTION__);
+-    }
+-    void
+-    setFloatRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        panic("%s not implemented.", __FUNCTION__);
+-    }
++    virtual RegVal readIntRegFlat(RegIndex idx) const;
++    virtual void setIntRegFlat(RegIndex idx, uint64_t val);
+ 
+-    const ArmISA::VecRegContainer &readVecRegFlat(RegIndex idx) const override;
+-    ArmISA::VecRegContainer &
+-    getWritableVecRegFlat(RegIndex idx) override
++    virtual const ArmISA::VecRegContainer &readVecRegFlat(RegIndex idx) const;
++    virtual ArmISA::VecRegContainer &
++    getWritableVecRegFlat(RegIndex idx)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+-    void
+-    setVecRegFlat(RegIndex idx, const ArmISA::VecRegContainer &val) override
++    virtual void
++    setVecRegFlat(RegIndex idx, const ArmISA::VecRegContainer &val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    RegVal
+-    readVecElemFlat(RegIndex idx) const override
++    virtual RegVal
++    readVecElemFlat(RegIndex idx) const
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+-    void
+-    setVecElemFlat(RegIndex idx, RegVal val) override
++    virtual void
++    setVecElemFlat(RegIndex idx, RegVal val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    const ArmISA::VecPredRegContainer &
+-        readVecPredRegFlat(RegIndex idx) const override;
+-    ArmISA::VecPredRegContainer &
+-    getWritableVecPredRegFlat(RegIndex idx) override
++    virtual ArmISA::VecPredRegContainer readVecPredRegFlat(RegIndex idx) const;
++    virtual ArmISA::VecPredRegContainer &
++    getWritableVecPredRegFlat(RegIndex idx)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+-    void
++    virtual void
+     setVecPredRegFlat(RegIndex idx,
+-            const ArmISA::VecPredRegContainer &val) override
++            const ArmISA::VecPredRegContainer &val)
+     {
+         panic("%s not implemented.", __FUNCTION__);
+     }
+ 
+-    RegVal readCCRegFlat(RegIndex idx) const override;
+-    void setCCRegFlat(RegIndex idx, RegVal val) override;
++    virtual RegVal readCCRegFlat(RegIndex idx) const;
++    virtual void setCCRegFlat(RegIndex idx, RegVal val);
+     /** @} */
+ 
+     // hardware transactional memory
+diff --git a/src/cpu/checker/cpu.hh b/src/cpu/checker/cpu.hh
+index b76c034..4c825d2 100644
+--- a/src/cpu/checker/cpu.hh
++++ b/src/cpu/checker/cpu.hh
+@@ -178,28 +178,24 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     RegVal
+     readIntRegOperand(const StaticInst *si, int idx) override
+     {
+-        const RegId& reg = si->srcRegIdx(idx);
+-        assert(reg.is(IntRegClass));
+-        return thread->readIntReg(reg.index());
++        return thread->getReg(si->srcRegIdx(idx));
+     }
+ 
+     RegVal
+     readFloatRegOperandBits(const StaticInst *si, int idx) override
+     {
+-        const RegId& reg = si->srcRegIdx(idx);
+-        assert(reg.is(FloatRegClass));
+-        return thread->readFloatReg(reg.index());
++        return thread->getReg(si->srcRegIdx(idx));
+     }
+ 
+     /**
+      * Read source vector register operand.
+      */
+-    const TheISA::VecRegContainer &
++    TheISA::VecRegContainer
+     readVecRegOperand(const StaticInst *si, int idx) const override
+     {
+-        const RegId& reg = si->srcRegIdx(idx);
+-        assert(reg.is(VecRegClass));
+-        return thread->readVecReg(reg);
++        TheISA::VecRegContainer val;
++        thread->getReg(si->srcRegIdx(idx), &val);
++        return val;
+     }
+ 
+     /**
+@@ -209,8 +205,7 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     getWritableVecRegOperand(const StaticInst *si, int idx) override
+     {
+         const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(VecRegClass));
+-        return thread->getWritableVecReg(reg);
++        return *(TheISA::VecRegContainer *)thread->getWritableReg(reg);
+     }
+ 
+     RegVal
+@@ -220,54 +215,45 @@ class CheckerCPU : public BaseCPU, public ExecContext
+         return thread->readVecElem(reg);
+     }
+ 
+-    const TheISA::VecPredRegContainer&
++    TheISA::VecPredRegContainer
+     readVecPredRegOperand(const StaticInst *si, int idx) const override
+     {
+-        const RegId& reg = si->srcRegIdx(idx);
+-        assert(reg.is(VecPredRegClass));
+-        return thread->readVecPredReg(reg);
++        TheISA::VecPredRegContainer val;
++        thread->getReg(si->srcRegIdx(idx), &val);
++        return val;
+     }
+ 
+     TheISA::VecPredRegContainer&
+     getWritableVecPredRegOperand(const StaticInst *si, int idx) override
+     {
+         const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(VecPredRegClass));
+-        return thread->getWritableVecPredReg(reg);
++        return *(TheISA::VecPredRegContainer *)thread->getWritableReg(reg);
+     }
+ 
+     RegVal
+     readCCRegOperand(const StaticInst *si, int idx) override
+     {
+-        const RegId& reg = si->srcRegIdx(idx);
+-        assert(reg.is(CCRegClass));
+-        return thread->readCCReg(reg.index());
++        return thread->getReg(si->srcRegIdx(idx));
+     }
+ 
+     void
+     setIntRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(IntRegClass));
+-        thread->setIntReg(reg.index(), val);
++        thread->setReg(si->destRegIdx(idx), val);
+         result.emplace(val);
+     }
+ 
+     void
+     setFloatRegOperandBits(const StaticInst *si, int idx, RegVal val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(FloatRegClass));
+-        thread->setFloatReg(reg.index(), val);
++        thread->setReg(si->destRegIdx(idx), val);
+         result.emplace(val);
+     }
+ 
+     void
+     setCCRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(CCRegClass));
+-        thread->setCCReg(reg.index(), val);
++        thread->setReg(si->destRegIdx(idx), val);
+         result.emplace(val);
+     }
+ 
+@@ -275,18 +261,14 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     setVecRegOperand(const StaticInst *si, int idx,
+                      const TheISA::VecRegContainer& val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(VecRegClass));
+-        thread->setVecReg(reg, val);
++        thread->setReg(si->destRegIdx(idx), &val);
+         result.emplace(val);
+     }
+ 
+     void
+     setVecElemOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(VecElemClass));
+-        thread->setVecElem(reg, val);
++        thread->setReg(si->destRegIdx(idx), val);
+         result.emplace(val);
+     }
+ 
+@@ -294,9 +276,7 @@ class CheckerCPU : public BaseCPU, public ExecContext
+     setVecPredRegOperand(const StaticInst *si, int idx,
+                          const TheISA::VecPredRegContainer& val) override
+     {
+-        const RegId& reg = si->destRegIdx(idx);
+-        assert(reg.is(VecPredRegClass));
+-        thread->setVecPredReg(reg, val);
++        thread->setReg(si->destRegIdx(idx), &val);
+         result.emplace(val);
+     }
+ 
+diff --git a/src/cpu/checker/thread_context.hh b/src/cpu/checker/thread_context.hh
+index f8c3ce7..acff791 100644
+--- a/src/cpu/checker/thread_context.hh
++++ b/src/cpu/checker/thread_context.hh
+@@ -258,100 +258,6 @@ class CheckerThreadContext : public ThreadContext
+         checkerTC->setReg(reg, val);
+     }
+ 
+-    RegVal
+-    readIntReg(RegIndex reg_idx) const override
+-    {
+-        return actualTC->readIntReg(reg_idx);
+-    }
+-
+-    RegVal
+-    readFloatReg(RegIndex reg_idx) const override
+-    {
+-        return actualTC->readFloatReg(reg_idx);
+-    }
+-
+-    const TheISA::VecRegContainer &
+-    readVecReg (const RegId &reg) const override
+-    {
+-        return actualTC->readVecReg(reg);
+-    }
+-
+-    /**
+-     * Read vector register for modification, hierarchical indexing.
+-     */
+-    TheISA::VecRegContainer &
+-    getWritableVecReg (const RegId &reg) override
+-    {
+-        return actualTC->getWritableVecReg(reg);
+-    }
+-
+-    RegVal
+-    readVecElem(const RegId& reg) const override
+-    {
+-        return actualTC->readVecElem(reg);
+-    }
+-
+-    const TheISA::VecPredRegContainer &
+-    readVecPredReg(const RegId& reg) const override
+-    {
+-        return actualTC->readVecPredReg(reg);
+-    }
+-
+-    TheISA::VecPredRegContainer &
+-    getWritableVecPredReg(const RegId& reg) override
+-    {
+-        return actualTC->getWritableVecPredReg(reg);
+-    }
+-
+-    RegVal
+-    readCCReg(RegIndex reg_idx) const override
+-    {
+-        return actualTC->readCCReg(reg_idx);
+-    }
+-
+-    void
+-    setIntReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        actualTC->setIntReg(reg_idx, val);
+-        checkerTC->setIntReg(reg_idx, val);
+-    }
+-
+-    void
+-    setFloatReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        actualTC->setFloatReg(reg_idx, val);
+-        checkerTC->setFloatReg(reg_idx, val);
+-    }
+-
+-    void
+-    setVecReg(const RegId& reg, const TheISA::VecRegContainer& val) override
+-    {
+-        actualTC->setVecReg(reg, val);
+-        checkerTC->setVecReg(reg, val);
+-    }
+-
+-    void
+-    setVecElem(const RegId& reg, RegVal val) override
+-    {
+-        actualTC->setVecElem(reg, val);
+-        checkerTC->setVecElem(reg, val);
+-    }
+-
+-    void
+-    setVecPredReg(const RegId& reg,
+-            const TheISA::VecPredRegContainer& val) override
+-    {
+-        actualTC->setVecPredReg(reg, val);
+-        checkerTC->setVecPredReg(reg, val);
+-    }
+-
+-    void
+-    setCCReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        actualTC->setCCReg(reg_idx, val);
+-        checkerTC->setCCReg(reg_idx, val);
+-    }
+-
+     /** Reads this thread's PC state. */
+     const PCStateBase &pcState() const override { return actualTC->pcState(); }
+ 
+@@ -452,94 +358,6 @@ class CheckerThreadContext : public ThreadContext
+         checkerTC->setRegFlat(reg, val);
+     }
+ 
+-    RegVal
+-    readIntRegFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readIntRegFlat(idx);
+-    }
+-
+-    void
+-    setIntRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        actualTC->setIntRegFlat(idx, val);
+-    }
+-
+-    RegVal
+-    readFloatRegFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readFloatRegFlat(idx);
+-    }
+-
+-    void
+-    setFloatRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        actualTC->setFloatRegFlat(idx, val);
+-    }
+-
+-    const TheISA::VecRegContainer &
+-    readVecRegFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readVecRegFlat(idx);
+-    }
+-
+-    /**
+-     * Read vector register for modification, flat indexing.
+-     */
+-    TheISA::VecRegContainer &
+-    getWritableVecRegFlat(RegIndex idx) override
+-    {
+-        return actualTC->getWritableVecRegFlat(idx);
+-    }
+-
+-    void
+-    setVecRegFlat(RegIndex idx, const TheISA::VecRegContainer& val) override
+-    {
+-        actualTC->setVecRegFlat(idx, val);
+-    }
+-
+-    RegVal
+-    readVecElemFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readVecElemFlat(idx);
+-    }
+-
+-    void
+-    setVecElemFlat(RegIndex idx, RegVal val) override
+-    {
+-        actualTC->setVecElemFlat(idx, val);
+-    }
+-
+-    const TheISA::VecPredRegContainer &
+-    readVecPredRegFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readVecPredRegFlat(idx);
+-    }
+-
+-    TheISA::VecPredRegContainer &
+-    getWritableVecPredRegFlat(RegIndex idx) override
+-    {
+-        return actualTC->getWritableVecPredRegFlat(idx);
+-    }
+-
+-    void
+-    setVecPredRegFlat(RegIndex idx,
+-            const TheISA::VecPredRegContainer& val) override
+-    {
+-        actualTC->setVecPredRegFlat(idx, val);
+-    }
+-
+-    RegVal
+-    readCCRegFlat(RegIndex idx) const override
+-    {
+-        return actualTC->readCCRegFlat(idx);
+-    }
+-
+-    void
+-    setCCRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        actualTC->setCCRegFlat(idx, val);
+-    }
+-
+     // hardware transactional memory
+     void
+     htmAbortTransaction(uint64_t htm_uid, HtmFailureFaultCause cause) override
+diff --git a/src/cpu/exec_context.hh b/src/cpu/exec_context.hh
+index b88c895..b992d5d 100644
+--- a/src/cpu/exec_context.hh
++++ b/src/cpu/exec_context.hh
+@@ -108,7 +108,7 @@ class ExecContext
+     /** Vector Register Interfaces. */
+     /** @{ */
+     /** Reads source vector register operand. */
+-    virtual const TheISA::VecRegContainer& readVecRegOperand(
++    virtual TheISA::VecRegContainer readVecRegOperand(
+             const StaticInst *si, int idx) const = 0;
+ 
+     /** Gets destination vector register operand for modification. */
+@@ -133,7 +133,7 @@ class ExecContext
+     /** Predicate registers interface. */
+     /** @{ */
+     /** Reads source predicate register operand. */
+-    virtual const TheISA::VecPredRegContainer& readVecPredRegOperand(
++    virtual TheISA::VecPredRegContainer readVecPredRegOperand(
+             const StaticInst *si, int idx) const = 0;
+ 
+     /** Gets destination predicate register operand for modification. */
+diff --git a/src/cpu/minor/exec_context.hh b/src/cpu/minor/exec_context.hh
+index 2773f9e..9ec5d07 100644
+--- a/src/cpu/minor/exec_context.hh
++++ b/src/cpu/minor/exec_context.hh
+@@ -160,7 +160,7 @@ class ExecContext : public gem5::ExecContext
+         return thread.readFloatReg(reg.index());
+     }
+ 
+-    const TheISA::VecRegContainer &
++    TheISA::VecRegContainer
+     readVecRegOperand(const StaticInst *si, int idx) const override
+     {
+         const RegId& reg = si->srcRegIdx(idx);
+@@ -184,7 +184,7 @@ class ExecContext : public gem5::ExecContext
+         return thread.readVecElem(reg);
+     }
+ 
+-    const TheISA::VecPredRegContainer&
++    TheISA::VecPredRegContainer
+     readVecPredRegOperand(const StaticInst *si, int idx) const override
+     {
+         const RegId& reg = si->srcRegIdx(idx);
+diff --git a/src/cpu/o3/cpu.cc b/src/cpu/o3/cpu.cc
+index 1f0b666..bc71825 100644
+--- a/src/cpu/o3/cpu.cc
++++ b/src/cpu/o3/cpu.cc
+@@ -1088,136 +1088,7 @@ CPU::setMiscReg(int misc_reg, RegVal val, ThreadID tid)
+ RegVal
+ CPU::getReg(PhysRegIdPtr phys_reg)
+ {
+-    return regFile.getReg(phys_reg);
+-}
+-
+-void
+-CPU::getReg(PhysRegIdPtr phys_reg, void *val)
+-{
+-    regFile.getReg(phys_reg, val);
+-}
+-
+-void *
+-CPU::getWritableReg(PhysRegIdPtr phys_reg)
+-{
+-    return regFile.getWritableReg(phys_reg);
+-}
+-
+-void
+-CPU::setReg(PhysRegIdPtr phys_reg, RegVal val)
+-{
+-    regFile.setReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setReg(PhysRegIdPtr phys_reg, const void *val)
+-{
+-    regFile.setReg(phys_reg, val);
+-}
+-
+-RegVal
+-CPU::readIntReg(PhysRegIdPtr phys_reg)
+-{
+-    cpuStats.intRegfileReads++;
+-    return regFile.readIntReg(phys_reg);
+-}
+-
+-RegVal
+-CPU::readFloatReg(PhysRegIdPtr phys_reg)
+-{
+-    cpuStats.fpRegfileReads++;
+-    return regFile.readFloatReg(phys_reg);
+-}
+-
+-const TheISA::VecRegContainer&
+-CPU::readVecReg(PhysRegIdPtr phys_reg) const
+-{
+-    cpuStats.vecRegfileReads++;
+-    return regFile.readVecReg(phys_reg);
+-}
+-
+-TheISA::VecRegContainer&
+-CPU::getWritableVecReg(PhysRegIdPtr phys_reg)
+-{
+-    cpuStats.vecRegfileWrites++;
+-    return regFile.getWritableVecReg(phys_reg);
+-}
+-
+-RegVal
+-CPU::readVecElem(PhysRegIdPtr phys_reg) const
+-{
+-    cpuStats.vecRegfileReads++;
+-    return regFile.readVecElem(phys_reg);
+-}
+-
+-const TheISA::VecPredRegContainer&
+-CPU::readVecPredReg(PhysRegIdPtr phys_reg) const
+-{
+-    cpuStats.vecPredRegfileReads++;
+-    return regFile.readVecPredReg(phys_reg);
+-}
+-
+-TheISA::VecPredRegContainer&
+-CPU::getWritableVecPredReg(PhysRegIdPtr phys_reg)
+-{
+-    cpuStats.vecPredRegfileWrites++;
+-    return regFile.getWritableVecPredReg(phys_reg);
+-}
+-
+-RegVal
+-CPU::readCCReg(PhysRegIdPtr phys_reg)
+-{
+-    cpuStats.ccRegfileReads++;
+-    return regFile.readCCReg(phys_reg);
+-}
+-
+-void
+-CPU::setIntReg(PhysRegIdPtr phys_reg, RegVal val)
+-{
+-    cpuStats.intRegfileWrites++;
+-    regFile.setIntReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setFloatReg(PhysRegIdPtr phys_reg, RegVal val)
+-{
+-    cpuStats.fpRegfileWrites++;
+-    regFile.setFloatReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setVecReg(PhysRegIdPtr phys_reg, const TheISA::VecRegContainer& val)
+-{
+-    cpuStats.vecRegfileWrites++;
+-    regFile.setVecReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setVecElem(PhysRegIdPtr phys_reg, RegVal val)
+-{
+-    cpuStats.vecRegfileWrites++;
+-    regFile.setVecElem(phys_reg, val);
+-}
+-
+-void
+-CPU::setVecPredReg(PhysRegIdPtr phys_reg,
+-                               const TheISA::VecPredRegContainer& val)
+-{
+-    cpuStats.vecPredRegfileWrites++;
+-    regFile.setVecPredReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setCCReg(PhysRegIdPtr phys_reg, RegVal val)
+-{
+-    cpuStats.ccRegfileWrites++;
+-    regFile.setCCReg(phys_reg, val);
+-}
+-
+-RegVal
+-CPU::getArchReg(const RegId &reg, ThreadID tid)
+-{
+-    switch (reg.classValue()) {
++    switch (phys_reg->classValue()) {
+       case IntRegClass:
+         cpuStats.intRegfileReads++;
+         break;
+@@ -1237,14 +1108,13 @@ CPU::getArchReg(const RegId &reg, ThreadID tid)
+       default:
+         break;
+     }
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
+-    return getReg(phys_reg);
++    return regFile.getReg(phys_reg);
+ }
+ 
+ void
+-CPU::getArchReg(const RegId &reg, void *val, ThreadID tid)
++CPU::getReg(PhysRegIdPtr phys_reg, void *val)
+ {
+-    switch (reg.classValue()) {
++    switch (phys_reg->classValue()) {
+       case IntRegClass:
+         cpuStats.intRegfileReads++;
+         break;
+@@ -1264,14 +1134,13 @@ CPU::getArchReg(const RegId &reg, void *val, ThreadID tid)
+       default:
+         break;
+     }
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
+-    getReg(phys_reg, val);
++    regFile.getReg(phys_reg, val);
+ }
+ 
+ void *
+-CPU::getWritableArchReg(const RegId &reg, ThreadID tid)
++CPU::getWritableReg(PhysRegIdPtr phys_reg)
+ {
+-    switch (reg.classValue()) {
++    switch (phys_reg->classValue()) {
+       case VecRegClass:
+         cpuStats.vecRegfileReads++;
+         break;
+@@ -1281,14 +1150,13 @@ CPU::getWritableArchReg(const RegId &reg, ThreadID tid)
+       default:
+         break;
+     }
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
+-    return getWritableReg(phys_reg);
++    return regFile.getWritableReg(phys_reg);
+ }
+ 
+ void
+-CPU::setArchReg(const RegId &reg, RegVal val, ThreadID tid)
++CPU::setReg(PhysRegIdPtr phys_reg, RegVal val)
+ {
+-    switch (reg.classValue()) {
++    switch (phys_reg->classValue()) {
+       case IntRegClass:
+         cpuStats.intRegfileWrites++;
+         break;
+@@ -1308,14 +1176,13 @@ CPU::setArchReg(const RegId &reg, RegVal val, ThreadID tid)
+       default:
+         break;
+     }
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
+-    setReg(phys_reg, val);
++    regFile.setReg(phys_reg, val);
+ }
+ 
+ void
+-CPU::setArchReg(const RegId &reg, const void *val, ThreadID tid)
++CPU::setReg(PhysRegIdPtr phys_reg, const void *val)
+ {
+-    switch (reg.classValue()) {
++    switch (phys_reg->classValue()) {
+       case IntRegClass:
+         cpuStats.intRegfileWrites++;
+         break;
+@@ -1335,128 +1202,42 @@ CPU::setArchReg(const RegId &reg, const void *val, ThreadID tid)
+       default:
+         break;
+     }
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
+-    setReg(phys_reg, val);
+-}
+-
+-RegVal
+-CPU::readArchIntReg(int reg_idx, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-            RegId(IntRegClass, reg_idx));
+-
+-    return regFile.readIntReg(phys_reg);
+-}
+-
+-RegVal
+-CPU::readArchFloatReg(int reg_idx, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-        RegId(FloatRegClass, reg_idx));
+-
+-    return regFile.readFloatReg(phys_reg);
+-}
+-
+-const TheISA::VecRegContainer&
+-CPU::readArchVecReg(int reg_idx, ThreadID tid) const
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecRegClass, reg_idx));
+-    return regFile.readVecReg(phys_reg);
+-}
+-
+-TheISA::VecRegContainer&
+-CPU::getWritableArchVecReg(int reg_idx, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecRegClass, reg_idx));
+-    return regFile.getWritableVecReg(phys_reg);
+-}
+-
+-RegVal
+-CPU::readArchVecElem(const RegIndex& reg_idx, ThreadID tid) const
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                                RegId(VecElemClass, reg_idx));
+-    return regFile.readVecElem(phys_reg);
+-}
+-
+-const TheISA::VecPredRegContainer&
+-CPU::readArchVecPredReg(int reg_idx, ThreadID tid) const
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecPredRegClass, reg_idx));
+-    return regFile.readVecPredReg(phys_reg);
+-}
+-
+-TheISA::VecPredRegContainer&
+-CPU::getWritableArchVecPredReg(int reg_idx, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecPredRegClass, reg_idx));
+-    return regFile.getWritableVecPredReg(phys_reg);
++    regFile.setReg(phys_reg, val);
+ }
+ 
+ RegVal
+-CPU::readArchCCReg(int reg_idx, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-        RegId(CCRegClass, reg_idx));
+-
+-    return regFile.readCCReg(phys_reg);
+-}
+-
+-void
+-CPU::setArchIntReg(int reg_idx, RegVal val, ThreadID tid)
+-{
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-            RegId(IntRegClass, reg_idx));
+-
+-    regFile.setIntReg(phys_reg, val);
+-}
+-
+-void
+-CPU::setArchFloatReg(int reg_idx, RegVal val, ThreadID tid)
++CPU::getArchReg(const RegId &reg, ThreadID tid)
+ {
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-            RegId(FloatRegClass, reg_idx));
+-
+-    regFile.setFloatReg(phys_reg, val);
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    return regFile.getReg(phys_reg);
+ }
+ 
+ void
+-CPU::setArchVecReg(int reg_idx, const TheISA::VecRegContainer& val,
+-        ThreadID tid)
++CPU::getArchReg(const RegId &reg, void *val, ThreadID tid)
+ {
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecRegClass, reg_idx));
+-    regFile.setVecReg(phys_reg, val);
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    regFile.getReg(phys_reg, val);
+ }
+ 
+-void
+-CPU::setArchVecElem(const RegIndex& reg_idx, RegVal val, ThreadID tid)
++void *
++CPU::getWritableArchReg(const RegId &reg, ThreadID tid)
+ {
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecElemClass, reg_idx));
+-    regFile.setVecElem(phys_reg, val);
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    return regFile.getWritableReg(phys_reg);
+ }
+ 
+ void
+-CPU::setArchVecPredReg(int reg_idx,
+-        const TheISA::VecPredRegContainer& val, ThreadID tid)
++CPU::setArchReg(const RegId &reg, RegVal val, ThreadID tid)
+ {
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-                RegId(VecPredRegClass, reg_idx));
+-    regFile.setVecPredReg(phys_reg, val);
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    regFile.setReg(phys_reg, val);
+ }
+ 
+ void
+-CPU::setArchCCReg(int reg_idx, RegVal val, ThreadID tid)
++CPU::setArchReg(const RegId &reg, const void *val, ThreadID tid)
+ {
+-    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(
+-            RegId(CCRegClass, reg_idx));
+-
+-    regFile.setCCReg(phys_reg, val);
++    PhysRegIdPtr phys_reg = commitRenameMap[tid].lookup(reg);
++    regFile.setReg(phys_reg, val);
+ }
+ 
+ const PCStateBase &
+diff --git a/src/cpu/o3/cpu.hh b/src/cpu/o3/cpu.hh
+index 5dd310f..db3474d 100644
+--- a/src/cpu/o3/cpu.hh
++++ b/src/cpu/o3/cpu.hh
+@@ -318,38 +318,11 @@ class CPU : public BaseCPU
+     void setReg(PhysRegIdPtr phys_reg, RegVal val);
+     void setReg(PhysRegIdPtr phys_reg, const void *val);
+ 
+-    RegVal readIntReg(PhysRegIdPtr phys_reg);
+-
+-    RegVal readFloatReg(PhysRegIdPtr phys_reg);
+-
+-    const TheISA::VecRegContainer& readVecReg(PhysRegIdPtr reg_idx) const;
+-
+-    /**
+-     * Read physical vector register for modification.
++    /** Architectural register accessors.  Looks up in the commit
++     * rename table to obtain the true physical index of the
++     * architected register first, then accesses that physical
++     * register.
+      */
+-    TheISA::VecRegContainer& getWritableVecReg(PhysRegIdPtr reg_idx);
+-
+-    RegVal readVecElem(PhysRegIdPtr reg_idx) const;
+-
+-    const TheISA::VecPredRegContainer&
+-        readVecPredReg(PhysRegIdPtr reg_idx) const;
+-
+-    TheISA::VecPredRegContainer& getWritableVecPredReg(PhysRegIdPtr reg_idx);
+-
+-    RegVal readCCReg(PhysRegIdPtr phys_reg);
+-
+-    void setIntReg(PhysRegIdPtr phys_reg, RegVal val);
+-
+-    void setFloatReg(PhysRegIdPtr phys_reg, RegVal val);
+-
+-    void setVecReg(PhysRegIdPtr reg_idx, const TheISA::VecRegContainer& val);
+-
+-    void setVecElem(PhysRegIdPtr reg_idx, RegVal val);
+-
+-    void setVecPredReg(PhysRegIdPtr reg_idx,
+-            const TheISA::VecPredRegContainer& val);
+-
+-    void setCCReg(PhysRegIdPtr phys_reg, RegVal val);
+ 
+     RegVal getArchReg(const RegId &reg, ThreadID tid);
+     void getArchReg(const RegId &reg, void *val, ThreadID tid);
+@@ -358,44 +331,6 @@ class CPU : public BaseCPU
+     void setArchReg(const RegId &reg, RegVal val, ThreadID tid);
+     void setArchReg(const RegId &reg, const void *val, ThreadID tid);
+ 
+-    RegVal readArchIntReg(int reg_idx, ThreadID tid);
+-
+-    RegVal readArchFloatReg(int reg_idx, ThreadID tid);
+-
+-    const TheISA::VecRegContainer&
+-        readArchVecReg(int reg_idx, ThreadID tid) const;
+-    /** Read architectural vector register for modification. */
+-    TheISA::VecRegContainer& getWritableArchVecReg(int reg_idx, ThreadID tid);
+-
+-    RegVal readArchVecElem(const RegIndex& reg_idx, ThreadID tid) const;
+-
+-    const TheISA::VecPredRegContainer& readArchVecPredReg(
+-            int reg_idx, ThreadID tid) const;
+-
+-    TheISA::VecPredRegContainer&
+-        getWritableArchVecPredReg(int reg_idx, ThreadID tid);
+-
+-    RegVal readArchCCReg(int reg_idx, ThreadID tid);
+-
+-    /** Architectural register accessors.  Looks up in the commit
+-     * rename table to obtain the true physical index of the
+-     * architected register first, then accesses that physical
+-     * register.
+-     */
+-    void setArchIntReg(int reg_idx, RegVal val, ThreadID tid);
+-
+-    void setArchFloatReg(int reg_idx, RegVal val, ThreadID tid);
+-
+-    void setArchVecPredReg(int reg_idx, const TheISA::VecPredRegContainer& val,
+-                           ThreadID tid);
+-
+-    void setArchVecReg(int reg_idx, const TheISA::VecRegContainer& val,
+-            ThreadID tid);
+-
+-    void setArchVecElem(const RegIndex& reg_idx, RegVal val, ThreadID tid);
+-
+-    void setArchCCReg(int reg_idx, RegVal val, ThreadID tid);
+-
+     /** Sets the commit PC state of a specific thread. */
+     void pcState(const PCStateBase &new_pc_state, ThreadID tid);
+ 
+diff --git a/src/cpu/o3/dyn_inst.hh b/src/cpu/o3/dyn_inst.hh
+index f97a525..917b4ae 100644
+--- a/src/cpu/o3/dyn_inst.hh
++++ b/src/cpu/o3/dyn_inst.hh
+@@ -1092,27 +1092,36 @@ class DynInst : public ExecContext, public RefCounted
+             switch (original_dest_reg.classValue()) {
+               case IntRegClass:
+                 setIntRegOperand(staticInst.get(), idx,
+-                        cpu->readIntReg(prev_phys_reg));
++                        cpu->getReg(prev_phys_reg));
+                 break;
+               case FloatRegClass:
+                 setFloatRegOperandBits(staticInst.get(), idx,
+-                        cpu->readFloatReg(prev_phys_reg));
++                        cpu->getReg(prev_phys_reg));
+                 break;
+               case VecRegClass:
+-                setVecRegOperand(staticInst.get(), idx,
+-                        cpu->readVecReg(prev_phys_reg));
++                {
++                    TheISA::VecRegContainer val;
++                    cpu->getReg(prev_phys_reg, &val);
++                    setVecRegOperand(staticInst.get(), idx, val);
++                }
+                 break;
+               case VecElemClass:
+-                setVecElemOperand(staticInst.get(), idx,
+-                        cpu->readVecElem(prev_phys_reg));
++                {
++                    RegVal val;
++                    cpu->getReg(prev_phys_reg, &val);
++                    setVecElemOperand(staticInst.get(), idx, val);
++                }
+                 break;
+               case VecPredRegClass:
+-                setVecPredRegOperand(staticInst.get(), idx,
+-                        cpu->readVecPredReg(prev_phys_reg));
++                {
++                    TheISA::VecPredRegContainer val;
++                    cpu->getReg(prev_phys_reg, &val);
++                    setVecPredRegOperand(staticInst.get(), idx, val);
++                }
+                 break;
+               case CCRegClass:
+                 setCCRegOperand(staticInst.get(), idx,
+-                        cpu->readCCReg(prev_phys_reg));
++                        cpu->getReg(prev_phys_reg));
+                 break;
+               case MiscRegClass:
+                 // no need to forward misc reg values
+@@ -1142,19 +1151,21 @@ class DynInst : public ExecContext, public RefCounted
+     RegVal
+     readIntRegOperand(const StaticInst *si, int idx) override
+     {
+-        return cpu->readIntReg(renamedSrcIdx(idx));
++        return cpu->getReg(renamedSrcIdx(idx));
+     }
+ 
+     RegVal
+     readFloatRegOperandBits(const StaticInst *si, int idx) override
+     {
+-        return cpu->readFloatReg(renamedSrcIdx(idx));
++        return cpu->getReg(renamedSrcIdx(idx));
+     }
+ 
+-    const TheISA::VecRegContainer&
++    TheISA::VecRegContainer
+     readVecRegOperand(const StaticInst *si, int idx) const override
+     {
+-        return cpu->readVecReg(renamedSrcIdx(idx));
++        TheISA::VecRegContainer val;
++        cpu->getReg(renamedSrcIdx(idx), &val);
++        return val;
+     }
+ 
+     /**
+@@ -1163,31 +1174,37 @@ class DynInst : public ExecContext, public RefCounted
+     TheISA::VecRegContainer&
+     getWritableVecRegOperand(const StaticInst *si, int idx) override
+     {
+-        return cpu->getWritableVecReg(renamedDestIdx(idx));
++        return *(TheISA::VecRegContainer *)cpu->getWritableReg(
++                renamedDestIdx(idx));
+     }
+ 
+     RegVal
+     readVecElemOperand(const StaticInst *si, int idx) const override
+     {
+-        return cpu->readVecElem(renamedSrcIdx(idx));
++        RegVal val;
++        cpu->getReg(renamedSrcIdx(idx), &val);
++        return val;
+     }
+ 
+-    const TheISA::VecPredRegContainer&
++    TheISA::VecPredRegContainer
+     readVecPredRegOperand(const StaticInst *si, int idx) const override
+     {
+-        return cpu->readVecPredReg(renamedSrcIdx(idx));
++        TheISA::VecPredRegContainer val;
++        cpu->getReg(renamedSrcIdx(idx), &val);
++        return val;
+     }
+ 
+     TheISA::VecPredRegContainer&
+     getWritableVecPredRegOperand(const StaticInst *si, int idx) override
+     {
+-        return cpu->getWritableVecPredReg(renamedDestIdx(idx));
++        return *(TheISA::VecPredRegContainer *)cpu->getWritableReg(
++                renamedDestIdx(idx));
+     }
+ 
+     RegVal
+     readCCRegOperand(const StaticInst *si, int idx) override
+     {
+-        return cpu->readCCReg(renamedSrcIdx(idx));
++        return cpu->getReg(renamedSrcIdx(idx));
+     }
+ 
+     /** @todo: Make results into arrays so they can handle multiple dest
+@@ -1196,14 +1213,14 @@ class DynInst : public ExecContext, public RefCounted
+     void
+     setIntRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        cpu->setIntReg(renamedDestIdx(idx), val);
++        cpu->setReg(renamedDestIdx(idx), val);
+         setResult(val);
+     }
+ 
+     void
+     setFloatRegOperandBits(const StaticInst *si, int idx, RegVal val) override
+     {
+-        cpu->setFloatReg(renamedDestIdx(idx), val);
++        cpu->setReg(renamedDestIdx(idx), val);
+         setResult(val);
+     }
+ 
+@@ -1211,15 +1228,14 @@ class DynInst : public ExecContext, public RefCounted
+     setVecRegOperand(const StaticInst *si, int idx,
+                      const TheISA::VecRegContainer& val) override
+     {
+-        cpu->setVecReg(renamedDestIdx(idx), val);
++        cpu->setReg(renamedDestIdx(idx), &val);
+         setResult(val);
+     }
+ 
+     void
+     setVecElemOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        int reg_idx = idx;
+-        cpu->setVecElem(renamedDestIdx(reg_idx), val);
++        cpu->setReg(renamedDestIdx(idx), &val);
+         setResult(val);
+     }
+ 
+@@ -1227,14 +1243,14 @@ class DynInst : public ExecContext, public RefCounted
+     setVecPredRegOperand(const StaticInst *si, int idx,
+                          const TheISA::VecPredRegContainer& val) override
+     {
+-        cpu->setVecPredReg(renamedDestIdx(idx), val);
++        cpu->setReg(renamedDestIdx(idx), &val);
+         setResult(val);
+     }
+ 
+     void
+     setCCRegOperand(const StaticInst *si, int idx, RegVal val) override
+     {
+-        cpu->setCCReg(renamedDestIdx(idx), val);
++        cpu->setReg(renamedDestIdx(idx), val);
+         setResult(val);
+     }
+ };
+diff --git a/src/cpu/o3/regfile.hh b/src/cpu/o3/regfile.hh
+index 0ee321e..f6c28f7 100644
+--- a/src/cpu/o3/regfile.hh
++++ b/src/cpu/o3/regfile.hh
+@@ -328,172 +328,6 @@ class PhysRegFile
+         }
+     }
+ 
+-    /** Reads an integer register. */
+-    RegVal
+-    readIntReg(PhysRegIdPtr phys_reg) const
+-    {
+-        assert(phys_reg->is(IntRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Access to int register %i, has data "
+-                "%#x\n", phys_reg->index(), intRegFile.reg(phys_reg->index()));
+-        return intRegFile.reg(phys_reg->index());
+-    }
+-
+-    RegVal
+-    readFloatReg(PhysRegIdPtr phys_reg) const
+-    {
+-        assert(phys_reg->is(FloatRegClass));
+-
+-        RegVal floatRegBits = floatRegFile.reg(phys_reg->index());
+-
+-        DPRINTF(IEW, "RegFile: Access to float register %i as int, "
+-                "has data %#x\n", phys_reg->index(), floatRegBits);
+-
+-        return floatRegBits;
+-    }
+-
+-    /** Reads a vector register. */
+-    const TheISA::VecRegContainer &
+-    readVecReg(PhysRegIdPtr phys_reg) const
+-    {
+-        assert(phys_reg->is(VecRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Access to vector register %i, has "
+-                "data %s\n", int(phys_reg->index()),
+-                vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index()));
+-
+-        return vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index());
+-    }
+-
+-    /** Reads a vector register for modification. */
+-    TheISA::VecRegContainer &
+-    getWritableVecReg(PhysRegIdPtr phys_reg)
+-    {
+-        /* const_cast for not duplicating code above. */
+-        return const_cast<TheISA::VecRegContainer&>(readVecReg(phys_reg));
+-    }
+-
+-    /** Reads a vector element. */
+-    RegVal
+-    readVecElem(PhysRegIdPtr phys_reg) const
+-    {
+-        assert(phys_reg->is(VecElemClass));
+-        RegVal val = vectorElemRegFile.reg(phys_reg->index());
+-        DPRINTF(IEW, "RegFile: Access to vector register element %d,"
+-                " has data %#x\n", phys_reg->index(), val);
+-        return val;
+-    }
+-
+-    /** Reads a predicate register. */
+-    const TheISA::VecPredRegContainer&
+-    readVecPredReg(PhysRegIdPtr phys_reg) const
+-    {
+-        assert(phys_reg->is(VecPredRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Access to predicate register %i, has "
+-                "data %s\n", int(phys_reg->index()),
+-                vecPredRegFile.reg<TheISA::VecPredRegContainer>(
+-                    phys_reg->index()));
+-
+-        return vecPredRegFile.reg<TheISA::VecPredRegContainer>(
+-                phys_reg->index());
+-    }
+-
+-    TheISA::VecPredRegContainer&
+-    getWritableVecPredReg(PhysRegIdPtr phys_reg)
+-    {
+-        /* const_cast for not duplicating code above. */
+-        return const_cast<TheISA::VecPredRegContainer&>(
+-                readVecPredReg(phys_reg));
+-    }
+-
+-    /** Reads a condition-code register. */
+-    RegVal
+-    readCCReg(PhysRegIdPtr phys_reg)
+-    {
+-        assert(phys_reg->is(CCRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Access to cc register %i, has "
+-                "data %#x\n", phys_reg->index(),
+-                ccRegFile.reg(phys_reg->index()));
+-
+-        return ccRegFile.reg(phys_reg->index());
+-    }
+-
+-    /** Sets an integer register to the given value. */
+-    void
+-    setIntReg(PhysRegIdPtr phys_reg, RegVal val)
+-    {
+-        assert(phys_reg->is(IntRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting int register %i to %#x\n",
+-                phys_reg->index(), val);
+-
+-        if (phys_reg->index() != zeroReg.index())
+-            intRegFile.reg(phys_reg->index()) = val;
+-    }
+-
+-    void
+-    setFloatReg(PhysRegIdPtr phys_reg, RegVal val)
+-    {
+-        assert(phys_reg->is(FloatRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting float register %i to %#x\n",
+-                phys_reg->index(), (uint64_t)val);
+-
+-        floatRegFile.reg(phys_reg->index()) = val;
+-    }
+-
+-    /** Sets a vector register to the given value. */
+-    void
+-    setVecReg(PhysRegIdPtr phys_reg, const TheISA::VecRegContainer& val)
+-    {
+-        assert(phys_reg->is(VecRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting vector register %i to %s\n",
+-                int(phys_reg->index()), val);
+-
+-        vectorRegFile.reg<TheISA::VecRegContainer>(phys_reg->index()) = val;
+-    }
+-
+-    /** Sets a vector register to the given value. */
+-    void
+-    setVecElem(PhysRegIdPtr phys_reg, RegVal val)
+-    {
+-        assert(phys_reg->is(VecElemClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting vector register element %d to %#x\n",
+-                phys_reg->index(), val);
+-
+-        vectorElemRegFile.reg(phys_reg->index()) = val;
+-    }
+-
+-    /** Sets a predicate register to the given value. */
+-    void
+-    setVecPredReg(PhysRegIdPtr phys_reg,
+-            const TheISA::VecPredRegContainer& val)
+-    {
+-        assert(phys_reg->is(VecPredRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting predicate register %i to %s\n",
+-                int(phys_reg->index()), val);
+-
+-        vecPredRegFile.reg<TheISA::VecPredRegContainer>(
+-                phys_reg->index()) = val;
+-    }
+-
+-    /** Sets a condition-code register to the given value. */
+-    void
+-    setCCReg(PhysRegIdPtr phys_reg, RegVal val)
+-    {
+-        assert(phys_reg->is(CCRegClass));
+-
+-        DPRINTF(IEW, "RegFile: Setting cc register %i to %#x\n",
+-                phys_reg->index(), (uint64_t)val);
+-
+-        ccRegFile.reg(phys_reg->index()) = val;
+-    }
+-
+     /**
+      * Get the PhysRegIds of the elems of all vector registers.
+      * Auxiliary function to transition from Full vector mode to Elem mode
+diff --git a/src/cpu/o3/thread_context.cc b/src/cpu/o3/thread_context.cc
+index dda0f04..e539521 100644
+--- a/src/cpu/o3/thread_context.cc
++++ b/src/cpu/o3/thread_context.cc
+@@ -150,54 +150,6 @@ ThreadContext::clearArchRegs()
+ }
+ 
+ RegVal
+-ThreadContext::readIntRegFlat(RegIndex reg_idx) const
+-{
+-    return cpu->readArchIntReg(reg_idx, thread->threadId());
+-}
+-
+-RegVal
+-ThreadContext::readFloatRegFlat(RegIndex reg_idx) const
+-{
+-    return cpu->readArchFloatReg(reg_idx, thread->threadId());
+-}
+-
+-const TheISA::VecRegContainer&
+-ThreadContext::readVecRegFlat(RegIndex reg_id) const
+-{
+-    return cpu->readArchVecReg(reg_id, thread->threadId());
+-}
+-
+-TheISA::VecRegContainer&
+-ThreadContext::getWritableVecRegFlat(RegIndex reg_id)
+-{
+-    return cpu->getWritableArchVecReg(reg_id, thread->threadId());
+-}
+-
+-RegVal
+-ThreadContext::readVecElemFlat(RegIndex idx) const
+-{
+-    return cpu->readArchVecElem(idx, thread->threadId());
+-}
+-
+-const TheISA::VecPredRegContainer&
+-ThreadContext::readVecPredRegFlat(RegIndex reg_id) const
+-{
+-    return cpu->readArchVecPredReg(reg_id, thread->threadId());
+-}
+-
+-TheISA::VecPredRegContainer&
+-ThreadContext::getWritableVecPredRegFlat(RegIndex reg_id)
+-{
+-    return cpu->getWritableArchVecPredReg(reg_id, thread->threadId());
+-}
+-
+-RegVal
+-ThreadContext::readCCRegFlat(RegIndex reg_idx) const
+-{
+-    return cpu->readArchCCReg(reg_idx, thread->threadId());
+-}
+-
+-RegVal
+ ThreadContext::getRegFlat(const RegId &reg) const
+ {
+     return cpu->getArchReg(reg, thread->threadId());
+@@ -230,55 +182,6 @@ ThreadContext::setRegFlat(const RegId &reg, const void *val)
+ }
+ 
+ void
+-ThreadContext::setIntRegFlat(RegIndex reg_idx, RegVal val)
+-{
+-    cpu->setArchIntReg(reg_idx, val, thread->threadId());
+-
+-    conditionalSquash();
+-}
+-
+-void
+-ThreadContext::setFloatRegFlat(RegIndex reg_idx, RegVal val)
+-{
+-    cpu->setArchFloatReg(reg_idx, val, thread->threadId());
+-
+-    conditionalSquash();
+-}
+-
+-void
+-ThreadContext::setVecRegFlat(
+-        RegIndex reg_idx, const TheISA::VecRegContainer& val)
+-{
+-    cpu->setArchVecReg(reg_idx, val, thread->threadId());
+-
+-    conditionalSquash();
+-}
+-
+-void
+-ThreadContext::setVecElemFlat(RegIndex idx, RegVal val)
+-{
+-    cpu->setArchVecElem(idx, val, thread->threadId());
+-    conditionalSquash();
+-}
+-
+-void
+-ThreadContext::setVecPredRegFlat(RegIndex reg_idx,
+-        const TheISA::VecPredRegContainer& val)
+-{
+-    cpu->setArchVecPredReg(reg_idx, val, thread->threadId());
+-
+-    conditionalSquash();
+-}
+-
+-void
+-ThreadContext::setCCRegFlat(RegIndex reg_idx, RegVal val)
+-{
+-    cpu->setArchCCReg(reg_idx, val, thread->threadId());
+-
+-    conditionalSquash();
+-}
+-
+-void
+ ThreadContext::pcState(const PCStateBase &val)
+ {
+     cpu->pcState(val, thread->threadId());
+diff --git a/src/cpu/o3/thread_context.hh b/src/cpu/o3/thread_context.hh
+index 605f4cc..9135e1d 100644
+--- a/src/cpu/o3/thread_context.hh
++++ b/src/cpu/o3/thread_context.hh
+@@ -176,100 +176,6 @@ class ThreadContext : public gem5::ThreadContext
+     /** Resets all architectural registers to 0. */
+     void clearArchRegs() override;
+ 
+-    /** Reads an integer register. */
+-    RegVal
+-    readIntReg(RegIndex reg_idx) const override
+-    {
+-        return readIntRegFlat(flattenRegId(RegId(IntRegClass,
+-                                                 reg_idx)).index());
+-    }
+-
+-    RegVal
+-    readFloatReg(RegIndex reg_idx) const override
+-    {
+-        return readFloatRegFlat(flattenRegId(RegId(FloatRegClass,
+-                                             reg_idx)).index());
+-    }
+-
+-    const TheISA::VecRegContainer &
+-    readVecReg(const RegId& id) const override
+-    {
+-        return readVecRegFlat(flattenRegId(id).index());
+-    }
+-
+-    /**
+-     * Read vector register operand for modification, hierarchical indexing.
+-     */
+-    TheISA::VecRegContainer &
+-    getWritableVecReg(const RegId& id) override
+-    {
+-        return getWritableVecRegFlat(flattenRegId(id).index());
+-    }
+-
+-    RegVal
+-    readVecElem(const RegId& reg) const override
+-    {
+-        return readVecElemFlat(flattenRegId(reg).index());
+-    }
+-
+-    const TheISA::VecPredRegContainer &
+-    readVecPredReg(const RegId& id) const override
+-    {
+-        return readVecPredRegFlat(flattenRegId(id).index());
+-    }
+-
+-    TheISA::VecPredRegContainer&
+-    getWritableVecPredReg(const RegId& id) override
+-    {
+-        return getWritableVecPredRegFlat(flattenRegId(id).index());
+-    }
+-
+-    RegVal
+-    readCCReg(RegIndex reg_idx) const override
+-    {
+-        return readCCRegFlat(flattenRegId(RegId(CCRegClass,
+-                                                 reg_idx)).index());
+-    }
+-
+-    /** Sets an integer register to a value. */
+-    void
+-    setIntReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        setIntRegFlat(flattenRegId(RegId(IntRegClass, reg_idx)).index(), val);
+-    }
+-
+-    void
+-    setFloatReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        setFloatRegFlat(flattenRegId(RegId(FloatRegClass,
+-                                           reg_idx)).index(), val);
+-    }
+-
+-    void
+-    setVecReg(const RegId& reg, const TheISA::VecRegContainer& val) override
+-    {
+-        setVecRegFlat(flattenRegId(reg).index(), val);
+-    }
+-
+-    void
+-    setVecElem(const RegId& reg, RegVal val) override
+-    {
+-        setVecElemFlat(flattenRegId(reg).index(), val);
+-    }
+-
+-    void
+-    setVecPredReg(const RegId& reg,
+-                  const TheISA::VecPredRegContainer& val) override
+-    {
+-        setVecPredRegFlat(flattenRegId(reg).index(), val);
+-    }
+-
+-    void
+-    setCCReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        setCCRegFlat(flattenRegId(RegId(CCRegClass, reg_idx)).index(), val);
+-    }
+-
+     /** Reads this thread's PC state. */
+     const PCStateBase &
+     pcState() const override
+@@ -340,31 +246,6 @@ class ThreadContext : public gem5::ThreadContext
+     void setRegFlat(const RegId &reg, RegVal val) override;
+     void setRegFlat(const RegId &reg, const void *val) override;
+ 
+-    RegVal readIntRegFlat(RegIndex idx) const override;
+-    void setIntRegFlat(RegIndex idx, RegVal val) override;
+-
+-    RegVal readFloatRegFlat(RegIndex idx) const override;
+-    void setFloatRegFlat(RegIndex idx, RegVal val) override;
+-
+-    const TheISA::VecRegContainer& readVecRegFlat(RegIndex idx) const override;
+-    /** Read vector register operand for modification, flat indexing. */
+-    TheISA::VecRegContainer& getWritableVecRegFlat(RegIndex idx) override;
+-    void setVecRegFlat(RegIndex idx,
+-            const TheISA::VecRegContainer& val) override;
+-
+-    RegVal readVecElemFlat(RegIndex idx) const override;
+-    void setVecElemFlat(RegIndex idx, RegVal val) override;
+-
+-    const TheISA::VecPredRegContainer&
+-        readVecPredRegFlat(RegIndex idx) const override;
+-    TheISA::VecPredRegContainer&
+-        getWritableVecPredRegFlat(RegIndex idx) override;
+-    void setVecPredRegFlat(RegIndex idx,
+-                           const TheISA::VecPredRegContainer& val) override;
+-
+-    RegVal readCCRegFlat(RegIndex idx) const override;
+-    void setCCRegFlat(RegIndex idx, RegVal val) override;
+-
+     // hardware transactional memory
+     void htmAbortTransaction(uint64_t htm_uid,
+                              HtmFailureFaultCause cause) override;
+diff --git a/src/cpu/simple/exec_context.hh b/src/cpu/simple/exec_context.hh
+index b0fe779..bbb3f9b 100644
+--- a/src/cpu/simple/exec_context.hh
++++ b/src/cpu/simple/exec_context.hh
+@@ -331,7 +331,7 @@ class SimpleExecContext : public ExecContext
+     }
+ 
+     /** Reads a vector register. */
+-    const TheISA::VecRegContainer &
++    TheISA::VecRegContainer
+     readVecRegOperand(const StaticInst *si, int idx) const override
+     {
+         execContextStats.numVecRegReads++;
+@@ -381,7 +381,7 @@ class SimpleExecContext : public ExecContext
+         thread->setVecElem(reg, val);
+     }
+ 
+-    const TheISA::VecPredRegContainer&
++    TheISA::VecPredRegContainer
+     readVecPredRegOperand(const StaticInst *si, int idx) const override
+     {
+         execContextStats.numVecPredRegReads++;
+diff --git a/src/cpu/simple_thread.hh b/src/cpu/simple_thread.hh
+index 8035bd9..b3f2e1e 100644
+--- a/src/cpu/simple_thread.hh
++++ b/src/cpu/simple_thread.hh
+@@ -262,164 +262,6 @@ class SimpleThread : public ThreadState, public ThreadContext
+     //
+     // New accessors for new decoder.
+     //
+-    RegVal
+-    readIntReg(RegIndex reg_idx) const override
+-    {
+-        int flatIndex = isa->flattenIntIndex(reg_idx);
+-        assert(flatIndex < intRegs.size());
+-        uint64_t regVal = readIntRegFlat(flatIndex);
+-        DPRINTF(IntRegs, "Reading int reg %d (%d) as %#x.\n",
+-                reg_idx, flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    RegVal
+-    readFloatReg(RegIndex reg_idx) const override
+-    {
+-        int flatIndex = isa->flattenFloatIndex(reg_idx);
+-        assert(flatIndex < floatRegs.size());
+-        RegVal regVal = readFloatRegFlat(flatIndex);
+-        DPRINTF(FloatRegs, "Reading float reg %d (%d) bits as %#x.\n",
+-                reg_idx, flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    const TheISA::VecRegContainer&
+-    readVecReg(const RegId& reg) const override
+-    {
+-        int flatIndex = isa->flattenVecIndex(reg.index());
+-        assert(flatIndex < vecRegs.size());
+-        const TheISA::VecRegContainer& regVal = readVecRegFlat(flatIndex);
+-        DPRINTF(VecRegs, "Reading vector reg %d (%d) as %s.\n",
+-                reg.index(), flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    TheISA::VecRegContainer&
+-    getWritableVecReg(const RegId& reg) override
+-    {
+-        int flatIndex = isa->flattenVecIndex(reg.index());
+-        assert(flatIndex < vecRegs.size());
+-        TheISA::VecRegContainer& regVal = getWritableVecRegFlat(flatIndex);
+-        DPRINTF(VecRegs, "Reading vector reg %d (%d) as %s for modify.\n",
+-                reg.index(), flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    RegVal
+-    readVecElem(const RegId &reg) const override
+-    {
+-        int flatIndex = isa->flattenVecElemIndex(reg.index());
+-        assert(flatIndex < vecElemRegs.size());
+-        RegVal regVal = readVecElemFlat(flatIndex);
+-        DPRINTF(VecRegs, "Reading vector register element %s (%d) as %#x.\n",
+-                isa->regClasses().at(VecElemClass).regName(reg), flatIndex,
+-                regVal);
+-        return regVal;
+-    }
+-
+-    const TheISA::VecPredRegContainer &
+-    readVecPredReg(const RegId &reg) const override
+-    {
+-        int flatIndex = isa->flattenVecPredIndex(reg.index());
+-        assert(flatIndex < vecPredRegs.size());
+-        const TheISA::VecPredRegContainer& regVal =
+-            readVecPredRegFlat(flatIndex);
+-        DPRINTF(VecPredRegs, "Reading predicate reg %d (%d) as %s.\n",
+-                reg.index(), flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    TheISA::VecPredRegContainer &
+-    getWritableVecPredReg(const RegId &reg) override
+-    {
+-        int flatIndex = isa->flattenVecPredIndex(reg.index());
+-        assert(flatIndex < vecPredRegs.size());
+-        TheISA::VecPredRegContainer& regVal =
+-            getWritableVecPredRegFlat(flatIndex);
+-        DPRINTF(VecPredRegs,
+-                "Reading predicate reg %d (%d) as %s for modify.\n",
+-                reg.index(), flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    RegVal
+-    readCCReg(RegIndex reg_idx) const override
+-    {
+-        int flatIndex = isa->flattenCCIndex(reg_idx);
+-        assert(0 <= flatIndex);
+-        assert(flatIndex < ccRegs.size());
+-        uint64_t regVal(readCCRegFlat(flatIndex));
+-        DPRINTF(CCRegs, "Reading CC reg %d (%d) as %#x.\n",
+-                reg_idx, flatIndex, regVal);
+-        return regVal;
+-    }
+-
+-    void
+-    setIntReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        int flatIndex = isa->flattenIntIndex(reg_idx);
+-        assert(flatIndex < intRegs.size());
+-        DPRINTF(IntRegs, "Setting int reg %d (%d) to %#x.\n",
+-                reg_idx, flatIndex, val);
+-        setIntRegFlat(flatIndex, val);
+-    }
+-
+-    void
+-    setFloatReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        int flatIndex = isa->flattenFloatIndex(reg_idx);
+-        assert(flatIndex < floatRegs.size());
+-        // XXX: Fix array out of bounds compiler error for gem5.fast
+-        // when checkercpu enabled
+-        if (flatIndex < floatRegs.size())
+-            setFloatRegFlat(flatIndex, val);
+-        DPRINTF(FloatRegs, "Setting float reg %d (%d) bits to %#x.\n",
+-                reg_idx, flatIndex, val);
+-    }
+-
+-    void
+-    setVecReg(const RegId &reg, const TheISA::VecRegContainer &val) override
+-    {
+-        int flatIndex = isa->flattenVecIndex(reg.index());
+-        assert(flatIndex < vecRegs.size());
+-        setVecRegFlat(flatIndex, val);
+-        DPRINTF(VecRegs, "Setting vector reg %d (%d) to %s.\n",
+-                reg.index(), flatIndex, val);
+-    }
+-
+-    void
+-    setVecElem(const RegId &reg, RegVal val) override
+-    {
+-        int flatIndex = isa->flattenVecElemIndex(reg.index());
+-        assert(flatIndex < vecElemRegs.size());
+-        setVecElemFlat(flatIndex, val);
+-        DPRINTF(VecRegs, "Setting vector register element %s (%d) to %#x.\n",
+-                isa->regClasses().at(VecElemClass).regName(reg), flatIndex,
+-                val);
+-    }
+-
+-    void
+-    setVecPredReg(const RegId &reg,
+-            const TheISA::VecPredRegContainer &val) override
+-    {
+-        int flatIndex = isa->flattenVecPredIndex(reg.index());
+-        assert(flatIndex < vecPredRegs.size());
+-        setVecPredRegFlat(flatIndex, val);
+-        DPRINTF(VecPredRegs, "Setting predicate reg %d (%d) to %s.\n",
+-                reg.index(), flatIndex, val);
+-    }
+-
+-    void
+-    setCCReg(RegIndex reg_idx, RegVal val) override
+-    {
+-        int flatIndex = isa->flattenCCIndex(reg_idx);
+-        assert(flatIndex < ccRegs.size());
+-        DPRINTF(CCRegs, "Setting CC reg %d (%d) to %#x.\n",
+-                reg_idx, flatIndex, val);
+-        setCCRegFlat(flatIndex, val);
+-    }
+-
+     const PCStateBase &pcState() const override { return *_pcState; }
+     void pcState(const PCStateBase &val) override { set(_pcState, val); }
+ 
+@@ -789,88 +631,6 @@ class SimpleThread : public ThreadState, public ThreadContext
+         }
+     }
+ 
+-    RegVal
+-    readIntRegFlat(RegIndex idx) const override
+-    {
+-        return intRegs.reg(idx);
+-    }
+-    void
+-    setIntRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        intRegs.reg(idx) = val;
+-    }
+-
+-    RegVal
+-    readFloatRegFlat(RegIndex idx) const override
+-    {
+-        return floatRegs.reg(idx);
+-    }
+-    void
+-    setFloatRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        floatRegs.reg(idx) = val;
+-    }
+-
+-    const TheISA::VecRegContainer &
+-    readVecRegFlat(RegIndex reg) const override
+-    {
+-        return vecRegs.reg<TheISA::VecRegContainer>(reg);
+-    }
+-
+-    TheISA::VecRegContainer &
+-    getWritableVecRegFlat(RegIndex reg) override
+-    {
+-        return vecRegs.reg<TheISA::VecRegContainer>(reg);
+-    }
+-
+-    void
+-    setVecRegFlat(RegIndex reg, const TheISA::VecRegContainer &val) override
+-    {
+-        vecRegs.reg<TheISA::VecRegContainer>(reg) = val;
+-    }
+-
+-    RegVal
+-    readVecElemFlat(RegIndex reg) const override
+-    {
+-        return vecElemRegs.reg(reg);
+-    }
+-
+-    void
+-    setVecElemFlat(RegIndex reg, RegVal val) override
+-    {
+-        vecElemRegs.reg(reg) = val;
+-    }
+-
+-    const TheISA::VecPredRegContainer &
+-    readVecPredRegFlat(RegIndex reg) const override
+-    {
+-        return vecPredRegs.reg<TheISA::VecPredRegContainer>(reg);
+-    }
+-
+-    TheISA::VecPredRegContainer &
+-    getWritableVecPredRegFlat(RegIndex reg) override
+-    {
+-        return vecPredRegs.reg<TheISA::VecPredRegContainer>(reg);
+-    }
+-
+-    void
+-    setVecPredRegFlat(RegIndex reg,
+-            const TheISA::VecPredRegContainer &val) override
+-    {
+-        vecPredRegs.reg<TheISA::VecPredRegContainer>(reg) = val;
+-    }
+-
+-    RegVal
+-    readCCRegFlat(RegIndex idx) const override
+-    {
+-        return ccRegs.reg(idx);
+-    }
+-    void
+-    setCCRegFlat(RegIndex idx, RegVal val) override
+-    {
+-        ccRegs.reg(idx) = val;
+-    }
+-
+     // hardware transactional memory
+     void htmAbortTransaction(uint64_t htm_uid,
+                              HtmFailureFaultCause cause) override;
+diff --git a/src/cpu/thread_context.hh b/src/cpu/thread_context.hh
+index 3d2d546..09cef3c 100644
+--- a/src/cpu/thread_context.hh
++++ b/src/cpu/thread_context.hh
+@@ -200,36 +200,91 @@ class ThreadContext : public PCEventScope
+     virtual void setReg(const RegId &reg, RegVal val);
+     virtual void setReg(const RegId &reg, const void *val);
+ 
+-    virtual RegVal readIntReg(RegIndex reg_idx) const = 0;
++    RegVal
++    readIntReg(RegIndex reg_idx) const
++    {
++        return getReg(RegId(IntRegClass, reg_idx));
++    }
+ 
+-    virtual RegVal readFloatReg(RegIndex reg_idx) const = 0;
++    RegVal
++    readFloatReg(RegIndex reg_idx) const
++    {
++        return getReg(RegId(FloatRegClass, reg_idx));
++    }
+ 
+-    virtual const TheISA::VecRegContainer&
+-        readVecReg(const RegId& reg) const = 0;
+-    virtual TheISA::VecRegContainer& getWritableVecReg(const RegId& reg) = 0;
++    TheISA::VecRegContainer
++    readVecReg(const RegId &reg) const
++    {
++        TheISA::VecRegContainer val;
++        getReg(reg, &val);
++        return val;
++    }
++    TheISA::VecRegContainer&
++    getWritableVecReg(const RegId& reg)
++    {
++        return *(TheISA::VecRegContainer *)getWritableReg(reg);
++    }
+ 
+-    virtual RegVal readVecElem(const RegId& reg) const = 0;
++    RegVal
++    readVecElem(const RegId& reg) const
++    {
++        return getReg(reg);
++    }
+ 
+-    virtual const TheISA::VecPredRegContainer& readVecPredReg(
+-            const RegId& reg) const = 0;
+-    virtual TheISA::VecPredRegContainer& getWritableVecPredReg(
+-            const RegId& reg) = 0;
++    TheISA::VecPredRegContainer
++    readVecPredReg(const RegId &reg) const
++    {
++        TheISA::VecPredRegContainer val;
++        getReg(reg, &val);
++        return val;
++    }
++    TheISA::VecPredRegContainer&
++    getWritableVecPredReg(const RegId& reg)
++    {
++        return *(TheISA::VecPredRegContainer *)getWritableReg(reg);
++    }
+ 
+-    virtual RegVal readCCReg(RegIndex reg_idx) const = 0;
++    RegVal
++    readCCReg(RegIndex reg_idx) const
++    {
++        return getReg(RegId(CCRegClass, reg_idx));
++    }
+ 
+-    virtual void setIntReg(RegIndex reg_idx, RegVal val) = 0;
++    void
++    setIntReg(RegIndex reg_idx, RegVal val)
++    {
++        setReg(RegId(IntRegClass, reg_idx), val);
++    }
+ 
+-    virtual void setFloatReg(RegIndex reg_idx, RegVal val) = 0;
++    void
++    setFloatReg(RegIndex reg_idx, RegVal val)
++    {
++        setReg(RegId(FloatRegClass, reg_idx), val);
++    }
+ 
+-    virtual void setVecReg(const RegId& reg,
+-            const TheISA::VecRegContainer& val) = 0;
++    void
++    setVecReg(const RegId& reg, const TheISA::VecRegContainer &val)
++    {
++        setReg(reg, &val);
++    }
+ 
+-    virtual void setVecElem(const RegId& reg, RegVal val) = 0;
++    void
++    setVecElem(const RegId& reg, RegVal val)
++    {
++        setReg(reg, val);
++    }
+ 
+-    virtual void setVecPredReg(const RegId& reg,
+-            const TheISA::VecPredRegContainer& val) = 0;
++    void
++    setVecPredReg(const RegId &reg, const TheISA::VecPredRegContainer &val)
++    {
++        setReg(reg, &val);
++    }
+ 
+-    virtual void setCCReg(RegIndex reg_idx, RegVal val) = 0;
++    void
++    setCCReg(RegIndex reg_idx, RegVal val)
++    {
++        setReg(RegId(CCRegClass, reg_idx), val);
++    }
+ 
+     virtual const PCStateBase &pcState() const = 0;
+ 
+@@ -286,30 +341,87 @@ class ThreadContext : public PCEventScope
+     virtual void setRegFlat(const RegId &reg, RegVal val);
+     virtual void setRegFlat(const RegId &reg, const void *val);
+ 
+-    virtual RegVal readIntRegFlat(RegIndex idx) const = 0;
+-    virtual void setIntRegFlat(RegIndex idx, RegVal val) = 0;
++    RegVal
++    readIntRegFlat(RegIndex idx) const
++    {
++        return getRegFlat(RegId(IntRegClass, idx));
++    }
++    void
++    setIntRegFlat(RegIndex idx, RegVal val)
++    {
++        setRegFlat(RegId(IntRegClass, idx), val);
++    }
+ 
+-    virtual RegVal readFloatRegFlat(RegIndex idx) const = 0;
+-    virtual void setFloatRegFlat(RegIndex idx, RegVal val) = 0;
++    RegVal
++    readFloatRegFlat(RegIndex idx) const
++    {
++        return getRegFlat(RegId(FloatRegClass, idx));
++    }
++    void
++    setFloatRegFlat(RegIndex idx, RegVal val)
++    {
++        setRegFlat(RegId(FloatRegClass, idx), val);
++    }
+ 
+-    virtual const TheISA::VecRegContainer&
+-        readVecRegFlat(RegIndex idx) const = 0;
+-    virtual TheISA::VecRegContainer& getWritableVecRegFlat(RegIndex idx) = 0;
+-    virtual void setVecRegFlat(RegIndex idx,
+-            const TheISA::VecRegContainer& val) = 0;
++    TheISA::VecRegContainer
++    readVecRegFlat(RegIndex idx) const
++    {
++        TheISA::VecRegContainer val;
++        getRegFlat(RegId(VecRegClass, idx), &val);
++        return val;
++    }
++    TheISA::VecRegContainer&
++    getWritableVecRegFlat(RegIndex idx)
++    {
++        return *(TheISA::VecRegContainer *)
++            getWritableRegFlat(RegId(VecRegClass, idx));
++    }
++    void
++    setVecRegFlat(RegIndex idx, const TheISA::VecRegContainer& val)
++    {
++        setRegFlat(RegId(VecRegClass, idx), &val);
++    }
+ 
+-    virtual RegVal readVecElemFlat(RegIndex idx) const = 0;
+-    virtual void setVecElemFlat(RegIndex idx, RegVal val) = 0;
++    RegVal
++    readVecElemFlat(RegIndex idx) const
++    {
++        return getRegFlat(RegId(VecElemClass, idx));
++    }
++    void
++    setVecElemFlat(RegIndex idx, RegVal val)
++    {
++        setRegFlat(RegId(VecElemClass, idx), val);
++    }
+ 
+-    virtual const TheISA::VecPredRegContainer &
+-        readVecPredRegFlat(RegIndex idx) const = 0;
+-    virtual TheISA::VecPredRegContainer& getWritableVecPredRegFlat(
+-            RegIndex idx) = 0;
+-    virtual void setVecPredRegFlat(RegIndex idx,
+-            const TheISA::VecPredRegContainer& val) = 0;
++    TheISA::VecPredRegContainer
++    readVecPredRegFlat(RegIndex idx) const
++    {
++        TheISA::VecPredRegContainer val;
++        getRegFlat(RegId(VecPredRegClass, idx), &val);
++        return val;
++    }
++    TheISA::VecPredRegContainer&
++    getWritableVecPredRegFlat(RegIndex idx)
++    {
++        return *(TheISA::VecPredRegContainer *)getWritableRegFlat(
++                RegId(VecPredRegClass, idx));
++    }
++    void
++    setVecPredRegFlat(RegIndex idx, const TheISA::VecPredRegContainer& val)
++    {
++        setRegFlat(RegId(VecPredRegClass, idx), &val);
++    }
+ 
+-    virtual RegVal readCCRegFlat(RegIndex idx) const = 0;
+-    virtual void setCCRegFlat(RegIndex idx, RegVal val) = 0;
++    RegVal
++    readCCRegFlat(RegIndex idx) const
++    {
++        return getRegFlat(RegId(CCRegClass, idx));
++    }
++    void
++    setCCRegFlat(RegIndex idx, RegVal val)
++    {
++        setRegFlat(RegId(CCRegClass, idx), val);
++    }
+     /** @} */
+ 
+     // hardware transactional memory
+-- 
+1.8.3.1
+

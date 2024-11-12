@@ -1,0 +1,36 @@
+From 8b648ac856d73e8d140d8cfdb2232c61f54b3f50 Mon Sep 17 00:00:00 2001
+From: Daecheol You <daecheol.you@samsung.com>
+Date: Mon, 14 Mar 2022 13:57:04 +0900
+Subject: [PATCH 651/757] mem-ruby: add missing response for ReadOnce
+
+When HNF snoops an RNF with SnpOnce to process
+ReadOnce request (e.g. DMA read request),
+the RNF can respond with SnpRespData_UC if the cache line is in UC.
+Thus, SnpRespData_UC was added to the transition events.
+
+Change-Id: Ife242e75feb9d2451eb99511e21833d9d190a6c3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58410
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-transitions.sm | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+index a1e414f..87e5f0b 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-transitions.sm
+@@ -1085,7 +1085,7 @@ transition({BUSY_BLKD,BUSY_INTR}, NCBWrData) {
+ 
+ transition(BUSY_BLKD,
+            {SnpRespData_I_PD,SnpRespData_I,SnpRespData_SC_PD,
+-            SnpRespData_SC,SnpRespData_SD,SnpRespData_UD,
++            SnpRespData_SC,SnpRespData_SD,SnpRespData_UC,SnpRespData_UD,
+             SnpRespData_SC_Fwded_SC,SnpRespData_SC_Fwded_SD_PD,
+             SnpRespData_SC_PD_Fwded_SC,SnpRespData_I_Fwded_SD_PD,
+             SnpRespData_I_PD_Fwded_SC,SnpRespData_I_Fwded_SC}) {
+-- 
+1.8.3.1
+

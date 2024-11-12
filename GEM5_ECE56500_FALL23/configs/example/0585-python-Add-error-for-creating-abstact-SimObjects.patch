@@ -1,0 +1,39 @@
+From 1e9db5b9cf97be5ef176a6aee8c7f40e8072f2a3 Mon Sep 17 00:00:00 2001
+From: Jason Lowe-Power <jason@lowepower.com>
+Date: Fri, 22 Apr 2022 09:12:58 -0700
+Subject: [PATCH 585/757] python: Add error for creating abstact SimObjects
+
+Currently, if you try to instantiate an abstract SimObject the error is
+confusing and unhelpful.
+
+"TypeError: _m5.param_<type>.<type>Params: No constructor defined!"
+
+Now, it will instead say "Cannot instantiate an abstract SimObject"
+and include the name of the object that causes the error.
+
+Change-Id: Ia8c51e29dccd999ec90dcd39710cc91d9a5fb86f
+Signed-off-by: Jason Lowe-Power <jason@lowepower.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59049
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Andreas Sandberg <andreas.sandberg@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/python/m5/SimObject.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/python/m5/SimObject.py b/src/python/m5/SimObject.py
+index 26a1227..26147a1 100644
+--- a/src/python/m5/SimObject.py
++++ b/src/python/m5/SimObject.py
+@@ -1175,6 +1175,8 @@ class SimObject(object, metaclass=MetaSimObject):
+ 
+     # Call C++ to create C++ object corresponding to this object
+     def createCCObject(self):
++        if self.abstract:
++            fatal(f"Cannot instantiate an abstract SimObject ({self.path()})")
+         self.getCCParams()
+         self.getCCObject() # force creation
+ 
+-- 
+1.8.3.1
+

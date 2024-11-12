@@ -1,0 +1,46 @@
+From 791da53cf8fc0495897d931cf2f64eb3174ff254 Mon Sep 17 00:00:00 2001
+From: Alistair Delva <adelva@google.com>
+Date: Tue, 14 Dec 2021 10:29:22 -0800
+Subject: [PATCH 096/757] configs: Add support for initrd/initramfs
+
+Allow the user to specify the path to an initrd/initramfs file which
+will be loaded in memory after the DTB. The load address for this data
+will be passed to Linux via DeviceTree.
+
+Change-Id: I52e12b9b88ab415fe3b318a6359026651667f3c6
+Signed-off-by: Alistair Delva <adelva@google.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54186
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-by: Richard Cooper <richard.cooper@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/arm/starter_fs.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/configs/example/arm/starter_fs.py b/configs/example/arm/starter_fs.py
+index 40e645b..a5a013f 100644
+--- a/configs/example/arm/starter_fs.py
++++ b/configs/example/arm/starter_fs.py
+@@ -148,6 +148,9 @@ def create(args):
+             os.path.join(m5.options.outdir, 'system.dtb')
+         system.generateDtb(system.workload.dtb_filename)
+ 
++    if args.initrd:
++        system.workload.initrd_filename = args.initrd
++
+     # Linux boot command flags
+     kernel_cmd = [
+         # Tell Linux to use the simulated serial port as a console
+@@ -196,6 +199,8 @@ def main():
+                         help="DTB file to load")
+     parser.add_argument("--kernel", type=str, default=default_kernel,
+                         help="Linux kernel")
++    parser.add_argument("--initrd", type=str, default=None,
++                        help="initrd/initramfs file to load")
+     parser.add_argument("--disk-image", type=str,
+                         default=default_disk,
+                         help="Disk to instantiate")
+-- 
+1.8.3.1
+

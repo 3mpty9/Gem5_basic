@@ -1,0 +1,44 @@
+From e1e261c1d12a0900c31836a991df238d072edeb1 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 23 Jan 2022 02:19:44 -0800
+Subject: [PATCH 388/757] dev,arch-x86: Make the I8042 reset settings more
+ realistic.
+
+When powered on, the "passed self test" bit should not be set. It should
+only be set once the I8042 has actually been told to do a self test.
+Also the mouse and keyboard should be disabled. With them disabled their
+interrupts won't matter, but we might as well leave those disabled as
+well.
+
+Change-Id: Ief1ab30365a0a8ea0a116e52c16dcccf441515ec
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55805
+Reviewed-by: Matthew Poremba <matthew.poremba@amd.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/x86/i8042.cc | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/src/dev/x86/i8042.cc b/src/dev/x86/i8042.cc
+index 7aed0ee..268d090 100644
+--- a/src/dev/x86/i8042.cc
++++ b/src/dev/x86/i8042.cc
+@@ -55,13 +55,11 @@ X86ISA::I8042::I8042(const Params &p)
+     fatal_if(!mouse, "The i8042 model requires a mouse instance");
+     fatal_if(!keyboard, "The i8042 model requires a keyboard instance");
+ 
+-    statusReg.passedSelfTest = 1;
+-    statusReg.commandLast = 1;
+     statusReg.keyboardUnlocked = 1;
+ 
+     commandByte.convertScanCodes = 1;
+-    commandByte.passedSelfTest = 1;
+-    commandByte.keyboardFullInt = 1;
++    commandByte.disableMouse = 1;
++    commandByte.disableKeyboard = 1;
+ 
+     for (int i = 0; i < p.port_keyboard_int_pin_connection_count; i++) {
+         keyboardIntPin.push_back(new IntSourcePin<I8042>(
+-- 
+1.8.3.1
+

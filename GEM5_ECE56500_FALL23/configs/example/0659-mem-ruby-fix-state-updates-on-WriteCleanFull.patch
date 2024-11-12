@@ -1,0 +1,65 @@
+From 183e8e2b613fd10eb46eabaa0ed618dfd9846af7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 2 Mar 2022 15:58:08 -0600
+Subject: [PATCH 659/757] mem-ruby: fix state updates on WriteCleanFull
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- fix wrong variable check at UpdateDirState_FromReqDataResp
+- even after a WriteClean, dataMaybeDirtyUpstream still applies if
+  there is an exclusive owner upstream.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: If1fa3ee40e30226db3a66c34633316e751eb7c4d
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57391
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Daecheol You <daecheol.you@samsung.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 6c87416..e5178e7 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -1748,7 +1748,7 @@ action(UpdateDirState_FromReqDataResp, desc="") {
+       } else if (in_msg.type == CHIDataType:CBWrData_UD_PD) {
+         assert(tbe.dir_ownerExists && tbe.dir_ownerIsExcl && (tbe.dir_owner == in_msg.responder));
+         assert(tbe.dir_sharers.isElement(in_msg.responder));
+-        if (tbe.pendReqType != CHIRequestType:WriteCleanFull) {
++        if (tbe.reqType != CHIRequestType:WriteCleanFull) {
+           tbe.dir_ownerExists := false;
+           tbe.dir_ownerIsExcl := false;
+           tbe.dir_sharers.remove(in_msg.responder);
+@@ -1766,7 +1766,7 @@ action(UpdateDirState_FromReqDataResp, desc="") {
+         assert(tbe.dir_sharers.isElement(in_msg.responder));
+         tbe.dir_ownerExists := false;
+         tbe.dir_ownerIsExcl := false;
+-        if (tbe.pendReqType != CHIRequestType:WriteCleanFull) {
++        if (tbe.reqType != CHIRequestType:WriteCleanFull) {
+           tbe.dir_sharers.remove(in_msg.responder);
+         }
+ 
+@@ -1913,7 +1913,13 @@ action(UpdateDataState_FromReqDataResp, desc="") {
+         assert(tbe.dataUnique);
+         tbe.dataDirty := true;
+         tbe.dataValid := true;
+-        tbe.dataMaybeDirtyUpstream := false;
++        if (tbe.reqType == CHIRequestType:WriteCleanFull) {
++          // upstream data can still be UC if this is a WriteCleanFull
++          assert(tbe.dir_ownerExists && tbe.dir_ownerIsExcl);
++          tbe.dataMaybeDirtyUpstream := true;
++        } else {
++          tbe.dataMaybeDirtyUpstream := false;
++        }
+ 
+       } else if (in_msg.type == CHIDataType:CBWrData_SD_PD) {
+         tbe.dataDirty := true;
+-- 
+1.8.3.1
+

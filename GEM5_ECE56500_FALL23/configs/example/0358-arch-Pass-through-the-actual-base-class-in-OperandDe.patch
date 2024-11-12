@@ -1,0 +1,148 @@
+From ae8e8e2d3c1cbec538dd882502b2b3ddc1e67e7e Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Tue, 8 Mar 2022 21:29:13 -0800
+Subject: [PATCH 358/757] arch: Pass through the actual base class in
+ OperandDesc.
+
+Rather than pass through part of the base class name, we can pass
+through the actual base class and remove some unnecessary historical
+complexity.
+
+Change-Id: I77edc07b54b264254700fb9c26b8c9b626709779
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57449
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/isa_parser/isa_parser.py    | 14 +++-----------
+ src/arch/isa_parser/operand_types.py | 22 +++++++++++-----------
+ 2 files changed, 14 insertions(+), 22 deletions(-)
+
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 5735f97..1d76c54 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -1459,20 +1459,12 @@ StaticInstPtr
+         for op_name, op_desc in user_dict.items():
+             assert(isinstance(op_desc, OperandDesc))
+ 
+-            base_cls_name = op_desc.attrs['base_cls_name']
++            base_cls = op_desc.attrs['base_cls']
+ 
+             op_desc.setName(op_name)
+ 
+-            # New class name will be e.g. "IntReg_Ra"
+-            cls_name = base_cls_name + '_' + op_name
+-            # Evaluate string arg to get class object.  Note that the
+-            # actual base class for "IntReg" is "IntRegOperand", i.e. we
+-            # have to append "Operand".
+-            try:
+-                base_cls = eval(base_cls_name + 'Operand')
+-            except NameError:
+-                error(lineno,
+-                      'error: unknown operand base class "%s"' % base_cls_name)
++            # New class name will be e.g. "IntRegOperand_Ra"
++            cls_name = base_cls.__name__ + '_' + op_name
+             # The following statement creates a new class called
+             # <cls_name> as a subclass of <base_cls> with the attributes
+             # in op_desc.attrs, just as if we evaluated a class declaration.
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index a6eb976..729b60a 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -38,7 +38,7 @@
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
+ class OperandDesc(object):
+-    def __init__(self, base_cls_name, dflt_ext, reg_spec, flags=None,
++    def __init__(self, base_cls, dflt_ext, reg_spec, flags=None,
+             sort_pri=None, read_code=None, write_code=None,
+             read_predicate=None, write_predicate=None):
+ 
+@@ -77,7 +77,7 @@ class OperandDesc(object):
+                 attrs['elems'] = elem_spec
+ 
+         attrs.update({
+-            'base_cls_name': base_cls_name,
++            'base_cls': base_cls,
+             'dflt_ext': dflt_ext,
+             'reg_spec': reg_spec,
+             'flags': flags,
+@@ -288,28 +288,28 @@ class IntRegOperand(RegValOperand):
+ 
+ class IntRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('IntRegClass', 'RegVal', *args, **kwargs)
++        super().__init__('IntRegClass', RegValOperand, *args, **kwargs)
+ 
+ class FloatRegOperand(RegValOperand):
+     reg_class = 'FloatRegClass'
+ 
+ class FloatRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('FloatRegClass', 'RegVal', *args, **kwargs)
++        super().__init__('FloatRegClass', RegValOperand, *args, **kwargs)
+ 
+ class CCRegOperand(RegValOperand):
+     reg_class = 'CCRegClass'
+ 
+ class CCRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('CCRegClass', 'RegVal', *args, **kwargs)
++        super().__init__('CCRegClass', RegValOperand, *args, **kwargs)
+ 
+ class VecElemOperand(RegValOperand):
+     reg_class = 'VecElemClass'
+ 
+ class VecElemOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecElemClass', 'RegVal', *args, **kwargs)
++        super().__init__('VecElemClass', RegValOperand, *args, **kwargs)
+ 
+ class VecRegOperand(RegOperand):
+     reg_class = 'VecRegClass'
+@@ -441,7 +441,7 @@ class VecRegOperand(RegOperand):
+ 
+ class VecRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecRegClass', 'VecReg', *args, **kwargs)
++        super().__init__('VecRegClass', VecRegOperand, *args, **kwargs)
+ 
+ class VecPredRegOperand(RegOperand):
+     reg_class = 'VecPredRegClass'
+@@ -506,7 +506,7 @@ class VecPredRegOperand(RegOperand):
+ 
+ class VecPredRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('VecPredRegClass', 'VecPredReg', *args, **kwargs)
++        super().__init__('VecPredRegClass', VecPredRegOperand, *args, **kwargs)
+ 
+ class ControlRegOperand(Operand):
+     reg_class = 'MiscRegClass'
+@@ -564,7 +564,7 @@ class ControlRegOperand(Operand):
+ 
+ class ControlRegOperandDesc(RegOperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('MiscRegClass', 'ControlReg', *args, **kwargs)
++        super().__init__('MiscRegClass', ControlRegOperand, *args, **kwargs)
+ 
+ class MemOperand(Operand):
+     def isMem(self):
+@@ -589,7 +589,7 @@ class MemOperand(Operand):
+ 
+ class MemOperandDesc(OperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('Mem', *args, **kwargs)
++        super().__init__(MemOperand, *args, **kwargs)
+ 
+ class PCStateOperand(Operand):
+     def __init__(self, parser, *args, **kwargs):
+@@ -631,4 +631,4 @@ class PCStateOperand(Operand):
+ 
+ class PCStateOperandDesc(OperandDesc):
+     def __init__(self, *args, **kwargs):
+-        super().__init__('PCState', *args, **kwargs)
++        super().__init__(PCStateOperand, *args, **kwargs)
+-- 
+1.8.3.1
+

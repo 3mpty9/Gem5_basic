@@ -1,0 +1,58 @@
+From 0ea570c8a1783d1c017934972f6b00bc166d5b63 Mon Sep 17 00:00:00 2001
+From: "Daniel R. Carvalho" <odanrc@yahoo.com.br>
+Date: Sun, 21 Mar 2021 19:19:26 -0300
+Subject: [PATCH 224/757] sim,tests: Add a tag for gem5 events
+
+This tag can be used to determine which files are needed
+when sim/eventq.hh is included in a header file. For
+example, when declaring a unit test, this tag makes
+the SConscript declaration much simpler.
+
+Change-Id: If68ddf94975dbe9f7121fefb6051a8bbaca19c4b
+Signed-off-by: Daniel R. Carvalho <odanrc@yahoo.com.br>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/44107
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/SConscript | 2 +-
+ src/sim/SConscript  | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/base/SConscript b/src/base/SConscript
+index c49e2ae..21ebde9 100644
+--- a/src/base/SConscript
++++ b/src/base/SConscript
+@@ -40,7 +40,7 @@ Source('channel_addr.cc')
+ Source('cprintf.cc', add_tags='gtest lib')
+ GTest('cprintf.test', 'cprintf.test.cc')
+ Executable('cprintftime', 'cprintftime.cc', 'cprintf.cc')
+-Source('debug.cc', add_tags='gem5 trace')
++Source('debug.cc', add_tags=['gem5 trace', 'gem5 events'])
+ GTest('debug.test', 'debug.test.cc', 'debug.cc')
+ if env['HAVE_FENV']:
+     Source('fenv.cc')
+diff --git a/src/sim/SConscript b/src/sim/SConscript
+index 371eccd..c0951f3 100644
+--- a/src/sim/SConscript
++++ b/src/sim/SConscript
+@@ -53,7 +53,7 @@ Source('cxx_manager.cc')
+ Source('cxx_config_ini.cc')
+ Source('debug.cc')
+ Source('py_interact.cc', add_tags='python')
+-Source('eventq.cc')
++Source('eventq.cc', add_tags='gem5 events')
+ Source('futex_map.cc')
+ Source('global_event.cc')
+ Source('globals.cc')
+@@ -89,6 +89,7 @@ Source('stats.cc')
+ Source('workload.cc')
+ Source('mem_pool.cc')
+ 
++env.TagImplies('gem5 events', ['gem5 serialize', 'gem5 trace'])
+ env.TagImplies('gem5 serialize', 'gem5 trace')
+ 
+ GTest('byteswap.test', 'byteswap.test.cc', '../base/types.cc')
+-- 
+1.8.3.1
+

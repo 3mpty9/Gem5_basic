@@ -1,0 +1,112 @@
+From 139f635bdeb356011f4fa3f128ecc212b8807d94 Mon Sep 17 00:00:00 2001
+From: Samuel Stark <samuel.stark2@arm.com>
+Date: Wed, 22 Sep 2021 13:46:32 +0100
+Subject: [PATCH 343/757] cpu: Allow TLB shootdown requests in the o3 cpu
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1097
+
+Change-Id: Ie698efd583f592e5564af01c2150fbec969f56a2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56600
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/cpu/o3/lsq.cc | 18 +++++++++++-------
+ src/cpu/o3/lsq.hh | 19 ++++++++++++-------
+ 2 files changed, 23 insertions(+), 14 deletions(-)
+
+diff --git a/src/cpu/o3/lsq.cc b/src/cpu/o3/lsq.cc
+index c932a93..375093a 100644
+--- a/src/cpu/o3/lsq.cc
++++ b/src/cpu/o3/lsq.cc
+@@ -784,15 +784,16 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
+     assert(!isAtomic || (isAtomic && !needs_burst));
+ 
+     const bool htm_cmd = isLoad && (flags & Request::HTM_CMD);
++    const bool tlbi_cmd = isLoad && (flags & Request::TLBI_CMD);
+ 
+     if (inst->translationStarted()) {
+         request = inst->savedRequest;
+         assert(request);
+     } else {
+-        if (htm_cmd) {
++        if (htm_cmd || tlbi_cmd) {
+             assert(addr == 0x0lu);
+             assert(size == 8);
+-            request = new HtmCmdRequest(&thread[tid], inst, flags);
++            request = new UnsquashableDirectRequest(&thread[tid], inst, flags);
+         } else if (needs_burst) {
+             request = new SplitDataRequest(&thread[tid], inst, isLoad, addr,
+                     size, flags, data, res);
+@@ -1377,15 +1378,17 @@ LSQ::DcachePort::recvReqRetry()
+     lsq->recvReqRetry();
+ }
+ 
+-LSQ::HtmCmdRequest::HtmCmdRequest(LSQUnit* port, const DynInstPtr& inst,
+-        const Request::Flags& flags_) :
++LSQ::UnsquashableDirectRequest::UnsquashableDirectRequest(
++    LSQUnit* port,
++    const DynInstPtr& inst,
++    const Request::Flags& flags_) :
+     SingleDataRequest(port, inst, true, 0x0lu, 8, flags_,
+         nullptr, nullptr, nullptr)
+ {
+ }
+ 
+ void
+-LSQ::HtmCmdRequest::initiateTranslation()
++LSQ::UnsquashableDirectRequest::initiateTranslation()
+ {
+     // Special commands are implemented as loads to avoid significant
+     // changes to the cpu and memory interfaces
+@@ -1421,8 +1424,9 @@ LSQ::HtmCmdRequest::initiateTranslation()
+ }
+ 
+ void
+-LSQ::HtmCmdRequest::finish(const Fault &fault, const RequestPtr &req,
+-        gem5::ThreadContext* tc, BaseMMU::Mode mode)
++LSQ::UnsquashableDirectRequest::finish(const Fault &fault,
++        const RequestPtr &req, gem5::ThreadContext* tc,
++        BaseMMU::Mode mode)
+ {
+     panic("unexpected behaviour - finish()");
+ }
+diff --git a/src/cpu/o3/lsq.hh b/src/cpu/o3/lsq.hh
+index 2e99455..1d4ecfd 100644
+--- a/src/cpu/o3/lsq.hh
++++ b/src/cpu/o3/lsq.hh
+@@ -583,19 +583,24 @@ class LSQ
+         virtual std::string name() const { return "SingleDataRequest"; }
+     };
+ 
+-    // hardware transactional memory
+-    // This class extends SingleDataRequest for the sole purpose
+-    // of encapsulating hardware transactional memory command requests
+-    class HtmCmdRequest : public SingleDataRequest
++    // This class extends SingleDataRequest for the purpose
++    // of allowing special requests (eg Hardware transactional memory, TLB
++    // shootdowns) to bypass irrelevant system elements like translation &
++    // squashing.
++    class UnsquashableDirectRequest : public SingleDataRequest
+     {
+       public:
+-        HtmCmdRequest(LSQUnit* port, const DynInstPtr& inst,
++        UnsquashableDirectRequest(LSQUnit* port, const DynInstPtr& inst,
+                 const Request::Flags& flags_);
+-        virtual ~HtmCmdRequest() {}
++        inline virtual ~UnsquashableDirectRequest() {}
+         virtual void initiateTranslation();
+         virtual void finish(const Fault &fault, const RequestPtr &req,
+                 gem5::ThreadContext* tc, BaseMMU::Mode mode);
+-        virtual std::string name() const { return "HtmCmdRequest"; }
++        virtual std::string
++        name() const
++        {
++            return "UnsquashableDirectRequest";
++        }
+     };
+ 
+     class SplitDataRequest : public LSQRequest
+-- 
+1.8.3.1
+

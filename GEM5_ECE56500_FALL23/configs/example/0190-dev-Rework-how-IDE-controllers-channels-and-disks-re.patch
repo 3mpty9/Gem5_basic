@@ -1,0 +1,678 @@
+From 7399bbc5b679cfa44c0eb1879453c0482c9081bb Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sat, 15 Jan 2022 21:30:53 -0800
+Subject: [PATCH 190/757] dev: Rework how IDE controllers, channels and disks
+ relate.
+
+Disks now track the channel they're attached to so that that doesn't
+have to be rediscovered by comparing points, channels know if they're
+primary or secondary, and interrupts will now set the interrupt bit of
+the channel they're associated with instead of always the primary.
+
+Also the interrupt mechanism was adjusted slightly so that it's
+implemented by a virtual function which knows whether the interrupt came
+from the primary or secondary channel. That will make it possible to
+implement separate interrupts, as required by the compatibility mode
+which can be used with x86.
+
+Change-Id: Ic5527c238ef7409153e80e4ab843a50be6e452c5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55584
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/storage/ide_ctrl.cc | 106 ++++++++++++++++++++++++--------------------
+ src/dev/storage/ide_ctrl.hh |  76 ++++++++++++++++++++-----------
+ src/dev/storage/ide_disk.cc |  85 +++++++++++++++++------------------
+ src/dev/storage/ide_disk.hh |  21 +++++----
+ 4 files changed, 159 insertions(+), 129 deletions(-)
+
+diff --git a/src/dev/storage/ide_ctrl.cc b/src/dev/storage/ide_ctrl.cc
+index 701314f..45e6242 100644
+--- a/src/dev/storage/ide_ctrl.cc
++++ b/src/dev/storage/ide_ctrl.cc
+@@ -61,7 +61,9 @@ enum BMIRegOffset
+     BMIDescTablePtr = 0x4
+ };
+ 
+-IdeController::Channel::Channel(std::string newName) : _name(newName)
++IdeController::Channel::Channel(std::string new_name, IdeController *new_ctrl,
++        bool new_primary) :
++    Named(new_name), ctrl(new_ctrl), primary(new_primary)
+ {
+     bmiRegs.reset();
+     bmiRegs.status.dmaCap0 = 1;
+@@ -70,34 +72,28 @@ IdeController::Channel::Channel(std::string newName) : _name(newName)
+ 
+ IdeController::IdeController(const Params &p)
+     : PciDevice(p), configSpaceRegs(name() + ".config_space_regs"),
+-    primary(name() + ".primary"),
+-    secondary(name() + ".secondary"),
++    primary(name() + ".primary", this, true),
++    secondary(name() + ".secondary", this, false),
+     ioShift(p.io_shift), ctrlOffset(p.ctrl_offset)
+ {
++    panic_if(params().disks.size() > 3,
++            "IDE controllers support a maximum of 4 devices attached!");
+ 
+     // Assign the disks to channels
+     for (int i = 0; i < params().disks.size(); i++) {
+-        if (!params().disks[i])
++        auto *disk = params().disks[i];
++        auto &channel = (i < 2) ? primary : secondary;
++
++        if (!disk)
+             continue;
+-        switch (i) {
+-          case 0:
+-            primary.device0 = params().disks[0];
+-            break;
+-          case 1:
+-            primary.device1 = params().disks[1];
+-            break;
+-          case 2:
+-            secondary.device0 = params().disks[2];
+-            break;
+-          case 3:
+-            secondary.device1 = params().disks[3];
+-            break;
+-          default:
+-            panic("IDE controllers support a maximum "
+-                  "of 4 devices attached!\n");
+-        }
++
++        if (i % 2 == 0)
++            channel.setDevice0(disk);
++        else
++            channel.setDevice1(disk);
++
+         // Arbitrarily set the chunk size to 4K.
+-        params().disks[i]->setController(this, 4 * 1024);
++        disk->setChannel(&channel, 4 * 1024);
+     }
+ 
+     primary.select(false);
+@@ -124,34 +120,38 @@ IdeController::ConfigSpaceRegs::unserialize(CheckpointIn &cp)
+     UNSERIALIZE_SCALAR(udmaTiming);
+ }
+ 
+-bool
+-IdeController::isDiskSelected(IdeDisk *diskPtr)
++void
++IdeController::Channel::postInterrupt()
+ {
+-    return (primary.selected == diskPtr || secondary.selected == diskPtr);
++    bmiRegs.status.intStatus = 1;
++    _pendingInterrupt = true;
++    ctrl->postInterrupt(isPrimary());
+ }
+ 
+ void
+-IdeController::intrPost()
++IdeController::Channel::clearInterrupt()
+ {
+-    primary.bmiRegs.status.intStatus = 1;
+-    PciDevice::intrPost();
++    bmiRegs.status.intStatus = 0;
++    _pendingInterrupt = false;
++    ctrl->clearInterrupt(isPrimary());
+ }
+ 
+ void
+-IdeController::setDmaComplete(IdeDisk *disk)
++IdeController::postInterrupt(bool is_primary)
+ {
+-    Channel *channel;
+-    if (disk == primary.device0 || disk == primary.device1) {
+-        channel = &primary;
+-    } else if (disk == secondary.device0 || disk == secondary.device1) {
+-        channel = &secondary;
+-    } else {
+-        panic("Unable to find disk based on pointer %#x\n", disk);
+-    }
++    auto &other = is_primary ? secondary : primary;
++    // If an interrupt isn't already posted for the other channel...
++    if (!other.pendingInterrupt())
++        PciDevice::intrPost();
++}
+ 
+-    channel->bmiRegs.command.startStop = 0;
+-    channel->bmiRegs.status.active = 0;
+-    channel->bmiRegs.status.intStatus = 1;
++void
++IdeController::clearInterrupt(bool is_primary)
++{
++    auto &other = is_primary ? secondary : primary;
++    // If the interrupt isn't still needed by the other channel...
++    if (!other.pendingInterrupt())
++        PciDevice::intrClear();
+ }
+ 
+ Tick
+@@ -202,13 +202,13 @@ IdeController::Channel::accessCommand(Addr offset,
+     if (!read && offset == SelectOffset)
+         select(*data & SelectDevBit);
+ 
+-    if (selected == NULL) {
++    if (selected() == NULL) {
+         assert(size == sizeof(uint8_t));
+         *data = 0;
+     } else if (read) {
+-        selected->readCommand(offset, size, data);
++        selected()->readCommand(offset, size, data);
+     } else {
+-        selected->writeCommand(offset, size, data);
++        selected()->writeCommand(offset, size, data);
+     }
+ }
+ 
+@@ -216,13 +216,13 @@ void
+ IdeController::Channel::accessControl(Addr offset,
+         int size, uint8_t *data, bool read)
+ {
+-    if (selected == NULL) {
++    if (selected() == NULL) {
+         assert(size == sizeof(uint8_t));
+         *data = 0;
+     } else if (read) {
+-        selected->readControl(offset, size, data);
++        selected()->readControl(offset, size, data);
+     } else {
+-        selected->writeControl(offset, size, data);
++        selected()->writeControl(offset, size, data);
+     }
+ }
+ 
+@@ -248,19 +248,19 @@ IdeController::Channel::accessBMI(Addr offset,
+                     oldVal.rw = newVal.rw;
+ 
+                 if (oldVal.startStop != newVal.startStop) {
+-                    if (selected == NULL)
++                    if (selected() == NULL)
+                         panic("DMA start for disk which does not exist\n");
+ 
+                     if (oldVal.startStop) {
+                         DPRINTF(IdeCtrl, "Stopping DMA transfer\n");
+                         bmiRegs.status.active = 0;
+ 
+-                        selected->abortDma();
++                        selected()->abortDma();
+                     } else {
+                         DPRINTF(IdeCtrl, "Starting DMA transfer\n");
+                         bmiRegs.status.active = 1;
+ 
+-                        selected->startDma(letoh(bmiRegs.bmidtp));
++                        selected()->startDma(letoh(bmiRegs.bmidtp));
+                     }
+                 }
+ 
+@@ -375,6 +375,14 @@ IdeController::dispatchAccess(PacketPtr pkt, bool read)
+     pkt->makeAtomicResponse();
+ }
+ 
++void
++IdeController::Channel::setDmaComplete()
++{
++    bmiRegs.command.startStop = 0;
++    bmiRegs.status.active = 0;
++    bmiRegs.status.intStatus = 1;
++}
++
+ Tick
+ IdeController::read(PacketPtr pkt)
+ {
+diff --git a/src/dev/storage/ide_ctrl.hh b/src/dev/storage/ide_ctrl.hh
+index cf6a58b..38b97bf 100644
+--- a/src/dev/storage/ide_ctrl.hh
++++ b/src/dev/storage/ide_ctrl.hh
+@@ -104,14 +104,48 @@ class IdeController : public PciDevice
+ 
+     ConfigSpaceRegs configSpaceRegs;
+ 
+-    struct Channel
++  public:
++    class Channel : public Named
+     {
+-        std::string _name;
++      private:
++        IdeController *ctrl;
++
++        /** IDE disks connected to this controller
++         * For more details about device0 and device1 see:
++         * https://en.wikipedia.org/wiki/Parallel_ATA
++         * #Multiple_devices_on_a_cable
++         *
++        */
++        IdeDisk *device0 = nullptr, *device1 = nullptr;
++
++        /** Currently selected disk */
++        IdeDisk *_selected = nullptr;
++
++        bool selectBit = false;
++        bool primary;
++
++        bool _pendingInterrupt = false;
++
++      public:
++        bool isPrimary() const { return primary; }
++
++        bool pendingInterrupt() const { return _pendingInterrupt; }
++
++        IdeDisk *selected() const { return _selected; }
++        IdeController *controller() const { return ctrl; }
++
++        void
++        setDevice0(IdeDisk *disk)
++        {
++            assert(!device0 && disk);
++            device0 = disk;
++        }
+ 
+-        const std::string
+-        name()
++        void
++        setDevice1(IdeDisk *disk)
+         {
+-            return _name;
++            assert(!device1 && disk);
++            device1 = disk;
+         }
+ 
+         /** Registers used for bus master interface */
+@@ -130,36 +164,30 @@ class IdeController : public PciDevice
+             uint32_t bmidtp;
+         } bmiRegs;
+ 
+-        /** IDE disks connected to this controller
+-         * For more details about device0 and device1 see:
+-         * https://en.wikipedia.org/wiki/Parallel_ATA
+-         * #Multiple_devices_on_a_cable
+-         *
+-        */
+-        IdeDisk *device0 = nullptr, *device1 = nullptr;
+-
+-        /** Currently selected disk */
+-        IdeDisk *selected = nullptr;
+-
+-        bool selectBit = false;
+-
+         void
+         select(bool select_device_1)
+         {
+             selectBit = select_device_1;
+-            selected = selectBit ? device1 : device0;
++            _selected = selectBit ? device1 : device0;
+         }
+ 
+         void accessCommand(Addr offset, int size, uint8_t *data, bool read);
+         void accessControl(Addr offset, int size, uint8_t *data, bool read);
+         void accessBMI(Addr offset, int size, uint8_t *data, bool read);
+ 
+-        Channel(std::string newName);
++        void setDmaComplete();
++
++        void postInterrupt();
++        void clearInterrupt();
++
++        Channel(std::string new_name, IdeController *new_ctrl,
++                bool new_primary);
+ 
+         void serialize(const std::string &base, std::ostream &os) const;
+         void unserialize(const std::string &base, CheckpointIn &cp);
+     };
+ 
++  private:
+     Channel primary;
+     Channel secondary;
+ 
+@@ -171,16 +199,12 @@ class IdeController : public PciDevice
+     PARAMS(IdeController);
+     IdeController(const Params &p);
+ 
+-    /** See if a disk is selected based on its pointer */
+-    bool isDiskSelected(IdeDisk *diskPtr);
+-
+-    void intrPost();
++    virtual void postInterrupt(bool is_primary);
++    virtual void clearInterrupt(bool is_primary);
+ 
+     Tick writeConfig(PacketPtr pkt) override;
+     Tick readConfig(PacketPtr pkt) override;
+ 
+-    void setDmaComplete(IdeDisk *disk);
+-
+     Tick read(PacketPtr pkt) override;
+     Tick write(PacketPtr pkt) override;
+ 
+diff --git a/src/dev/storage/ide_disk.cc b/src/dev/storage/ide_disk.cc
+index a5e52b0..1416a37 100644
+--- a/src/dev/storage/ide_disk.cc
++++ b/src/dev/storage/ide_disk.cc
+@@ -63,12 +63,9 @@ namespace gem5
+ {
+ 
+ IdeDisk::IdeDisk(const Params &p)
+-    : SimObject(p), ctrl(NULL), image(p.image), diskDelay(p.delay),
+-      ideDiskStats(this),
++    : SimObject(p), image(p.image), diskDelay(p.delay), ideDiskStats(this),
+       dmaTransferEvent([this]{ doDmaTransfer(); }, name()),
+-      dmaReadCG(NULL),
+       dmaReadWaitEvent([this]{ doDmaRead(); }, name()),
+-      dmaWriteCG(NULL),
+       dmaWriteWaitEvent([this]{ doDmaWrite(); }, name()),
+       dmaPrdReadEvent([this]{ dmaPrdReadDone(); }, name()),
+       dmaReadEvent([this]{ dmaReadDone(); }, name()),
+@@ -159,7 +156,7 @@ IdeDisk::reset(int id)
+     cmdBytesLeft = 0;
+     drqBytesLeft = 0;
+     dmaRead = false;
+-    intrPending = false;
++    pendingInterrupt = false;
+     dmaAborted = false;
+ 
+     // set the device state to idle
+@@ -190,16 +187,14 @@ IdeDisk::reset(int id)
+ bool
+ IdeDisk::isDEVSelect()
+ {
+-    return ctrl->isDiskSelected(this);
++    return channel->selected() == this;
+ }
+ 
+ Addr
+ IdeDisk::pciToDma(Addr pciAddr)
+ {
+-    if (ctrl)
+-        return ctrl->pciToDma(pciAddr);
+-    else
+-        panic("Access to unset controller!\n");
++    panic_if(!ctrl, "Access to unset controller!");
++    return ctrl->pciToDma(pciAddr);
+ }
+ 
+ ////
+@@ -343,16 +338,18 @@ IdeDisk::doDmaTransfer()
+         return;
+     }
+ 
+-    if (dmaState != Dma_Transfer || devState != Transfer_Data_Dma)
++    if (dmaState != Dma_Transfer || devState != Transfer_Data_Dma) {
+         panic("Inconsistent DMA transfer state: dmaState = %d devState = %d\n",
+               dmaState, devState);
++    }
+ 
+     if (ctrl->dmaPending() || ctrl->drainState() != DrainState::Running) {
+         schedule(dmaTransferEvent, curTick() + DMA_BACKOFF_PERIOD);
+         return;
+-    } else
++    } else {
+         ctrl->dmaRead(curPrdAddr, sizeof(PrdEntry_t), &dmaPrdReadEvent,
+                 (uint8_t*)&curPrd.entry);
++    }
+ }
+ 
+ void
+@@ -727,30 +724,28 @@ IdeDisk::startCommand()
+ ////
+ 
+ void
+-IdeDisk::intrPost()
++IdeDisk::postInterrupt()
+ {
+     DPRINTF(IdeDisk, "Posting Interrupt\n");
+-    panic_if(intrPending, "Attempt to post an interrupt with one pending");
++    panic_if(pendingInterrupt,
++            "Attempt to post an interrupt with one pending");
+ 
+-    intrPending = true;
++    pendingInterrupt = true;
+ 
+-    // talk to controller to set interrupt
+-    if (ctrl) {
+-        ctrl->intrPost();
+-    }
++    assert(channel);
++    channel->postInterrupt();
+ }
+ 
+ void
+-IdeDisk::intrClear()
++IdeDisk::clearInterrupt()
+ {
+     DPRINTF(IdeDisk, "Clearing Interrupt\n");
+-    panic_if(!intrPending, "Attempt to clear a non-pending interrupt");
++    panic_if(!pendingInterrupt, "Attempt to clear a non-pending interrupt");
+ 
+-    intrPending = false;
++    pendingInterrupt = false;
+ 
+-    // talk to controller to clear interrupt
+-    if (ctrl)
+-        ctrl->intrClear();
++    assert(channel);
++    channel->clearInterrupt();
+ }
+ 
+ ////
+@@ -786,12 +781,12 @@ IdeDisk::updateState(DevAction_t action)
+       case Device_Idle_SI:
+         if (action == ACT_SELECT_WRITE && !isDEVSelect()) {
+             devState = Device_Idle_NS;
+-            intrClear();
++            clearInterrupt();
+         } else if (action == ACT_STAT_READ || isIENSet()) {
+             devState = Device_Idle_S;
+-            intrClear();
++            clearInterrupt();
+         } else if (action == ACT_CMD_WRITE) {
+-            intrClear();
++            clearInterrupt();
+             startCommand();
+         }
+ 
+@@ -799,11 +794,11 @@ IdeDisk::updateState(DevAction_t action)
+ 
+       case Device_Idle_NS:
+         if (action == ACT_SELECT_WRITE && isDEVSelect()) {
+-            if (!isIENSet() && intrPending) {
++            if (!isIENSet() && pendingInterrupt) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             }
+-            if (isIENSet() || !intrPending) {
++            if (isIENSet() || !pendingInterrupt) {
+                 devState = Device_Idle_S;
+             }
+         }
+@@ -816,7 +811,7 @@ IdeDisk::updateState(DevAction_t action)
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -830,7 +825,7 @@ IdeDisk::updateState(DevAction_t action)
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -861,7 +856,7 @@ IdeDisk::updateState(DevAction_t action)
+ 
+             if (!isIENSet()) {
+                 devState = Data_Ready_INTRQ_In;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Transfer_Data_In;
+             }
+@@ -871,7 +866,7 @@ IdeDisk::updateState(DevAction_t action)
+       case Data_Ready_INTRQ_In:
+         if (action == ACT_STAT_READ) {
+             devState = Transfer_Data_In;
+-            intrClear();
++            clearInterrupt();
+         }
+         break;
+ 
+@@ -917,7 +912,7 @@ IdeDisk::updateState(DevAction_t action)
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -937,7 +932,7 @@ IdeDisk::updateState(DevAction_t action)
+                 devState = Transfer_Data_Out;
+             } else {
+                 devState = Data_Ready_INTRQ_Out;
+-                intrPost();
++                postInterrupt();
+             }
+         }
+         break;
+@@ -945,7 +940,7 @@ IdeDisk::updateState(DevAction_t action)
+       case Data_Ready_INTRQ_Out:
+         if (action == ACT_STAT_READ) {
+             devState = Transfer_Data_Out;
+-            intrClear();
++            clearInterrupt();
+         }
+         break;
+ 
+@@ -992,7 +987,7 @@ IdeDisk::updateState(DevAction_t action)
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -1022,11 +1017,11 @@ IdeDisk::updateState(DevAction_t action)
+             // set the seek bit
+             status |= STATUS_SEEK_BIT;
+             // clear the controller state for DMA transfer
+-            ctrl->setDmaComplete(this);
++            channel->setDmaComplete();
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -1037,13 +1032,13 @@ IdeDisk::updateState(DevAction_t action)
+         if (action == ACT_CMD_ERROR) {
+             setComplete();
+             status |= STATUS_SEEK_BIT;
+-            ctrl->setDmaComplete(this);
++            channel->setDmaComplete();
+             dmaAborted = false;
+             dmaState = Dma_Idle;
+ 
+             if (!isIENSet()) {
+                 devState = Device_Idle_SI;
+-                intrPost();
++                postInterrupt();
+             } else {
+                 devState = Device_Idle_S;
+             }
+@@ -1128,7 +1123,7 @@ IdeDisk::serialize(CheckpointOut &cp) const
+     SERIALIZE_SCALAR(drqBytesLeft);
+     SERIALIZE_SCALAR(curSector);
+     SERIALIZE_SCALAR(dmaRead);
+-    SERIALIZE_SCALAR(intrPending);
++    paramOut(cp, "intrPending", pendingInterrupt);
+     SERIALIZE_SCALAR(dmaAborted);
+     SERIALIZE_ENUM(devState);
+     SERIALIZE_ENUM(dmaState);
+@@ -1181,7 +1176,7 @@ IdeDisk::unserialize(CheckpointIn &cp)
+     UNSERIALIZE_SCALAR(drqBytesLeft);
+     UNSERIALIZE_SCALAR(curSector);
+     UNSERIALIZE_SCALAR(dmaRead);
+-    UNSERIALIZE_SCALAR(intrPending);
++    paramIn(cp, "intrPending", pendingInterrupt);
+     UNSERIALIZE_SCALAR(dmaAborted);
+     UNSERIALIZE_ENUM(devState);
+     UNSERIALIZE_ENUM(dmaState);
+diff --git a/src/dev/storage/ide_disk.hh b/src/dev/storage/ide_disk.hh
+index 96bbd4a..5eeb3d1 100644
+--- a/src/dev/storage/ide_disk.hh
++++ b/src/dev/storage/ide_disk.hh
+@@ -217,7 +217,9 @@ class IdeDisk : public SimObject
+ {
+   protected:
+     /** The IDE controller for this disk. */
+-    IdeController *ctrl;
++    IdeController *ctrl = nullptr;
++    /** The channel this disk is connected to. */
++    IdeController::Channel *channel = nullptr;
+     /** The image that contains the data of this disk. */
+     DiskImage *image;
+ 
+@@ -259,7 +261,7 @@ class IdeDisk : public SimObject
+     /** Device ID (device0=0/device1=1) */
+     int devID;
+     /** Interrupt pending */
+-    bool intrPending;
++    bool pendingInterrupt;
+     /** DMA Aborted */
+     bool dmaAborted;
+ 
+@@ -294,10 +296,11 @@ class IdeDisk : public SimObject
+      * @param c The IDE controller
+      */
+     void
+-    setController(IdeController *c, Addr chunk_bytes)
++    setChannel(IdeController::Channel *_channel, Addr chunk_bytes)
+     {
+-        panic_if(ctrl, "Cannot change the controller once set!\n");
+-        ctrl = c;
++        panic_if(channel, "Cannot change the channel once set!");
++        channel = _channel;
++        ctrl = channel->controller();
+         chunkBytes = chunk_bytes;
+     }
+ 
+@@ -315,8 +318,8 @@ class IdeDisk : public SimObject
+     void startCommand();
+ 
+     // Interrupt management
+-    void intrPost();
+-    void intrClear();
++    void postInterrupt();
++    void clearInterrupt();
+ 
+     // DMA stuff
+     void doDmaTransfer();
+@@ -325,13 +328,13 @@ class IdeDisk : public SimObject
+     void doDmaDataRead();
+ 
+     void doDmaRead();
+-    ChunkGenerator *dmaReadCG;
++    ChunkGenerator *dmaReadCG = nullptr;
+     EventFunctionWrapper dmaReadWaitEvent;
+ 
+     void doDmaDataWrite();
+ 
+     void doDmaWrite();
+-    ChunkGenerator *dmaWriteCG;
++    ChunkGenerator *dmaWriteCG = nullptr;
+     EventFunctionWrapper dmaWriteWaitEvent;
+ 
+     void dmaPrdReadDone();
+-- 
+1.8.3.1
+

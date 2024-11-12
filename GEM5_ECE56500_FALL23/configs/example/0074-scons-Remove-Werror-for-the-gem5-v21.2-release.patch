@@ -1,0 +1,38 @@
+From 594145849c43bf461ccf690ba21e664d9b0a9f7b Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Dec 2021 15:55:24 -0800
+Subject: [PATCH 074/757] scons: Remove -Werror for the gem5 v21.2 release
+
+While gem5 compiles on our supported compilers, removing the -Werror
+flag on the stable branch ensures that, as new compilers are released
+with stricter warnings, gem5 remains compilable.
+
+Change-Id: I05989356997bc7f6606c43944d15da6c3958a3f5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54463
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ SConstruct | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/SConstruct b/SConstruct
+index 8fa5517..ceeb1ba 100755
+--- a/SConstruct
++++ b/SConstruct
+@@ -348,12 +348,6 @@ if main['GCC'] or main['CLANG']:
+     if GetOption('gold_linker'):
+         main.Append(LINKFLAGS='-fuse-ld=gold')
+ 
+-    # Treat warnings as errors but white list some warnings that we
+-    # want to allow (e.g., deprecation warnings).
+-    main.Append(CCFLAGS=['-Werror',
+-                         '-Wno-error=deprecated-declarations',
+-                         '-Wno-error=deprecated',
+-                        ])
+ else:
+     error('\n'.join((
+           "Don't know what compiler options to use for your compiler.",
+-- 
+1.8.3.1
+

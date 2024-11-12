@@ -1,0 +1,46 @@
+From 1e6ff02c25e700ec21563a59262efeba4f426c92 Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Fri, 13 May 2022 10:00:32 -0700
+Subject: [PATCH 635/757] dev-amdgpu: Allow for atomics in SystemHub
+
+It seems that applications can be compiled which issue atomics to host
+memory, such as heterosync. Remove the arbitrary assert to disallow them
+and issue atomics as a DMA write by default.
+
+Change-Id: I7812a421a9312406b3faccdc05d6c7e9fc837da0
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59669
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/dev/amdgpu/system_hub.cc | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/src/dev/amdgpu/system_hub.cc b/src/dev/amdgpu/system_hub.cc
+index 90dcb7f..7a252ea 100644
+--- a/src/dev/amdgpu/system_hub.cc
++++ b/src/dev/amdgpu/system_hub.cc
+@@ -42,15 +42,13 @@ AMDGPUSystemHub::sendRequest(PacketPtr pkt, Event *callback)
+     ResponseEvent *dmaRespEvent = new ResponseEvent(callback);
+     Tick delay = 0;
+ 
+-    // Assuming read XOR write (i.e., not an atomic).
+-    assert(pkt->isRead() ^ pkt->isWrite());
+-
+-    if (pkt->isRead()) {
+-        dmaRead(pkt->getAddr(), pkt->getSize(), dmaRespEvent,
+-                pkt->getPtr<uint8_t>(), 0, 0, delay);
+-    } else {
++    if (pkt->isWrite()) {
+         dmaWrite(pkt->getAddr(), pkt->getSize(), dmaRespEvent,
+                  pkt->getPtr<uint8_t>(), 0, 0, delay);
++    } else {
++        assert(pkt->isRead());
++        dmaRead(pkt->getAddr(), pkt->getSize(), dmaRespEvent,
++                pkt->getPtr<uint8_t>(), 0, 0, delay);
+     }
+ }
+ 
+-- 
+1.8.3.1
+

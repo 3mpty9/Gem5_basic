@@ -1,0 +1,43 @@
+From 6b92e8dddee0f89356378f1e5c31b115346baea8 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 1 Jun 2022 11:41:06 -0700
+Subject: [PATCH 674/757] tests,arch-riscv: Add rv64uzfh-ps tests to asmtests
+
+These were added to gem5-resources via these commits:
+https://gem5-review.googlesource.com/c/public/gem5-resources/+/60249
+https://gem5-review.googlesource.com/c/public/gem5-resources/+/60149
+
+Change-Id: I3b6d75ab09960c9aa2e211288eaaf52d43d00368
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60250
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/asmtest/tests.py | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/tests/gem5/asmtest/tests.py b/tests/gem5/asmtest/tests.py
+index 6f2c7117..dfd6cd1 100755
+--- a/tests/gem5/asmtest/tests.py
++++ b/tests/gem5/asmtest/tests.py
+@@ -214,6 +214,17 @@ binaries = (
+     'rv64um-ps-remu',
+     'rv64um-ps-remuw',
+     'rv64um-ps-remw',
++    'rv64uzfh-ps-fadd',
++    'rv64uzfh-ps-fclass',
++    'rv64uzfh-ps-fcmp',
++    'rv64uzfh-ps-fcvt',
++    'rv64uzfh-ps-fcvt_w',
++    'rv64uzfh-ps-fdiv',
++    'rv64uzfh-ps-fmadd',
++    'rv64uzfh-ps-fmin',
++    'rv64uzfh-ps-ldst',
++    'rv64uzfh-ps-move',
++    'rv64uzfh-ps-recoding',
+ )
+ 
+ 
+-- 
+1.8.3.1
+

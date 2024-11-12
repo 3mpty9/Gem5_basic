@@ -1,0 +1,140 @@
+From 73267e67c444de24808799fb41f6b6ccbd4dcd6c Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Wed, 19 Jan 2022 09:50:19 +0000
+Subject: [PATCH 156/757] arch-riscv: reduced lr/sc implementation
+
+In gem5::RiscvISA::ISA, handleLocked* functions maintain an address
+stack(i.e. locked_addrs) to check whether each SC matches the most
+recent LR. However, there are some problems with this implementation.
+
+First, the elements in the stack may only be popped when the
+handleLockedSnoop function is invoked. In other cases, the elements
+in the stack will not be popped even if the SC and LR match. This
+makes the `locked_addrs` get bigger and bigger as gem5 runs.
+
+Second, LR/SC does not always match. For example, in Linux's __cmpxchg[1],
+after executing LR, if the value read is not equal to the old value,
+the subsequent SC is skipped. For gem5's current implementation, this
+would cause the address to be pushed into `locked_addrs` every time
+__cmpxchg is failed. But these addresses are never popped. This also
+makes the `locked_addrs` get bigger and bigger.
+
+Third, existing emulator implementations (spike, qemu) do not use the
+stack, but only record the last address accessed by LR. Afterward,
+when executing SC, these implementations determine whether the address
+accessed by SC is the same as the one recorded.
+
+This patch modifies gem5's handleLocked* function by referring to
+other existing RISC-V implementations. It eliminates `locked_addrs`
+and simplifies the related code. Thus, it fixes the "memory leak"-like
+error that can occur on `locked_addrs` when executing LR/SC.
+
+Related links:
+[1] Linux's cmpxchg implementation for RISC-V:
+  + https://github.com/torvalds/linux/blob/master/arch/riscv/include/asm/cmpxchg.h
+[2] spike lr/sc implementation:
+  + https://github.com/riscv-software-src/riscv-isa-sim/blob/master/riscv/insns/sc_d.h
+  + https://github.com/riscv-software-src/riscv-isa-sim/blob/master/riscv/insns/lr_d.h
+  + https://github.com/riscv-software-src/riscv-isa-sim/blob/master/riscv/mmu.h
+[3] rocket lr/sc implementation:
+  + https://github.com/chipsalliance/rocket-chip/blob/master/src/main/scala/rocket/NBDcache.scala
+[4] QEMU lr/sc implementation:
+  + https://gitlab.com/qemu-project/qemu/-/blob/master/target/riscv/insn_trans/trans_rva.c.inc
+
+Change-Id: Ic79444cace62e39b7fe9e01f665cb13e4d990d0a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55663
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/isa.cc | 34 ++++++++++++++++++----------------
+ 1 file changed, 18 insertions(+), 16 deletions(-)
+
+diff --git a/src/arch/riscv/isa.cc b/src/arch/riscv/isa.cc
+index f49a2a8..32cba39 100644
+--- a/src/arch/riscv/isa.cc
++++ b/src/arch/riscv/isa.cc
+@@ -504,30 +504,29 @@ ISA::unserialize(CheckpointIn &cp)
+ 
+ const int WARN_FAILURE = 10000;
+ 
+-// RISC-V allows multiple locks per hart, but each SC has to unlock the most
+-// recent one, so we use a stack here.
+-std::unordered_map<int, std::stack<Addr>> locked_addrs;
++const Addr INVALID_RESERVATION_ADDR = (Addr) -1;
++std::unordered_map<int, Addr> load_reservation_addrs;
+ 
+ void
+ ISA::handleLockedSnoop(PacketPtr pkt, Addr cacheBlockMask)
+ {
+-    std::stack<Addr>& locked_addr_stack = locked_addrs[tc->contextId()];
++    Addr& load_reservation_addr = load_reservation_addrs[tc->contextId()];
+ 
+-    if (locked_addr_stack.empty())
++    if (load_reservation_addr == INVALID_RESERVATION_ADDR)
+         return;
+     Addr snoop_addr = pkt->getAddr() & cacheBlockMask;
+     DPRINTF(LLSC, "Locked snoop on address %x.\n", snoop_addr);
+-    if ((locked_addr_stack.top() & cacheBlockMask) == snoop_addr)
+-        locked_addr_stack.pop();
++    if ((load_reservation_addr & cacheBlockMask) == snoop_addr)
++        load_reservation_addr = INVALID_RESERVATION_ADDR;
+ }
+ 
+ 
+ void
+ ISA::handleLockedRead(const RequestPtr &req)
+ {
+-    std::stack<Addr>& locked_addr_stack = locked_addrs[tc->contextId()];
++    Addr& load_reservation_addr = load_reservation_addrs[tc->contextId()];
+ 
+-    locked_addr_stack.push(req->getPaddr() & ~0xF);
++    load_reservation_addr = req->getPaddr() & ~0xF;
+     DPRINTF(LLSC, "[cid:%d]: Reserved address %x.\n",
+             req->contextId(), req->getPaddr() & ~0xF);
+ }
+@@ -535,23 +534,25 @@ ISA::handleLockedRead(const RequestPtr &req)
+ bool
+ ISA::handleLockedWrite(const RequestPtr &req, Addr cacheBlockMask)
+ {
+-    std::stack<Addr>& locked_addr_stack = locked_addrs[tc->contextId()];
++    Addr& load_reservation_addr = load_reservation_addrs[tc->contextId()];
++    bool lr_addr_empty = (load_reservation_addr == INVALID_RESERVATION_ADDR);
+ 
+     // Normally RISC-V uses zero to indicate success and nonzero to indicate
+     // failure (right now only 1 is reserved), but in gem5 zero indicates
+     // failure and one indicates success, so here we conform to that (it should
+     // be switched in the instruction's implementation)
+ 
+-    DPRINTF(LLSC, "[cid:%d]: locked_addrs empty? %s.\n", req->contextId(),
+-            locked_addr_stack.empty() ? "yes" : "no");
+-    if (!locked_addr_stack.empty()) {
++    DPRINTF(LLSC, "[cid:%d]: load_reservation_addrs empty? %s.\n",
++            req->contextId(),
++            lr_addr_empty ? "yes" : "no");
++    if (!lr_addr_empty) {
+         DPRINTF(LLSC, "[cid:%d]: addr = %x.\n", req->contextId(),
+                 req->getPaddr() & ~0xF);
+         DPRINTF(LLSC, "[cid:%d]: last locked addr = %x.\n", req->contextId(),
+-                locked_addr_stack.top());
++                load_reservation_addr);
+     }
+-    if (locked_addr_stack.empty()
+-            || locked_addr_stack.top() != ((req->getPaddr() & ~0xF))) {
++    if (lr_addr_empty
++            || load_reservation_addr != ((req->getPaddr() & ~0xF))) {
+         req->setExtraData(0);
+         int stCondFailures = tc->readStCondFailures();
+         tc->setStCondFailures(++stCondFailures);
+@@ -564,6 +565,7 @@ ISA::handleLockedWrite(const RequestPtr &req, Addr cacheBlockMask)
+     if (req->isUncacheable()) {
+         req->setExtraData(2);
+     }
++
+     return true;
+ }
+ 
+-- 
+1.8.3.1
+

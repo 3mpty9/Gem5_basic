@@ -1,0 +1,30 @@
+From 7c882f7d154cd6e5e116ce3862a39d53cfc9cef9 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Thu, 6 Jan 2022 11:52:15 -0800
+Subject: [PATCH 098/757] base: Add missing ']' in version ID
+
+Change-Id: I73ac530fde2fff29022aa800f4de925709d9c2f5
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55184
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/base/version.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/base/version.cc b/src/base/version.cc
+index 56c982f..61b2a5e 100644
+--- a/src/base/version.cc
++++ b/src/base/version.cc
+@@ -32,6 +32,6 @@ namespace gem5
+ /**
+  * @ingroup api_base_utils
+  */
+-const char *gem5Version = "[DEVELOP-FOR-v22.0";
++const char *gem5Version = "[DEVELOP-FOR-v22.0]";
+ 
+ } // namespace gem5
+-- 
+1.8.3.1
+

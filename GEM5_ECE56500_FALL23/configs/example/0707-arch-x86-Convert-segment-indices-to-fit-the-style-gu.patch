@@ -1,0 +1,608 @@
+From 88143c940bb9b4d9442b92c7a82ac0a5df5ceefb Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Mon, 23 Aug 2021 22:19:37 -0700
+Subject: [PATCH 707/757] arch-x86: Convert segment indices to fit the style
+ guide.
+
+Capitalize only their first letter, and use a namespace to namespace
+them instead of a SEGMENT_REG_ prefix.
+
+Change-Id: I69778c8d052ad6cc0ffd9e74dd1c643e9d28048d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49756
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+---
+ src/arch/amdgpu/common/tlb.cc      | 11 ++++-----
+ src/arch/x86/emulenv.cc            | 10 ++++-----
+ src/arch/x86/emulenv.hh            |  4 ++--
+ src/arch/x86/faults.cc             |  2 +-
+ src/arch/x86/fs_workload.cc        | 21 +++++++++--------
+ src/arch/x86/fs_workload.hh        |  4 ++--
+ src/arch/x86/insts/microop_args.hh |  2 +-
+ src/arch/x86/insts/static_inst.cc  | 26 ++++++++++-----------
+ src/arch/x86/isa/macroop.isa       |  2 +-
+ src/arch/x86/isa/microasm.isa      | 16 ++++++-------
+ src/arch/x86/isa/operands.isa      |  2 +-
+ src/arch/x86/isa/specialize.isa    |  4 ++--
+ src/arch/x86/process.cc            | 16 ++++++-------
+ src/arch/x86/regs/misc.hh          | 23 ++++++++++---------
+ src/arch/x86/regs/segment.hh       | 46 +++++++++++++++++++++-----------------
+ src/arch/x86/tlb.cc                |  6 ++---
+ 16 files changed, 100 insertions(+), 95 deletions(-)
+
+diff --git a/src/arch/amdgpu/common/tlb.cc b/src/arch/amdgpu/common/tlb.cc
+index 4652588..ab8b11e 100644
+--- a/src/arch/amdgpu/common/tlb.cc
++++ b/src/arch/amdgpu/common/tlb.cc
+@@ -43,6 +43,7 @@
+ #include "arch/x86/pagetable_walker.hh"
+ #include "arch/x86/regs/misc.hh"
+ #include "arch/x86/regs/msr.hh"
++#include "arch/x86/regs/segment.hh"
+ #include "arch/x86/x86_traits.hh"
+ #include "base/bitfield.hh"
+ #include "base/logging.hh"
+@@ -376,7 +377,7 @@ namespace X86ISA
+         int seg = flags & SegmentFlagMask;
+     #endif
+ 
+-        assert(seg != SEGMENT_REG_MS);
++        assert(seg != segment_idx::Ms);
+         Addr vaddr = req->getVaddr();
+         DPRINTF(GPUTLB, "TLB Lookup for vaddr %#x.\n", vaddr);
+         HandyM5Reg m5Reg = tc->readMiscRegNoEffect(MISCREG_M5_REG);
+@@ -426,7 +427,7 @@ namespace X86ISA
+ 
+         // If this is true, we're dealing with a request
+         // to a non-memory address space.
+-        if (seg == SEGMENT_REG_MS) {
++        if (seg == segment_idx::Ms) {
+             return translateInt(mode == Mode::Read, req, tc);
+         }
+ 
+@@ -445,8 +446,8 @@ namespace X86ISA
+                         "protection.\n");
+ 
+                 // Check for a null segment selector.
+-                if (!(seg == SEGMENT_REG_TSG || seg == SYS_SEGMENT_REG_IDTR ||
+-                    seg == SEGMENT_REG_HS || seg == SEGMENT_REG_LS)
++                if (!(seg == segment_idx::Tsg || seg == segment_idx::Idtr ||
++                    seg == segment_idx::Hs || seg == segment_idx::Ls)
+                     && !tc->readMiscRegNoEffect(MISCREG_SEG_SEL(seg))) {
+                     return std::make_shared<GeneralProtection>(0);
+                 }
+@@ -454,7 +455,7 @@ namespace X86ISA
+                 bool expandDown = false;
+                 SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
+ 
+-                if (seg >= SEGMENT_REG_ES && seg <= SEGMENT_REG_HS) {
++                if (seg >= segment_idx::Es && seg <= segment_idx::Hs) {
+                     if (!attr.writable && (mode == BaseMMU::Write ||
+                         storeCheck))
+                         return std::make_shared<GeneralProtection>(0);
+diff --git a/src/arch/x86/emulenv.cc b/src/arch/x86/emulenv.cc
+index 71413d6..1f9c5f6 100644
+--- a/src/arch/x86/emulenv.cc
++++ b/src/arch/x86/emulenv.cc
+@@ -106,23 +106,23 @@ void EmulEnv::doModRM(const ExtMachInst & machInst)
+     }
+     //Figure out what segment to use.
+     if (base != int_reg::Rbp && base != int_reg::Rsp) {
+-        seg = SEGMENT_REG_DS;
++        seg = segment_idx::Ds;
+     } else {
+-        seg = SEGMENT_REG_SS;
++        seg = segment_idx::Ss;
+     }
+     //Handle any segment override that might have been in the instruction
+     int segFromInst = machInst.legacy.seg;
+     if (segFromInst)
+-        seg = (SegmentRegIndex)(segFromInst - 1);
++        seg = segFromInst - 1;
+ }
+ 
+ void EmulEnv::setSeg(const ExtMachInst & machInst)
+ {
+-    seg = SEGMENT_REG_DS;
++    seg = segment_idx::Ds;
+     //Handle any segment override that might have been in the instruction
+     int segFromInst = machInst.legacy.seg;
+     if (segFromInst)
+-        seg = (SegmentRegIndex)(segFromInst - 1);
++        seg = segFromInst - 1;
+ }
+ 
+ } // namespace gem5
+diff --git a/src/arch/x86/emulenv.hh b/src/arch/x86/emulenv.hh
+index f62d8f0..366ffe5 100644
+--- a/src/arch/x86/emulenv.hh
++++ b/src/arch/x86/emulenv.hh
+@@ -51,7 +51,7 @@ namespace X86ISA
+     {
+         RegIndex reg;
+         RegIndex regm;
+-        SegmentRegIndex seg;
++        int seg;
+         uint8_t scale;
+         RegId index;
+         RegId base;
+@@ -61,7 +61,7 @@ namespace X86ISA
+ 
+         EmulEnv(RegIndex _reg, RegIndex _regm,
+                 int _dataSize, int _addressSize, int _stackSize) :
+-            reg(_reg), regm(_regm), seg(SEGMENT_REG_DS),
++            reg(_reg), regm(_regm), seg(segment_idx::Ds),
+             scale(0), index(int_reg::T0),
+             base(int_reg::T0),
+             dataSize(_dataSize), addressSize(_addressSize),
+diff --git a/src/arch/x86/faults.cc b/src/arch/x86/faults.cc
+index f31f605..1a07a81 100644
+--- a/src/arch/x86/faults.cc
++++ b/src/arch/x86/faults.cc
+@@ -214,7 +214,7 @@ InitInterrupt::invoke(ThreadContext *tc, const StaticInstPtr &inst)
+     dataAttr.expandDown = 0;
+     dataAttr.system = 1;
+ 
+-    for (int seg = 0; seg != NUM_SEGMENTREGS; seg++) {
++    for (int seg = 0; seg != segment_idx::NumIdxs; seg++) {
+         tc->setMiscReg(MISCREG_SEG_SEL(seg), 0);
+         tc->setMiscReg(MISCREG_SEG_BASE(seg), 0);
+         tc->setMiscReg(MISCREG_SEG_EFF_BASE(seg), 0);
+diff --git a/src/arch/x86/fs_workload.cc b/src/arch/x86/fs_workload.cc
+index 90df698..7355a0d 100644
+--- a/src/arch/x86/fs_workload.cc
++++ b/src/arch/x86/fs_workload.cc
+@@ -62,11 +62,10 @@ FsWorkload::FsWorkload(const Params &p) : KernelWorkload(p),
+ {}
+ 
+ void
+-installSegDesc(ThreadContext *tc, SegmentRegIndex seg,
+-               SegDescriptor desc, bool longmode)
++installSegDesc(ThreadContext *tc, int seg, SegDescriptor desc, bool longmode)
+ {
+-    bool honorBase = !longmode || seg == SEGMENT_REG_FS ||
+-                                  seg == SEGMENT_REG_GS;
++    bool honorBase = !longmode || seg == segment_idx::Fs ||
++                                  seg == segment_idx::Gs;
+ 
+     SegAttr attr = 0;
+ 
+@@ -231,7 +230,7 @@ FsWorkload::initState()
+     tss.si = numGDTEntries - 1;
+ 
+     tc->setMiscReg(MISCREG_TR, (RegVal)tss);
+-    installSegDesc(tc, SYS_SEGMENT_REG_TR, tssDesc, true);
++    installSegDesc(tc, segment_idx::Tr, tssDesc, true);
+ 
+     /*
+      * Identity map the first 4GB of memory. In order to map this region
+@@ -307,12 +306,12 @@ FsWorkload::initState()
+     tc->setMiscReg(MISCREG_EFER, efer);
+ 
+     // Start using longmode segments.
+-    installSegDesc(tc, SEGMENT_REG_CS, csDesc, true);
+-    installSegDesc(tc, SEGMENT_REG_DS, dsDesc, true);
+-    installSegDesc(tc, SEGMENT_REG_ES, dsDesc, true);
+-    installSegDesc(tc, SEGMENT_REG_FS, dsDesc, true);
+-    installSegDesc(tc, SEGMENT_REG_GS, dsDesc, true);
+-    installSegDesc(tc, SEGMENT_REG_SS, dsDesc, true);
++    installSegDesc(tc, segment_idx::Cs, csDesc, true);
++    installSegDesc(tc, segment_idx::Ds, dsDesc, true);
++    installSegDesc(tc, segment_idx::Es, dsDesc, true);
++    installSegDesc(tc, segment_idx::Fs, dsDesc, true);
++    installSegDesc(tc, segment_idx::Gs, dsDesc, true);
++    installSegDesc(tc, segment_idx::Ss, dsDesc, true);
+ 
+     // Activate long mode.
+     cr0.pg = 1;
+diff --git a/src/arch/x86/fs_workload.hh b/src/arch/x86/fs_workload.hh
+index 779e6ab..5edadae 100644
+--- a/src/arch/x86/fs_workload.hh
++++ b/src/arch/x86/fs_workload.hh
+@@ -72,8 +72,8 @@ class ConfigTable;
+ 
+ } // namespace intelmp
+ 
+-void installSegDesc(ThreadContext *tc, SegmentRegIndex seg,
+-                    SegDescriptor desc, bool longmode);
++void installSegDesc(ThreadContext *tc, int seg, SegDescriptor desc,
++        bool longmode);
+ 
+ class FsWorkload : public KernelWorkload
+ {
+diff --git a/src/arch/x86/insts/microop_args.hh b/src/arch/x86/insts/microop_args.hh
+index e0c3f2b..81ed412 100644
+--- a/src/arch/x86/insts/microop_args.hh
++++ b/src/arch/x86/insts/microop_args.hh
+@@ -366,7 +366,7 @@ struct AddrOp
+         disp(args.disp), segment(args.segment.index),
+         size(inst->addressSize)
+     {
+-        assert(segment < NUM_SEGMENTREGS);
++        assert(segment < segment_idx::NumIdxs);
+     }
+ 
+     void
+diff --git a/src/arch/x86/insts/static_inst.cc b/src/arch/x86/insts/static_inst.cc
+index 0b1a000..03d844b 100644
+--- a/src/arch/x86/insts/static_inst.cc
++++ b/src/arch/x86/insts/static_inst.cc
+@@ -64,43 +64,43 @@ void X86StaticInst::printSegment(std::ostream &os, int segment)
+ {
+     switch (segment)
+     {
+-      case SEGMENT_REG_ES:
++      case segment_idx::Es:
+         ccprintf(os, "ES");
+         break;
+-      case SEGMENT_REG_CS:
++      case segment_idx::Cs:
+         ccprintf(os, "CS");
+         break;
+-      case SEGMENT_REG_SS:
++      case segment_idx::Ss:
+         ccprintf(os, "SS");
+         break;
+-      case SEGMENT_REG_DS:
++      case segment_idx::Ds:
+         ccprintf(os, "DS");
+         break;
+-      case SEGMENT_REG_FS:
++      case segment_idx::Fs:
+         ccprintf(os, "FS");
+         break;
+-      case SEGMENT_REG_GS:
++      case segment_idx::Gs:
+         ccprintf(os, "GS");
+         break;
+-      case SEGMENT_REG_HS:
++      case segment_idx::Hs:
+         ccprintf(os, "HS");
+         break;
+-      case SEGMENT_REG_TSL:
++      case segment_idx::Tsl:
+         ccprintf(os, "TSL");
+         break;
+-      case SEGMENT_REG_TSG:
++      case segment_idx::Tsg:
+         ccprintf(os, "TSG");
+         break;
+-      case SEGMENT_REG_LS:
++      case segment_idx::Ls:
+         ccprintf(os, "LS");
+         break;
+-      case SEGMENT_REG_MS:
++      case segment_idx::Ms:
+         ccprintf(os, "MS");
+         break;
+-      case SYS_SEGMENT_REG_TR:
++      case segment_idx::Tr:
+         ccprintf(os, "TR");
+         break;
+-      case SYS_SEGMENT_REG_IDTR:
++      case segment_idx::Idtr:
+         ccprintf(os, "IDTR");
+         break;
+       default:
+diff --git a/src/arch/x86/isa/macroop.isa b/src/arch/x86/isa/macroop.isa
+index b054e79..6230760 100644
+--- a/src/arch/x86/isa/macroop.isa
++++ b/src/arch/x86/isa/macroop.isa
+@@ -275,7 +275,7 @@ let {{
+             self.regUsed = False
+             self.regm = "0"
+             self.regmUsed = False
+-            self.seg = "SEGMENT_REG_DS"
++            self.seg = "segment_idx::Ds"
+             self.size = None
+             self.addressSize = "ADDRSIZE"
+             self.dataSize = "OPSIZE"
+diff --git a/src/arch/x86/isa/microasm.isa b/src/arch/x86/isa/microasm.isa
+index a3d7310..e99578d 100644
+--- a/src/arch/x86/isa/microasm.isa
++++ b/src/arch/x86/isa/microasm.isa
+@@ -83,9 +83,9 @@ let {{
+         assembler.symbols["ufp%d" % num] = \
+             fpRegIdx("FLOATREG_MICROFP(%d)" % num)
+     # Add in symbols for the segment descriptor registers
+-    for letter in ("C", "D", "E", "F", "G", "H", "S"):
++    for letter in ("c", "d", "e", "f", "g", "h", "s"):
+         assembler.symbols["%ss" % letter.lower()] = \
+-            segRegIdx("SEGMENT_REG_%sS" % letter)
++            segRegIdx(f"segment_idx::{letter.capitalize()}s")
+ 
+     # Add in symbols for the various checks of segment selectors.
+     for check in ("NoCheck", "CSCheck", "CallGateCheck", "IntGateCheck",
+@@ -93,11 +93,11 @@ let {{
+                   "TRCheck", "TSSCheck", "InGDTCheck", "LDTCheck"):
+         assembler.symbols[check] = "Seg%s" % check
+ 
+-    for reg in ("TR", "IDTR"):
+-        assembler.symbols[reg.lower()] = segRegIdx("SYS_SEGMENT_REG_%s" % reg)
++    for reg in ("tr", "idtr"):
++        assembler.symbols[reg] = segRegIdx(f"segment_idx::{reg.capitalize()}")
+ 
+-    for reg in ("TSL", "TSG"):
+-        assembler.symbols[reg.lower()] = segRegIdx("SEGMENT_REG_%s" % reg)
++    for reg in ("tsl", "tsg"):
++        assembler.symbols[reg] = segRegIdx(f"segment_idx::{reg.capitalize()}")
+ 
+     # Miscellaneous symbols
+     symbols = {
+@@ -144,10 +144,10 @@ let {{
+ 
+     # This segment selects an internal address space mapped to MSRs,
+     # CPUID info, etc.
+-    assembler.symbols["intseg"] = segRegIdx("SEGMENT_REG_MS")
++    assembler.symbols["intseg"] = segRegIdx("segment_idx::Ms")
+     # This segment always has base 0, and doesn't imply any special handling
+     # like the internal segment above
+-    assembler.symbols["flatseg"] = segRegIdx("SEGMENT_REG_LS")
++    assembler.symbols["flatseg"] = segRegIdx("segment_idx::Ls")
+ 
+     for reg in ('ax', 'bx', 'cx', 'dx', 'sp', 'bp', 'si', 'di', \
+                 '8',  '9',  '10', '11', '12', '13', '14', '15'):
+diff --git a/src/arch/x86/isa/operands.isa b/src/arch/x86/isa/operands.isa
+index 22d4605..b1f0a48 100644
+--- a/src/arch/x86/isa/operands.isa
++++ b/src/arch/x86/isa/operands.isa
+@@ -125,7 +125,7 @@ let {{
+ 
+     class SquashCSReg(SquashCheckReg):
+         def __init__(self, idx, id, ctype='uqw'):
+-            super().__init__(idx, id, 'dest == X86ISA::SEGMENT_REG_CS', ctype)
++            super().__init__(idx, id, 'dest == X86ISA::segment_idx::Cs', ctype)
+ 
+     class SquashCR0Reg(SquashCheckReg):
+         def __init__(self, idx, id, ctype='uqw'):
+diff --git a/src/arch/x86/isa/specialize.isa b/src/arch/x86/isa/specialize.isa
+index 854fd4d..d1ce18e 100644
+--- a/src/arch/x86/isa/specialize.isa
++++ b/src/arch/x86/isa/specialize.isa
+@@ -157,7 +157,7 @@ let {{
+                 Name += "_R"
+ 
+             elif opType.seg:
+-                env.addReg("SEGMENT_REG_%sS" % opType.seg)
++                env.addReg("segment_idx::%ss" % opType.seg)
+                 if env.regmUsed:
+                     regString = "env.regm"
+                 else:
+@@ -280,7 +280,7 @@ let {{
+                                 env.addressSize, false);''')
+                 else:
+                     env.addToDisassembly(
+-                            '''printMem(out, SEGMENT_REG_ES,
++                            '''printMem(out, segment_idx::Es,
+                                 1, X86ISA::int_reg::NumRegs,
+                                 X86ISA::int_reg::Rdi, 0,
+                                 env.addressSize, false);''')
+diff --git a/src/arch/x86/process.cc b/src/arch/x86/process.cc
+index 504afea..8fc9d08 100644
+--- a/src/arch/x86/process.cc
++++ b/src/arch/x86/process.cc
+@@ -337,12 +337,12 @@ X86_64Process::initState()
+             tc->setMiscReg(MISCREG_TR_ATTR, tss_attr);
+ 
+             //Start using longmode segments.
+-            installSegDesc(tc, SEGMENT_REG_CS, csDesc, true);
+-            installSegDesc(tc, SEGMENT_REG_DS, dsDesc, true);
+-            installSegDesc(tc, SEGMENT_REG_ES, dsDesc, true);
+-            installSegDesc(tc, SEGMENT_REG_FS, dsDesc, true);
+-            installSegDesc(tc, SEGMENT_REG_GS, dsDesc, true);
+-            installSegDesc(tc, SEGMENT_REG_SS, dsDesc, true);
++            installSegDesc(tc, segment_idx::Cs, csDesc, true);
++            installSegDesc(tc, segment_idx::Ds, dsDesc, true);
++            installSegDesc(tc, segment_idx::Es, dsDesc, true);
++            installSegDesc(tc, segment_idx::Fs, dsDesc, true);
++            installSegDesc(tc, segment_idx::Gs, dsDesc, true);
++            installSegDesc(tc, segment_idx::Ss, dsDesc, true);
+ 
+             Efer efer = 0;
+             efer.sce = 1; // Enable system call extensions.
+@@ -544,7 +544,7 @@ X86_64Process::initState()
+             dataAttr.system = 1;
+ 
+             // Initialize the segment registers.
+-            for (int seg = 0; seg < NUM_SEGMENTREGS; seg++) {
++            for (int seg = 0; seg < segment_idx::NumIdxs; seg++) {
+                 tc->setMiscRegNoEffect(MISCREG_SEG_BASE(seg), 0);
+                 tc->setMiscRegNoEffect(MISCREG_SEG_EFF_BASE(seg), 0);
+                 tc->setMiscRegNoEffect(MISCREG_SEG_ATTR(seg), dataAttr);
+@@ -655,7 +655,7 @@ I386Process::initState()
+         dataAttr.system = 1;
+ 
+         // Initialize the segment registers.
+-        for (int seg = 0; seg < NUM_SEGMENTREGS; seg++) {
++        for (int seg = 0; seg < segment_idx::NumIdxs; seg++) {
+             tc->setMiscRegNoEffect(MISCREG_SEG_BASE(seg), 0);
+             tc->setMiscRegNoEffect(MISCREG_SEG_EFF_BASE(seg), 0);
+             tc->setMiscRegNoEffect(MISCREG_SEG_ATTR(seg), dataAttr);
+diff --git a/src/arch/x86/regs/misc.hh b/src/arch/x86/regs/misc.hh
+index 89997dc..89807e9 100644
+--- a/src/arch/x86/regs/misc.hh
++++ b/src/arch/x86/regs/misc.hh
+@@ -314,7 +314,7 @@ namespace X86ISA
+         MISCREG_IDTR,
+ 
+         // Hidden segment base field
+-        MISCREG_SEG_BASE_BASE = MISCREG_SEG_SEL_BASE + NUM_SEGMENTREGS,
++        MISCREG_SEG_BASE_BASE = MISCREG_SEG_SEL_BASE + segment_idx::NumIdxs,
+         MISCREG_ES_BASE = MISCREG_SEG_BASE_BASE,
+         MISCREG_CS_BASE,
+         MISCREG_SS_BASE,
+@@ -332,7 +332,8 @@ namespace X86ISA
+         // The effective segment base, ie what is actually added to an
+         // address. In 64 bit mode this can be different from the above,
+         // namely 0.
+-        MISCREG_SEG_EFF_BASE_BASE = MISCREG_SEG_BASE_BASE + NUM_SEGMENTREGS,
++        MISCREG_SEG_EFF_BASE_BASE =
++            MISCREG_SEG_BASE_BASE + segment_idx::NumIdxs,
+         MISCREG_ES_EFF_BASE = MISCREG_SEG_EFF_BASE_BASE,
+         MISCREG_CS_EFF_BASE,
+         MISCREG_SS_EFF_BASE,
+@@ -348,7 +349,8 @@ namespace X86ISA
+         MISCREG_IDTR_EFF_BASE,
+ 
+         // Hidden segment limit field
+-        MISCREG_SEG_LIMIT_BASE = MISCREG_SEG_EFF_BASE_BASE + NUM_SEGMENTREGS,
++        MISCREG_SEG_LIMIT_BASE =
++            MISCREG_SEG_EFF_BASE_BASE + segment_idx::NumIdxs,
+         MISCREG_ES_LIMIT = MISCREG_SEG_LIMIT_BASE,
+         MISCREG_CS_LIMIT,
+         MISCREG_SS_LIMIT,
+@@ -364,7 +366,7 @@ namespace X86ISA
+         MISCREG_IDTR_LIMIT,
+ 
+         // Hidden segment limit attributes
+-        MISCREG_SEG_ATTR_BASE = MISCREG_SEG_LIMIT_BASE + NUM_SEGMENTREGS,
++        MISCREG_SEG_ATTR_BASE = MISCREG_SEG_LIMIT_BASE + segment_idx::NumIdxs,
+         MISCREG_ES_ATTR = MISCREG_SEG_ATTR_BASE,
+         MISCREG_CS_ATTR,
+         MISCREG_SS_ATTR,
+@@ -380,8 +382,7 @@ namespace X86ISA
+         MISCREG_IDTR_ATTR,
+ 
+         // Floating point control registers
+-        MISCREG_X87_TOP =
+-            MISCREG_SEG_ATTR_BASE + NUM_SEGMENTREGS,
++        MISCREG_X87_TOP = MISCREG_SEG_ATTR_BASE + segment_idx::NumIdxs,
+ 
+         MISCREG_MXCSR,
+         MISCREG_FCW,
+@@ -510,35 +511,35 @@ namespace X86ISA
+     static inline MiscRegIndex
+     MISCREG_SEG_SEL(int index)
+     {
+-        assert(index >= 0 && index < NUM_SEGMENTREGS);
++        assert(index >= 0 && index < segment_idx::NumIdxs);
+         return (MiscRegIndex)(MISCREG_SEG_SEL_BASE + index);
+     }
+ 
+     static inline MiscRegIndex
+     MISCREG_SEG_BASE(int index)
+     {
+-        assert(index >= 0 && index < NUM_SEGMENTREGS);
++        assert(index >= 0 && index < segment_idx::NumIdxs);
+         return (MiscRegIndex)(MISCREG_SEG_BASE_BASE + index);
+     }
+ 
+     static inline MiscRegIndex
+     MISCREG_SEG_EFF_BASE(int index)
+     {
+-        assert(index >= 0 && index < NUM_SEGMENTREGS);
++        assert(index >= 0 && index < segment_idx::NumIdxs);
+         return (MiscRegIndex)(MISCREG_SEG_EFF_BASE_BASE + index);
+     }
+ 
+     static inline MiscRegIndex
+     MISCREG_SEG_LIMIT(int index)
+     {
+-        assert(index >= 0 && index < NUM_SEGMENTREGS);
++        assert(index >= 0 && index < segment_idx::NumIdxs);
+         return (MiscRegIndex)(MISCREG_SEG_LIMIT_BASE + index);
+     }
+ 
+     static inline MiscRegIndex
+     MISCREG_SEG_ATTR(int index)
+     {
+-        assert(index >= 0 && index < NUM_SEGMENTREGS);
++        assert(index >= 0 && index < segment_idx::NumIdxs);
+         return (MiscRegIndex)(MISCREG_SEG_ATTR_BASE + index);
+     }
+ 
+diff --git a/src/arch/x86/regs/segment.hh b/src/arch/x86/regs/segment.hh
+index 714bc2e..96be72c 100644
+--- a/src/arch/x86/regs/segment.hh
++++ b/src/arch/x86/regs/segment.hh
+@@ -40,30 +40,34 @@
+ 
+ namespace gem5
+ {
+-
+ namespace X86ISA
+ {
+-    enum SegmentRegIndex
+-    {
+-        SEGMENT_REG_ES,
+-        SEGMENT_REG_CS,
+-        SEGMENT_REG_SS,
+-        SEGMENT_REG_DS,
+-        SEGMENT_REG_FS,
+-        SEGMENT_REG_GS,
+-        SEGMENT_REG_HS, // Temporary descriptor
+-        SEGMENT_REG_TSL, // Local descriptor table
+-        SEGMENT_REG_TSG, // Global descriptor table
+-        SEGMENT_REG_LS, // Flat segment
+-        SEGMENT_REG_MS, // Emulation memory
+-        // These shouldn't be used directly in a load or store since they
+-        // are likely accessed in other ways in a real machine. For instance,
+-        // they may be loaded into the temporary segment register on demand.
+-        SYS_SEGMENT_REG_TR,
+-        SYS_SEGMENT_REG_IDTR,
++namespace segment_idx
++{
++
++enum
++{
++    Es,
++    Cs,
++    Ss,
++    Ds,
++    Fs,
++    Gs,
++    Hs, // Temporary descriptor
++    Tsl, // Local descriptor table
++    Tsg, // Global descriptor table
++    Ls, // Flat segment
++    Ms, // Emulation memory
++    // These shouldn't be used directly in a load or store since they
++    // are likely accessed in other ways in a real machine. For instance,
++    // they may be loaded into the temporary segment register on demand.
++    Tr,
++    Idtr,
++
++    NumIdxs
++};
+ 
+-        NUM_SEGMENTREGS
+-    };
++} // namespace segment_idx
+ } // namespace X86ISA
+ } // namespace gem5
+ 
+diff --git a/src/arch/x86/tlb.cc b/src/arch/x86/tlb.cc
+index ad2609b..32d3071 100644
+--- a/src/arch/x86/tlb.cc
++++ b/src/arch/x86/tlb.cc
+@@ -319,7 +319,7 @@ TLB::translate(const RequestPtr &req,
+ 
+     // If this is true, we're dealing with a request to a non-memory address
+     // space.
+-    if (seg == SEGMENT_REG_MS) {
++    if (seg == segment_idx::Ms) {
+         return translateInt(mode == BaseMMU::Read, req, tc);
+     }
+ 
+@@ -342,7 +342,7 @@ TLB::translate(const RequestPtr &req,
+             // CPUs won't know to use CS when building fetch requests, so we
+             // need to override the value of "seg" here if this is a fetch.
+             if (mode == BaseMMU::Execute)
+-                seg = SEGMENT_REG_CS;
++                seg = segment_idx::Cs;
+ 
+             SegAttr attr = tc->readMiscRegNoEffect(MISCREG_SEG_ATTR(seg));
+             // Check for an unusable segment.
+@@ -351,7 +351,7 @@ TLB::translate(const RequestPtr &req,
+                 return std::make_shared<GeneralProtection>(0);
+             }
+             bool expandDown = false;
+-            if (seg >= SEGMENT_REG_ES && seg <= SEGMENT_REG_HS) {
++            if (seg >= segment_idx::Es && seg <= segment_idx::Hs) {
+                 if (!attr.writable && (mode == BaseMMU::Write || storeCheck)) {
+                     DPRINTF(TLB, "Tried to write to unwritable segment.\n");
+                     return std::make_shared<GeneralProtection>(0);
+-- 
+1.8.3.1
+

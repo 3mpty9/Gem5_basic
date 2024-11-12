@@ -1,0 +1,202 @@
+From ac5f79af28621cdbcb1139cf3c84d613cc9f5c34 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 27 Jan 2022 23:52:41 -0800
+Subject: [PATCH 187/757] cpu-kvm: Move the validKvmEnvironment method into
+ KvmVM.
+
+This makes the generic System class consistent whether you have KVM
+enabled or not.
+
+Change-Id: Ie6928961200943d1d4e3bd129a4e4269e9f12950
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56263
+Reviewed-by: Andreas Sandberg <andreas.sandberg@arm.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/kvm/gic.cc      |  4 ++--
+ src/cpu/kvm/SConsopts        |  1 +
+ src/cpu/kvm/vm.cc            | 11 +++++++++++
+ src/cpu/kvm/vm.hh            |  3 +++
+ src/dev/arm/generic_timer.cc | 16 ++++++++++++++++
+ src/dev/arm/generic_timer.hh |  4 +---
+ src/sim/system.cc            | 19 -------------------
+ src/sim/system.hh            |  3 ---
+ 8 files changed, 34 insertions(+), 27 deletions(-)
+
+diff --git a/src/arch/arm/kvm/gic.cc b/src/arch/arm/kvm/gic.cc
+index 5ce148e..4cc49cc 100644
+--- a/src/arch/arm/kvm/gic.cc
++++ b/src/arch/arm/kvm/gic.cc
+@@ -188,7 +188,7 @@ void
+ MuxingKvmGic::startup()
+ {
+     GicV2::startup();
+-    usingKvm = (kernelGic != nullptr) && system.validKvmEnvironment();
++    usingKvm = kernelGic && vm && vm->validEnvironment();
+     if (usingKvm)
+         fromGicV2ToKvm();
+ }
+@@ -205,7 +205,7 @@ void
+ MuxingKvmGic::drainResume()
+ {
+     GicV2::drainResume();
+-    bool use_kvm = (kernelGic != nullptr) && system.validKvmEnvironment();
++    bool use_kvm = kernelGic && vm && vm->validEnvironment();
+     if (use_kvm != usingKvm) {
+         // Should only occur due to CPU switches
+         if (use_kvm) // from simulation to KVM emulation
+diff --git a/src/cpu/kvm/SConsopts b/src/cpu/kvm/SConsopts
+index 4117736..be413e1 100644
+--- a/src/cpu/kvm/SConsopts
++++ b/src/cpu/kvm/SConsopts
+@@ -79,3 +79,4 @@ else:
+     warning("Can not enable KVM, host seems to lack KVM support")
+ 
+ export_vars.append('USE_KVM')
++export_vars.append('KVM_ISA')
+diff --git a/src/cpu/kvm/vm.cc b/src/cpu/kvm/vm.cc
+index 1347c75..d58439b 100644
+--- a/src/cpu/kvm/vm.cc
++++ b/src/cpu/kvm/vm.cc
+@@ -542,6 +542,17 @@ KvmVM::createDevice(uint32_t type, uint32_t flags)
+ #endif
+ }
+ 
++bool
++KvmVM::validEnvironment() const
++{
++    for (auto *tc: system->threads) {
++        if (!dynamic_cast<BaseKvmCPU *>(tc->getCpuPtr()))
++            return false;
++    }
++
++    return true;
++}
++
+ void
+ KvmVM::setSystem(System *s)
+ {
+diff --git a/src/cpu/kvm/vm.hh b/src/cpu/kvm/vm.hh
+index 2eb1909..083c2b2 100644
+--- a/src/cpu/kvm/vm.hh
++++ b/src/cpu/kvm/vm.hh
+@@ -416,6 +416,9 @@ class KvmVM : public SimObject
+     /** Global KVM interface */
+     Kvm *kvm;
+ 
++    /** Verify gem5 configuration will support KVM emulation */
++    bool validEnvironment() const;
++
+     /**
+      * Initialize system pointer. Invoked by system object.
+      */
+diff --git a/src/dev/arm/generic_timer.cc b/src/dev/arm/generic_timer.cc
+index 20aaf82..8377b94 100644
+--- a/src/dev/arm/generic_timer.cc
++++ b/src/dev/arm/generic_timer.cc
+@@ -38,13 +38,17 @@
+ #include "dev/arm/generic_timer.hh"
+ 
+ #include <cmath>
++#include <string_view>
+ 
+ #include "arch/arm/page_size.hh"
+ #include "arch/arm/system.hh"
+ #include "arch/arm/utility.hh"
+ #include "base/logging.hh"
+ #include "base/trace.hh"
++#include "config/kvm_isa.hh"
++#include "config/use_kvm.hh"
+ #include "cpu/base.hh"
++#include "cpu/kvm/vm.hh"
+ #include "debug/Timer.hh"
+ #include "dev/arm/base_gic.hh"
+ #include "mem/packet_access.hh"
+@@ -403,6 +407,18 @@ ArchTimer::drainResume()
+     updateCounter();
+ }
+ 
++bool
++ArchTimerKvm::scheduleEvents()
++{
++    if constexpr (USE_KVM &&
++            std::string_view(KVM_ISA) == std::string_view("arm")) {
++        auto *vm = system.getKvmVM();
++        return !vm || !vm->validEnvironment();
++    } else {
++        return true;
++    }
++}
++
+ GenericTimer::GenericTimer(const GenericTimerParams &p)
+     : SimObject(p),
+       systemCounter(*p.counter),
+diff --git a/src/dev/arm/generic_timer.hh b/src/dev/arm/generic_timer.hh
+index 9cccef6..cf04dad 100644
+--- a/src/dev/arm/generic_timer.hh
++++ b/src/dev/arm/generic_timer.hh
+@@ -280,9 +280,7 @@ class ArchTimerKvm : public ArchTimer
+     // For ArchTimer's in a GenericTimerISA with Kvm execution about
+     // to begin, skip rescheduling the event.
+     // Otherwise, we should reschedule the event (if necessary).
+-    bool scheduleEvents() override {
+-        return !system.validKvmEnvironment();
+-    }
++    bool scheduleEvents() override;
+ };
+ 
+ class GenericTimer : public SimObject
+diff --git a/src/sim/system.cc b/src/sim/system.cc
+index 86ba3be..4829b58 100644
+--- a/src/sim/system.cc
++++ b/src/sim/system.cc
+@@ -52,7 +52,6 @@
+ #include "config/the_isa.hh"
+ #include "config/use_kvm.hh"
+ #if USE_KVM
+-#include "cpu/kvm/base.hh"
+ #include "cpu/kvm/vm.hh"
+ #endif
+ #if !IS_NULL_ISA
+@@ -316,24 +315,6 @@ System::replaceThreadContext(ThreadContext *tc, ContextID context_id)
+     }
+ }
+ 
+-bool
+-System::validKvmEnvironment() const
+-{
+-#if USE_KVM
+-    if (threads.empty())
+-        return false;
+-
+-    for (auto *tc: threads) {
+-        if (!dynamic_cast<BaseKvmCPU *>(tc->getCpuPtr()))
+-            return false;
+-    }
+-
+-    return true;
+-#else
+-    return false;
+-#endif
+-}
+-
+ Addr
+ System::memSize() const
+ {
+diff --git a/src/sim/system.hh b/src/sim/system.hh
+index 8f09b96..de030f0 100644
+--- a/src/sim/system.hh
++++ b/src/sim/system.hh
+@@ -336,9 +336,6 @@ class System : public SimObject, public PCEventScope
+      */
+     KvmVM *getKvmVM() { return kvmVM; }
+ 
+-    /** Verify gem5 configuration will support KVM emulation */
+-    bool validKvmEnvironment() const;
+-
+     /** Get a pointer to access the physical memory of the system */
+     memory::PhysicalMemory& getPhysMem() { return physmem; }
+     const memory::PhysicalMemory& getPhysMem() const { return physmem; }
+-- 
+1.8.3.1
+

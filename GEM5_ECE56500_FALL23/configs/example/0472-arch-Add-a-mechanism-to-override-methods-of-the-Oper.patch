@@ -1,0 +1,75 @@
+From 225b515f489569b78ed5f812952bfd73f89cbef4 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Sun, 22 Aug 2021 00:16:26 -0700
+Subject: [PATCH 472/757] arch: Add a mechanism to override methods of the
+ Operand classes.
+
+The classes defined by the ISA description are actually just descriptors
+which are used to make more specialized Operand classes, and then those
+classes are instantiated to represent actual operands in a given
+instruction. There they encode the actual index of the register, any
+extensions used, etc.
+
+To make defining operand types in the ISA more flexible and to take less
+explicit machinery, this change defines a mechanism to allow overriding
+individual methods of the operand class. This should for instance make
+the read_code and write_code members of those classes unnecessary.
+
+Change-Id: I1a1f787970ba56bd2884a80df4618a77eb454605
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49740
+Tested-by: kokoro <noreply+kokoro@google.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/isa_parser/isa_parser.py    |  1 +
+ src/arch/isa_parser/operand_types.py | 15 +++++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/src/arch/isa_parser/isa_parser.py b/src/arch/isa_parser/isa_parser.py
+index 1d76c54..39f884c 100755
+--- a/src/arch/isa_parser/isa_parser.py
++++ b/src/arch/isa_parser/isa_parser.py
+@@ -518,6 +518,7 @@ class ISAParser(Grammar):
+         symbols = ('makeList', 're')
+         self.exportContext = dict([(s, eval(s)) for s in symbols])
+         self.exportContext.update({
++            'overrideInOperand': overrideInOperand,
+             'IntRegOp': IntRegOperandDesc,
+             'FloatRegOp': FloatRegOperandDesc,
+             'CCRegOp': CCRegOperandDesc,
+diff --git a/src/arch/isa_parser/operand_types.py b/src/arch/isa_parser/operand_types.py
+index 4079bcd..dbb4b2d 100755
+--- a/src/arch/isa_parser/operand_types.py
++++ b/src/arch/isa_parser/operand_types.py
+@@ -37,6 +37,12 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
++def overrideInOperand(func):
++    func.override_in_operand = True
++    return func
++
++overrideInOperand.overrides = dict()
++
+ class OperandDesc(object):
+     def __init__(self, base_cls, dflt_ext, reg_spec, flags=None,
+             sort_pri=None, read_code=None, write_code=None,
+@@ -76,6 +82,15 @@ class OperandDesc(object):
+                 assert(isinstance(elem_spec, dict))
+                 attrs['elems'] = elem_spec
+ 
++        for key in dir(self):
++            val = getattr(self, key)
++            # If this is a method, extract the function that implements it.
++            if hasattr(val, '__func__'):
++                val = val.__func__
++            # If this should override something in the operand
++            if getattr(val, 'override_in_operand', False):
++                attrs[key] = val
++
+         attrs.update({
+             'base_cls': base_cls,
+             'dflt_ext': dflt_ext,
+-- 
+1.8.3.1
+

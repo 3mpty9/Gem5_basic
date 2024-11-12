@@ -1,0 +1,60 @@
+From 22eeeaff862f999315820fc7ba4d2c37322f70e7 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 11 Aug 2021 03:40:48 -0700
+Subject: [PATCH 272/757] cpu: Remove readVecPredReg from
+ ThreadContext::compare.
+
+Use the generic getReg method to avoid having to use the
+TheISA::VecPredRegContainer type.
+
+Change-Id: I8240dd85f2db2f8125d7944135c4361866fba057
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/49700
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Maintainer: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/thread_context.cc | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/src/cpu/thread_context.cc b/src/cpu/thread_context.cc
+index 181c583..aab475b 100644
+--- a/src/cpu/thread_context.cc
++++ b/src/cpu/thread_context.cc
+@@ -41,6 +41,8 @@
+ 
+ #include "cpu/thread_context.hh"
+ 
++#include <vector>
++
+ #include "arch/generic/vec_pred_reg.hh"
+ #include "base/logging.hh"
+ #include "base/trace.hh"
+@@ -91,13 +93,19 @@ ThreadContext::compare(ThreadContext *one, ThreadContext *two)
+     }
+ 
+     // Then loop through the predicate registers.
+-    for (int i = 0; i < regClasses.at(VecPredRegClass).numRegs(); ++i) {
++    const auto &vec_pred_class = regClasses.at(VecPredRegClass);
++    std::vector<uint8_t> pred1(vec_pred_class.regBytes());
++    std::vector<uint8_t> pred2(vec_pred_class.regBytes());
++    for (int i = 0; i < vec_pred_class.numRegs(); ++i) {
+         RegId rid(VecPredRegClass, i);
+-        const TheISA::VecPredRegContainer& t1 = one->readVecPredReg(rid);
+-        const TheISA::VecPredRegContainer& t2 = two->readVecPredReg(rid);
+-        if (t1 != t2)
+-            panic("Pred reg idx %d doesn't match, one: %#x, two: %#x",
+-                  i, t1, t2);
++
++        one->getReg(rid, pred1.data());
++        two->getReg(rid, pred2.data());
++        if (pred1 != pred2) {
++            panic("Pred reg idx %d doesn't match, one: %s, two: %s",
++                  i, vec_pred_class.valString(pred1.data()),
++                  vec_pred_class.valString(pred2.data()));
++        }
+     }
+ 
+     for (int i = 0; i < regClasses.at(MiscRegClass).numRegs(); ++i) {
+-- 
+1.8.3.1
+

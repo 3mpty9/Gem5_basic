@@ -1,0 +1,63 @@
+From 5e89f1f679029e8e9814409fee1b6426e558fc50 Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Fri, 3 Dec 2021 14:51:37 +0000
+Subject: [PATCH 007/757] ext: Add an Arm section for gem5-SST README.md
+
+Change-Id: Ia10948a836797855219aef406bf38f52d28d8e26
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53628
+Reviewed-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/README.md | 28 +++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/ext/sst/README.md b/ext/sst/README.md
+index 7a8f838..8e2de1d 100644
+--- a/ext/sst/README.md
++++ b/ext/sst/README.md
+@@ -57,7 +57,7 @@ the request from the SubComponent and send it to the SST memory hierarchy.
+ 
+ See `INSTALL.md`.
+ 
+-## Running an example simulation
++## Running an example simulation (RISCV)
+ 
+ Downloading the built bootloader containing a Linux Kernel and a workload,
+ 
+@@ -77,6 +77,32 @@ More information about building a bootloader containing a Linux Kernel and a
+ customized workload is available at
+ [https://gem5.googlesource.com/public/gem5-resources/+/refs/heads/develop/src/riscv-boot-exit-nodisk/].
+ 
++## Running an example simulation (Arm)
++
++Download the prebuilt bootloader and Linux Kernel with embedded initramfs and
++extract them under the $M5_PATH directory (make sure M5_PATH points to a valid
++directory):
++
++```sh
++wget http://dist.gem5.org/dist/develop/arm/aarch-sst-20211207.tar.bz2
++tar -xf aarch-sst-20211207.tar.bz2
++
++# copying bootloaders
++cp binaries/boot* $M5_PATH/binaries/
++
++# copying Linux Kernel
++cp binaries/vmlinux_exit.arm64 $M5_PATH/binaries/
++```
++
++`vmlinux_exit.arm64` contains an m5 binary, and `m5 exit` will be called upon
++the booting process reaching the early userspace.
++
++Run the simulation:
++
++```sh
++sst sst/arm_example.py
++```
++
+ ## Notes
+ 
+ - SwapReq from gem5 requires reading from memory and writing to memory.
+-- 
+1.8.3.1
+

@@ -1,0 +1,129 @@
+From b3f1e5f9d76483280183751b724a67d158d71b25 Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Thu, 17 Mar 2022 06:14:46 +0000
+Subject: [PATCH 436/757] sim-se: add getrandom() syscall support
+
+getrandom() was introduced in version 3.17 of the Linux kernel.
+This commit implements getrandom() for Gem5 SE mode.
+
+Change-Id: I86bfeee52048184dbf72330284933b70daab5850
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57809
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+---
+ src/arch/arm/linux/se_workload.cc   |  2 ++
+ src/arch/riscv/linux/se_workload.cc |  4 ++--
+ src/arch/x86/linux/syscall_tbl32.cc |  3 ++-
+ src/arch/x86/linux/syscall_tbl64.cc |  1 +
+ src/sim/syscall_emul.hh             | 18 ++++++++++++++++++
+ 5 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/src/arch/arm/linux/se_workload.cc b/src/arch/arm/linux/se_workload.cc
+index b511e02..f0c85ae 100644
+--- a/src/arch/arm/linux/se_workload.cc
++++ b/src/arch/arm/linux/se_workload.cc
+@@ -488,6 +488,7 @@ class SyscallTable32 : public SyscallDescTable<EmuLinux::SyscallABI32>
+         { base + 363, "sys_rt_tgsigqueueinfo" },
+         { base + 364, "sys_perf_event_open" },
+         { base + 365, "sys_recvmmsg" },
++        { base + 384, "getrandom", getrandomFunc<ArmLinux32> }
+     })
+     {}
+ };
+@@ -758,6 +759,7 @@ class SyscallTable64 : public SyscallDescTable<EmuLinux::SyscallABI64>
+         {  base + 269, "sendmmsg" },
+         {  base + 270, "process_vm_readv" },
+         {  base + 271, "process_vm_writev" },
++        {  base + 278, "getrandom", getrandomFunc<ArmLinux64> },
+         { base + 1024, "open", openFunc<ArmLinux64> },
+         { base + 1025, "link" },
+         { base + 1026, "unlink", unlinkFunc },
+diff --git a/src/arch/riscv/linux/se_workload.cc b/src/arch/riscv/linux/se_workload.cc
+index b321ffc..f8053d4 100644
+--- a/src/arch/riscv/linux/se_workload.cc
++++ b/src/arch/riscv/linux/se_workload.cc
+@@ -385,7 +385,7 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs64 = {
+     { 275,  "sched_getattr" },
+     { 276,  "renameat2" },
+     { 277,  "seccomp" },
+-    { 278,  "getrandom" },
++    { 278,  "getrandom", getrandomFunc<RiscvLinux64> },
+     { 279,  "memfd_create" },
+     { 280,  "bpf" },
+     { 281,  "execveat" },
+@@ -716,7 +716,7 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs32 = {
+     { 275,  "sched_getattr" },
+     { 276,  "renameat2" },
+     { 277,  "seccomp" },
+-    { 278,  "getrandom" },
++    { 278,  "getrandom", getrandomFunc<RiscvLinux32> },
+     { 279,  "memfd_create" },
+     { 280,  "bpf" },
+     { 281,  "execveat" },
+diff --git a/src/arch/x86/linux/syscall_tbl32.cc b/src/arch/x86/linux/syscall_tbl32.cc
+index 7f8e905..2de334c 100644
+--- a/src/arch/x86/linux/syscall_tbl32.cc
++++ b/src/arch/x86/linux/syscall_tbl32.cc
+@@ -370,7 +370,8 @@ SyscallDescTable<EmuLinux::SyscallABI32> EmuLinux::syscallDescs32 = {
+     { 320, "utimensat" },
+     { 321, "signalfd" },
+     { 322, "timerfd" },
+-    { 323, "eventfd", eventfdFunc<X86Linux32> }
++    { 323, "eventfd", eventfdFunc<X86Linux32> },
++    { 355, "getrandom", getrandomFunc<X86Linux32>}
+ };
+ 
+ } // namespace X86ISA
+diff --git a/src/arch/x86/linux/syscall_tbl64.cc b/src/arch/x86/linux/syscall_tbl64.cc
+index 27ee8ec..6b6fa2a 100644
+--- a/src/arch/x86/linux/syscall_tbl64.cc
++++ b/src/arch/x86/linux/syscall_tbl64.cc
+@@ -361,6 +361,7 @@ SyscallDescTable<EmuLinux::SyscallABI64> EmuLinux::syscallDescs64 = {
+     { 311, "proess_vm_writev" },
+     { 312, "kcmp" },
+     { 313, "finit_module" },
++    { 318, "getrandom", getrandomFunc<X86Linux64> }
+ };
+ 
+ } // namespace X86ISA
+diff --git a/src/sim/syscall_emul.hh b/src/sim/syscall_emul.hh
+index 3fe1cf0..59a97d9 100644
+--- a/src/sim/syscall_emul.hh
++++ b/src/sim/syscall_emul.hh
+@@ -90,6 +90,7 @@
+ #include "base/intmath.hh"
+ #include "base/loader/object_file.hh"
+ #include "base/logging.hh"
++#include "base/random.hh"
+ #include "base/trace.hh"
+ #include "base/types.hh"
+ #include "config/the_isa.hh"
+@@ -3040,6 +3041,23 @@ ftruncateFunc(SyscallDesc *desc, ThreadContext *tc, int tgt_fd,
+     return (result == -1) ? -errno : result;
+ }
+ 
++template <typename OS>
++SyscallReturn
++getrandomFunc(SyscallDesc *desc, ThreadContext *tc,
++              VPtr<> buf_ptr, typename OS::size_t count,
++              unsigned int flags)
++{
++    SETranslatingPortProxy proxy(tc);
++
++    TypedBufferArg<uint8_t> buf(buf_ptr, count);
++    for (int i = 0; i < count; ++i) {
++        buf[i] = gem5::random_mt.random<uint8_t>();
++    }
++    buf.copyOut(proxy);
++
++    return count;
++}
++
+ } // namespace gem5
+ 
+ #endif // __SIM_SYSCALL_EMUL_HH__
+-- 
+1.8.3.1
+

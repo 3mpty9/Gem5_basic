@@ -1,0 +1,64 @@
+From 95800dc659f9135a18fd48551b9d6a523c2f87b3 Mon Sep 17 00:00:00 2001
+From: Yu-hsin Wang <yuhsingw@google.com>
+Date: Thu, 19 May 2022 10:15:29 +0800
+Subject: [PATCH 647/757] mem: add clear modifiers for request flags
+
+During the memory requests, it's possible some control attribute
+changed by IPs. There are three ways to model the behavior.
+
+1. Modify the flags of current request, but there's no way to unset
+   the attribute now.
+2. Clone the request with original flags, but there's no way to unset the
+   attribute.
+3. Clone the request with zero flags, but it will ask the model to review
+   all the flags and set individually.
+
+To preserve the original requests, we may pick the second approach. It's
+still good to have clear modifiers to make the modeling more easier by
+modifying the cloned request.
+
+Change-Id: Ib216ca20c79b0f84be15ed4b0ec00354a428bac9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59809
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/request.hh | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/mem/request.hh b/src/mem/request.hh
+index 3d097a4..39d9d72 100644
+--- a/src/mem/request.hh
++++ b/src/mem/request.hh
+@@ -800,6 +800,13 @@ class Request
+     }
+ 
+     void
++    clearFlags(Flags flags)
++    {
++        assert(hasPaddr() || hasVaddr());
++        _flags.clear(flags);
++    }
++
++    void
+     setCacheCoherenceFlags(CacheCoherenceFlags extraFlags)
+     {
+         // TODO: do mem_sync_op requests have valid paddr/vaddr?
+@@ -807,6 +814,14 @@ class Request
+         _cacheCoherenceFlags.set(extraFlags);
+     }
+ 
++    void
++    clearCacheCoherenceFlags(CacheCoherenceFlags extraFlags)
++    {
++        // TODO: do mem_sync_op requests have valid paddr/vaddr?
++        assert(hasPaddr() || hasVaddr());
++        _cacheCoherenceFlags.clear(extraFlags);
++    }
++
+     /** Accessor function for vaddr.*/
+     bool
+     hasVaddr() const
+-- 
+1.8.3.1
+

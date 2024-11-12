@@ -1,0 +1,45 @@
+From 9bfffe0f345846c447bce932c5b750571f72c0d3 Mon Sep 17 00:00:00 2001
+From: Daecheol You <daecheol.you@samsung.com>
+Date: Fri, 11 Mar 2022 13:23:59 +0900
+Subject: [PATCH 677/757] mem-ruby: modify the TBE data state for
+ ReadOnce_HitUpstream
+
+When ReadOnce request hits upstream, set dataToBeInvalid to true
+for R* states so that the line from the upstream is successfully dropped
+at the end by Finalize_UpdateCacheFromTBE.
+For UD_RU and UC_RU state, set dataValid to true to prevent it changing
+to RU state when it doesn't get the snoop data response.
+
+Change-Id: Ie83c511e8d158e18abc5c9c16bc6040ce73587bf
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58411
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Tiago Muck <tiago.muck@arm.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index 8b248a5..2c47ac9 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -554,6 +554,15 @@ action(Initiate_ReadOnce_HitUpstream, desc="") {
+   }
+   tbe.updateDirOnCompAck := false;
+   // no need to update or access tags/data on ReadOnce served from upstream
++
++  if (is_invalid(cache_entry)) {
++    // if we receive data, invalidate at the end so it can be dropped
++    tbe.dataToBeInvalid := true;
++  } else if (tbe.dataValid == false) {
++    // possible on UD_RU,UC_RU where cache_entry valid but tbe.dataValid == false
++    // this prevents going to RU if no data is received from snoop
++    tbe.dataValid := true;
++  }
+ }
+ 
+ 
+-- 
+1.8.3.1
+

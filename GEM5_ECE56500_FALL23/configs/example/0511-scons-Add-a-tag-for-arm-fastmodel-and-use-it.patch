@@ -1,0 +1,229 @@
+From 3b6ea3dfa9055fcd7fb83738b11d00ac00f813ce Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Wed, 30 Mar 2022 00:16:04 -0700
+Subject: [PATCH 511/757] scons: Add a tag for arm fastmodel and use it.
+
+This avoids some python logic in the SConscript files, and explicit
+references to the configuration system.
+
+Change-Id: If6ee61bb8c23606859e60323b8ca2c5254dbdecc
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58356
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Yu-hsin Wang <yuhsingw@google.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/CortexA76/SConscript        | 12 ++++-----
+ src/arch/arm/fastmodel/CortexR52/SConscript        | 12 ++++-----
+ src/arch/arm/fastmodel/GIC/SConscript              |  8 +++---
+ src/arch/arm/fastmodel/PL330_DMAC/SConscript       |  8 +++---
+ src/arch/arm/fastmodel/SConscript                  | 30 +++++++++++-----------
+ src/arch/arm/fastmodel/iris/SConscript             | 16 +++++-------
+ src/arch/arm/fastmodel/reset_controller/SConscript |  7 ++---
+ 7 files changed, 40 insertions(+), 53 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/CortexA76/SConscript b/src/arch/arm/fastmodel/CortexA76/SConscript
+index 7b18318..f3c6606 100644
+--- a/src/arch/arm/fastmodel/CortexA76/SConscript
++++ b/src/arch/arm/fastmodel/CortexA76/SConscript
+@@ -25,9 +25,6 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ protocol_dir = Dir('..').Dir('protocol')
+ 
+ for name in ('x1', 'x2', 'x3', 'x4'):
+@@ -39,7 +36,8 @@ for name in ('x1', 'x2', 'x3', 'x4'):
+ 
+ SimObject('FastModelCortexA76.py', sim_objects=[
+     'FastModelCortexA76', 'FastModelCortexA76Cluster'] +
+-    [f'FastModelScxEvsCortexA76x{num}' for num in (1, 2, 3, 4)])
+-Source('cortex_a76.cc')
+-Source('evs.cc')
+-Source('thread_context.cc')
++    [f'FastModelScxEvsCortexA76x{num}' for num in (1, 2, 3, 4)],
++    tags='arm fastmodel')
++Source('cortex_a76.cc', tags='arm fastmodel')
++Source('evs.cc', tags='arm fastmodel')
++Source('thread_context.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/CortexR52/SConscript b/src/arch/arm/fastmodel/CortexR52/SConscript
+index a1d308b..bf3df74 100644
+--- a/src/arch/arm/fastmodel/CortexR52/SConscript
++++ b/src/arch/arm/fastmodel/CortexR52/SConscript
+@@ -25,9 +25,6 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ protocol_dir = Dir('..').Dir('protocol')
+ 
+ for name in ('x1', 'x2', 'x3', 'x4'):
+@@ -40,7 +37,8 @@ for name in ('x1', 'x2', 'x3', 'x4'):
+ 
+ SimObject('FastModelCortexR52.py', sim_objects=[
+     'FastModelCortexR52', 'FastModelCortexR52Cluster'] +
+-    [f'FastModelScxEvsCortexR52x{num}' for num in (1, 2, 3, 4)])
+-Source('cortex_r52.cc')
+-Source('evs.cc')
+-Source('thread_context.cc')
++    [f'FastModelScxEvsCortexR52x{num}' for num in (1, 2, 3, 4)],
++    tags='arm fastmodel')
++Source('cortex_r52.cc', tags='arm fastmodel')
++Source('evs.cc', tags='arm fastmodel')
++Source('thread_context.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/GIC/SConscript b/src/arch/arm/fastmodel/GIC/SConscript
+index cff18e5..c56ddd5 100644
+--- a/src/arch/arm/fastmodel/GIC/SConscript
++++ b/src/arch/arm/fastmodel/GIC/SConscript
+@@ -25,13 +25,11 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ protocol_dir = Dir('..').Dir('protocol')
+ 
+ ArmFastModelComponent(File('GIC.sgproj'), File('GIC.lisa'),
+                       protocol_dir.File('SignalInterruptProtocol.lisa')
+                       ).prepare_env(env)
+-SimObject('FastModelGIC.py', sim_objects=['SCFastModelGIC', 'FastModelGIC'])
+-Source('gic.cc')
++SimObject('FastModelGIC.py', sim_objects=['SCFastModelGIC', 'FastModelGIC'],
++        tags='arm fastmodel')
++Source('gic.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/PL330_DMAC/SConscript b/src/arch/arm/fastmodel/PL330_DMAC/SConscript
+index 8527133..e93b45c 100644
+--- a/src/arch/arm/fastmodel/PL330_DMAC/SConscript
++++ b/src/arch/arm/fastmodel/PL330_DMAC/SConscript
+@@ -25,13 +25,11 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ protocol_dir = Dir('..').Dir('protocol')
+ 
+ ArmFastModelComponent(File('PL330.sgproj'), File('PL330.lisa'),
+                       protocol_dir.File('SignalInterruptProtocol.lisa')
+                       ).prepare_env(env)
+-SimObject('FastModelPL330.py', sim_objects=['FastModelPL330'])
+-Source('pl330.cc')
++SimObject('FastModelPL330.py', sim_objects=['FastModelPL330'],
++        tags='arm fastmodel')
++Source('pl330.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index cded3cd..bfe7e97 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -48,13 +48,11 @@ from gem5_scons import Transform, warning, error
+ import os.path
+ 
+ if env['CONF']['USE_ARM_FASTMODEL']:
+-    if not env['CONF']['USE_SYSTEMC']:
++    if env['CONF']['USE_SYSTEMC']:
++        env.TagImplies('arm fastmodel', 'arm isa')
++    else:
+         warning('ARM Fast Models require systemc support')
+         env['CONF']['USE_ARM_FASTMODEL'] = False
+-        Return()
+-
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+ 
+ 
+ systemc_home = Dir('#/src/systemc/ext/systemc_home')
+@@ -144,11 +142,11 @@ fm_static_libs = (
+     'IrisSupport',
+ )
+ for lib in fm_static_libs:
+-    SourceLib(staticify(env, lib))
++    SourceLib(staticify(env, lib), tags='arm fastmodel')
+ 
+-SourceLib('atomic')
+-SourceLib('dl')
+-SourceLib('rt')
++SourceLib('atomic', tags='arm fastmodel')
++SourceLib('dl', tags='arm fastmodel')
++SourceLib('rt', tags='arm fastmodel')
+ 
+ class ProjectFileParser(Grammar):
+     def __init__(self):
+@@ -399,7 +397,9 @@ class ArmFastModelComponent(object):
+         env.Append(LIBPATH=self.libpaths)
+         env.AddLocalRPATH(*self.rpaths)
+         env.Append(CPPPATH=self.headerpaths)
+-        env.Prepend(LIBS=self.libs)
++        # Put these libraries earlier in the list by setting priority.
++        for lib in self.libs:
++            SourceLib(lib, priority=1, tags='arm fastmodel')
+ 
+     def simgen_builder(self, target, source, env):
+         cmd = self.simgen_cmd
+@@ -414,10 +414,10 @@ class ArmFastModelComponent(object):
+ 
+ Export('ArmFastModelComponent')
+ 
+-PySource('m5', 'arm_fast_model.py')
+-Source('fastmodel.cc')
++PySource('m5', 'arm_fast_model.py', tags='arm fastmodel')
++Source('fastmodel.cc', tags='arm fastmodel')
+ 
+ SimObject('FastModel.py', sim_objects=[
+-    'AmbaToTlmBridge64', 'AmbaFromTlmBridge64'])
+-Source('amba_to_tlm_bridge.cc')
+-Source('amba_from_tlm_bridge.cc')
++    'AmbaToTlmBridge64', 'AmbaFromTlmBridge64'], tags='arm fastmodel')
++Source('amba_to_tlm_bridge.cc', tags='arm fastmodel')
++Source('amba_from_tlm_bridge.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/iris/SConscript b/src/arch/arm/fastmodel/iris/SConscript
+index 1908d72..3387719 100644
+--- a/src/arch/arm/fastmodel/iris/SConscript
++++ b/src/arch/arm/fastmodel/iris/SConscript
+@@ -25,14 +25,12 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ SimObject('Iris.py', sim_objects=[
+-    'IrisTLB', 'IrisMMU', 'IrisInterrupts', 'IrisISA', 'IrisBaseCPU'])
+-Source('cpu.cc')
+-Source('interrupts.cc')
+-Source('isa.cc')
+-Source('tlb.cc')
++    'IrisTLB', 'IrisMMU', 'IrisInterrupts', 'IrisISA', 'IrisBaseCPU'],
++    tags='arm fastmodel')
++Source('cpu.cc', tags='arm fastmodel')
++Source('interrupts.cc', tags='arm fastmodel')
++Source('isa.cc', tags='arm fastmodel')
++Source('tlb.cc', tags='arm fastmodel')
+ 
+-Source('thread_context.cc')
++Source('thread_context.cc', tags='arm fastmodel')
+diff --git a/src/arch/arm/fastmodel/reset_controller/SConscript b/src/arch/arm/fastmodel/reset_controller/SConscript
+index b6f7852..8e5de8e 100644
+--- a/src/arch/arm/fastmodel/reset_controller/SConscript
++++ b/src/arch/arm/fastmodel/reset_controller/SConscript
+@@ -25,10 +25,7 @@
+ 
+ Import('*')
+ 
+-if not env['CONF']['USE_ARM_FASTMODEL']:
+-    Return()
+-
+ SimObject('FastModelResetControllerExample.py', sim_objects=[
+-    'FastModelResetControllerExample'])
++    'FastModelResetControllerExample'], tags='arm fastmodel')
+ 
+-Source('example.cc')
++Source('example.cc', tags='arm fastmodel')
+-- 
+1.8.3.1
+

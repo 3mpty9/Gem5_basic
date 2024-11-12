@@ -1,0 +1,50 @@
+From d421e7acd065c8960052794c6da611e958a41ebd Mon Sep 17 00:00:00 2001
+From: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Date: Thu, 2 Dec 2021 09:49:56 +0000
+Subject: [PATCH 004/757] ext: Fix segfault in simulate_limit_event shortcut
+
+In the SST integration the top of the main queue is checked
+for an event before starting the simulation.
+
+If the first event is scheduled after the ending tick, we are
+just returning the simulate_limit_event without entering
+the simulation loop.
+
+If the method is called with an empty queue, the following
+line will segfault (getHead() == nullptr):
+
+gem5::mainEventQueue[0]->getHead()->when()
+
+With this patch we are covering the case where we have
+an empty event queue
+
+Change-Id: I04463b45b269361172a9dd2fe1ba6e9428ac64f5
+Signed-off-by: Giacomo Travaglini <giacomo.travaglini@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53723
+Reviewed-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/sst/gem5.cc | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/ext/sst/gem5.cc b/ext/sst/gem5.cc
+index 924ee49..c93c722 100644
+--- a/ext/sst/gem5.cc
++++ b/ext/sst/gem5.cc
+@@ -285,8 +285,10 @@ gem5Component::simulateGem5(uint64_t current_cycle)
+ 
+     // Here, if the next event in gem5's queue is not executed within the next
+     // cycle, there's no need to enter the gem5's sim loop.
+-    if (next_end_tick < gem5::mainEventQueue[0]->getHead()->when())
++    if (gem5::mainEventQueue[0]->empty() ||
++        next_end_tick < gem5::mainEventQueue[0]->getHead()->when()) {
+         return gem5::simulate_limit_event;
++    }
+     gem5::simulate_limit_event->reschedule(next_end_tick);
+     gem5::Event *local_event = doSimLoop(gem5::mainEventQueue[0]);
+     gem5::BaseGlobalEvent *global_event = local_event->globalEvent();
+-- 
+1.8.3.1
+

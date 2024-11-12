@@ -1,0 +1,192 @@
+From 286c23da52c16f5ba78db2329ac7d438a48bc77e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 30 Oct 2019 16:51:36 -0500
+Subject: [PATCH 153/757] mem-ruby: fixed SimpleNetwork starvation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The round-robing scheduling seed is shared across all ports and vnets
+in the router and it's possible that, under certain heavy traffic
+scenarios, the same port will always fill the input buffers before any
+other port is checked.
+
+This patch removes the round-robin scheduling. The port to be checked
+first is always the one with the oldest message.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-920
+
+Change-Id: I918694d46faa0abd00ce9180bc98c58a9b5af0b5
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/41857
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Meatboy 106 <garbage2collector@gmail.com>
+---
+ src/mem/ruby/network/MessageBuffer.cc        |  9 +++++
+ src/mem/ruby/network/MessageBuffer.hh        |  3 ++
+ src/mem/ruby/network/simple/PerfectSwitch.cc | 60 +++++++++++++++-------------
+ src/mem/ruby/network/simple/PerfectSwitch.hh | 15 ++++++-
+ 4 files changed, 59 insertions(+), 28 deletions(-)
+
+diff --git a/src/mem/ruby/network/MessageBuffer.cc b/src/mem/ruby/network/MessageBuffer.cc
+index 85cc00c..a891d5a 100644
+--- a/src/mem/ruby/network/MessageBuffer.cc
++++ b/src/mem/ruby/network/MessageBuffer.cc
+@@ -523,6 +523,15 @@ MessageBuffer::isReady(Tick current_time) const
+     return can_dequeue && is_ready;
+ }
+ 
++Tick
++MessageBuffer::readyTime() const
++{
++    if (m_prio_heap.empty())
++        return MaxTick;
++    else
++        return m_prio_heap.front()->getLastEnqueueTime();
++}
++
+ uint32_t
+ MessageBuffer::functionalAccess(Packet *pkt, bool is_read, WriteMask *mask)
+ {
+diff --git a/src/mem/ruby/network/MessageBuffer.hh b/src/mem/ruby/network/MessageBuffer.hh
+index fb0ef43..9cabbaf 100644
+--- a/src/mem/ruby/network/MessageBuffer.hh
++++ b/src/mem/ruby/network/MessageBuffer.hh
+@@ -86,6 +86,9 @@ class MessageBuffer : public SimObject
+     // TRUE if head of queue timestamp <= SystemTime
+     bool isReady(Tick current_time) const;
+ 
++    // earliest tick the head of queue will be ready, or MaxTick if empty
++    Tick readyTime() const;
++
+     void
+     delayHead(Tick current_time, Tick delta)
+     {
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.cc b/src/mem/ruby/network/simple/PerfectSwitch.cc
+index 5fb52af..4df3fcf 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.cc
++++ b/src/mem/ruby/network/simple/PerfectSwitch.cc
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2020 ARM Limited
++ * Copyright (c) 2020-2021 ARM Limited
+  * All rights reserved.
+  *
+  * The license below extends only to copyright in the software and shall
+@@ -70,7 +70,6 @@ PerfectSwitch::PerfectSwitch(SwitchID sid, Switch *sw, uint32_t virt_nets)
+     : Consumer(sw, Switch::PERFECTSWITCH_EV_PRI),
+       m_switch_id(sid), m_switch(sw)
+ {
+-    m_round_robin_start = 0;
+     m_wakeups_wo_switch = 0;
+     m_virtual_networks = virt_nets;
+ }
+@@ -119,36 +118,43 @@ PerfectSwitch::~PerfectSwitch()
+ {
+ }
+ 
+-void
+-PerfectSwitch::operateVnet(int vnet)
++MessageBuffer*
++PerfectSwitch::inBuffer(int in_port, int vnet) const
+ {
+-    // This is for round-robin scheduling
+-    int incoming = m_round_robin_start;
+-    m_round_robin_start++;
+-    if (m_round_robin_start >= m_in.size()) {
+-        m_round_robin_start = 0;
++    if (m_in[in_port].size() <= vnet) {
++        return nullptr;
+     }
++    else {
++        return m_in[in_port][vnet];
++    }
++}
+ 
++void
++PerfectSwitch::operateVnet(int vnet)
++{
+     if (m_pending_message_count[vnet] > 0) {
+-        // for all input ports, use round robin scheduling
+-        for (int counter = 0; counter < m_in.size(); counter++) {
+-            // Round robin scheduling
+-            incoming++;
+-            if (incoming >= m_in.size()) {
+-                incoming = 0;
+-            }
+-
+-            // Is there a message waiting?
+-            if (m_in[incoming].size() <= vnet) {
+-                continue;
+-            }
+-
+-            MessageBuffer *buffer = m_in[incoming][vnet];
+-            if (buffer == nullptr) {
+-                continue;
++        // first check the port with the oldest message
++        unsigned start_in_port = 0;
++        Tick lowest_tick = MaxTick;
++        for (int i = 0; i < m_in.size(); ++i) {
++            MessageBuffer *buffer = inBuffer(i, vnet);
++            if (buffer) {
++                Tick ready_time = buffer->readyTime();
++                if (ready_time < lowest_tick){
++                    lowest_tick = ready_time;
++                    start_in_port = i;
++                }
+             }
+-
+-            operateMessageBuffer(buffer, incoming, vnet);
++        }
++        DPRINTF(RubyNetwork, "vnet %d: %d pending msgs. "
++                             "Checking port %d first\n",
++                vnet, m_pending_message_count[vnet], start_in_port);
++        // check all ports starting with the one with the oldest message
++        for (int i = 0; i < m_in.size(); ++i) {
++            int in_port = (i + start_in_port) % m_in.size();
++            MessageBuffer *buffer = inBuffer(in_port, vnet);
++            if (buffer)
++                operateMessageBuffer(buffer, in_port, vnet);
+         }
+     }
+ }
+diff --git a/src/mem/ruby/network/simple/PerfectSwitch.hh b/src/mem/ruby/network/simple/PerfectSwitch.hh
+index 32c5383..3249622 100644
+--- a/src/mem/ruby/network/simple/PerfectSwitch.hh
++++ b/src/mem/ruby/network/simple/PerfectSwitch.hh
+@@ -1,4 +1,16 @@
+ /*
++ * Copyright (c) 2021 ARM Limited
++ * All rights reserved.
++ *
++ * The license below extends only to copyright in the software and shall
++ * not be construed as granting a license to any other intellectual
++ * property including but not limited to intellectual property relating
++ * to a hardware implementation of the functionality of the software
++ * licensed hereunder.  You may use the software subject to the license
++ * terms below provided that you ensure that this notice is replicated
++ * unmodified and in its entirety in all distributions of the software,
++ * modified or unmodified, in source code or in binary form.
++ *
+  * Copyright (c) 1999-2008 Mark D. Hill and David A. Wood
+  * All rights reserved.
+  *
+@@ -105,11 +117,12 @@ class PerfectSwitch : public Consumer
+     std::vector<LinkOrder> m_link_order;
+ 
+     uint32_t m_virtual_networks;
+-    int m_round_robin_start;
+     int m_wakeups_wo_switch;
+ 
+     SimpleNetwork* m_network_ptr;
+     std::vector<int> m_pending_message_count;
++
++    MessageBuffer* inBuffer(int in_port, int vnet) const;
+ };
+ 
+ inline std::ostream&
+-- 
+1.8.3.1
+

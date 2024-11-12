@@ -1,0 +1,42 @@
+From 8cd70b7da1ae563347617375827c6de47a50e743 Mon Sep 17 00:00:00 2001
+From: Luming Wang <wlm199558@126.com>
+Date: Thu, 10 Feb 2022 08:31:01 +0000
+Subject: [PATCH 237/757] arch-riscv,sim-se: correct the spelling of `sendto`
+
+The system call "sendto" is incorrectly written as "sendo".
+This patch fixes this spelling error and adds support for `sendto`.
+
+Change-Id: I21851fe7679509161b09d335a5df9640c8334430
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56689
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/riscv/linux/se_workload.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/riscv/linux/se_workload.cc b/src/arch/riscv/linux/se_workload.cc
+index 815b63b..b321ffc 100644
+--- a/src/arch/riscv/linux/se_workload.cc
++++ b/src/arch/riscv/linux/se_workload.cc
+@@ -329,7 +329,7 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs64 = {
+     { 203,  "connect", connectFunc },
+     { 204,  "getsockname", getsocknameFunc },
+     { 205,  "getpeername", getpeernameFunc },
+-    { 206,  "sendo" },
++    { 206,  "sendto", sendtoFunc<RiscvLinux64> },
+     { 207,  "recvfrom", recvfromFunc<RiscvLinux64> },
+     { 208,  "setsockopt", setsockoptFunc },
+     { 209,  "getsockopt", getsockoptFunc },
+@@ -660,7 +660,7 @@ SyscallDescTable<SEWorkload::SyscallABI> EmuLinux::syscallDescs32 = {
+     { 203,  "connect", connectFunc },
+     { 204,  "getsockname", getsocknameFunc },
+     { 205,  "getpeername", getpeernameFunc },
+-    { 206,  "sendo" },
++    { 206,  "sendto", sendtoFunc<RiscvLinux32> },
+     { 207,  "recvfrom", recvfromFunc<RiscvLinux32> },
+     { 208,  "setsockopt", setsockoptFunc },
+     { 209,  "getsockopt", getsockoptFunc },
+-- 
+1.8.3.1
+

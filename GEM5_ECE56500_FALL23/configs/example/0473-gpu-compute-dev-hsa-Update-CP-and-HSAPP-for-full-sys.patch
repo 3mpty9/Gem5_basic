@@ -1,0 +1,276 @@
+From 581e4517236467b78af3e83167a22fc0e5e45c3c Mon Sep 17 00:00:00 2001
+From: Matthew Poremba <matthew.poremba@amd.com>
+Date: Thu, 4 Nov 2021 09:55:05 -0500
+Subject: [PATCH 473/757] gpu-compute,dev-hsa: Update CP and HSAPP for
+ full-system
+
+Make the necessary changes to connect Vega pagetable walkers for
+full-system mode. Previously the CP and HSA packet processor could only
+read AQL packets from system/host memory using proxy port. This allows
+for AQL to be read from device memory which is used for non-blit
+kernels.
+
+Change-Id: If28eb8be68173da03e15084765e77e92eda178e9
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/53077
+Reviewed-by: Matt Sinclair <mattdsinclair@gmail.com>
+Maintainer: Matt Sinclair <mattdsinclair@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gpufs/system/system.py   | 10 ++++++++--
+ src/dev/amdgpu/amdgpu_device.cc          |  2 ++
+ src/dev/hsa/HSADevice.py                 |  3 +++
+ src/dev/hsa/hsa_packet_processor.cc      | 32 ++++++++++++++++++++++++++------
+ src/dev/hsa/hsa_packet_processor.hh      |  5 +++++
+ src/gpu-compute/GPU.py                   |  3 +++
+ src/gpu-compute/gpu_command_processor.cc | 11 ++++++++++-
+ src/gpu-compute/gpu_command_processor.hh |  3 +++
+ 8 files changed, 60 insertions(+), 9 deletions(-)
+
+diff --git a/configs/example/gpufs/system/system.py b/configs/example/gpufs/system/system.py
+index 8af423d..7626630 100644
+--- a/configs/example/gpufs/system/system.py
++++ b/configs/example/gpufs/system/system.py
+@@ -95,11 +95,15 @@ def makeGpuFSSystem(args):
+ 
+     # This arbitrary address is something in the X86 I/O hole
+     hsapp_gpu_map_paddr = 0xe00000000
++    hsapp_pt_walker = VegaPagetableWalker()
+     gpu_hsapp = HSAPacketProcessor(pioAddr=hsapp_gpu_map_paddr,
+-                                   numHWQueues=args.num_hw_queues)
++                                   numHWQueues=args.num_hw_queues,
++                                   walker=hsapp_pt_walker)
+     dispatcher = GPUDispatcher()
++    cp_pt_walker = VegaPagetableWalker()
+     gpu_cmd_proc = GPUCommandProcessor(hsapp=gpu_hsapp,
+-                                       dispatcher=dispatcher)
++                                       dispatcher=dispatcher,
++                                       walker=cp_pt_walker)
+     shader.dispatcher = dispatcher
+     shader.gpu_cmd_proc = gpu_cmd_proc
+ 
+@@ -136,6 +140,8 @@ def makeGpuFSSystem(args):
+     system._dma_ports.append(device_ih)
+     system._dma_ports.append(pm4_pkt_proc)
+     system._dma_ports.append(gpu_mem_mgr)
++    system._dma_ports.append(hsapp_pt_walker)
++    system._dma_ports.append(cp_pt_walker)
+     system._dma_ports.append(sdma0_pt_walker)
+     system._dma_ports.append(sdma1_pt_walker)
+ 
+diff --git a/src/dev/amdgpu/amdgpu_device.cc b/src/dev/amdgpu/amdgpu_device.cc
+index 4d7aea5..442e417 100644
+--- a/src/dev/amdgpu/amdgpu_device.cc
++++ b/src/dev/amdgpu/amdgpu_device.cc
+@@ -88,6 +88,8 @@ AMDGPUDevice::AMDGPUDevice(const AMDGPUDeviceParams &p)
+     sdma1->setId(1);
+     deviceIH->setGPUDevice(this);
+     pm4PktProc->setGPUDevice(this);
++    cp->hsaPacketProc().setGPUDevice(this);
++    cp->setGPUDevice(this);
+ }
+ 
+ void
+diff --git a/src/dev/hsa/HSADevice.py b/src/dev/hsa/HSADevice.py
+index 00a3dd7..73d5911 100644
+--- a/src/dev/hsa/HSADevice.py
++++ b/src/dev/hsa/HSADevice.py
+@@ -31,6 +31,7 @@ from m5.SimObject import SimObject
+ from m5.params import *
+ from m5.proxy import *
+ from m5.objects.Device import DmaVirtDevice
++from m5.objects.VegaGPUTLB import VegaPagetableWalker
+ 
+ class HSAPacketProcessor(DmaVirtDevice):
+     type = 'HSAPacketProcessor'
+@@ -48,3 +49,5 @@ class HSAPacketProcessor(DmaVirtDevice):
+     # See: https://github.com/RadeonOpenCompute/atmi/tree/master/examples/
+     #      runtime/kps
+     pktProcessDelay = Param.Tick(4400000, "Packet processing delay")
++    walker = Param.VegaPagetableWalker(VegaPagetableWalker(),
++            "Page table walker")
+diff --git a/src/dev/hsa/hsa_packet_processor.cc b/src/dev/hsa/hsa_packet_processor.cc
+index 413a636..89fc3c1 100644
+--- a/src/dev/hsa/hsa_packet_processor.cc
++++ b/src/dev/hsa/hsa_packet_processor.cc
+@@ -39,6 +39,7 @@
+ #include "base/logging.hh"
+ #include "base/trace.hh"
+ #include "debug/HSAPacketProcessor.hh"
++#include "dev/amdgpu/amdgpu_device.hh"
+ #include "dev/dma_device.hh"
+ #include "dev/hsa/hsa_packet.hh"
+ #include "dev/hsa/hw_scheduler.hh"
+@@ -46,6 +47,7 @@
+ #include "gpu-compute/gpu_command_processor.hh"
+ #include "mem/packet_access.hh"
+ #include "mem/page_table.hh"
++#include "sim/full_system.hh"
+ #include "sim/process.hh"
+ #include "sim/proxy_ptr.hh"
+ #include "sim/system.hh"
+@@ -71,7 +73,8 @@ namespace gem5
+ HSAPP_EVENT_DESCRIPTION_GENERATOR(QueueProcessEvent)
+ 
+ HSAPacketProcessor::HSAPacketProcessor(const Params &p)
+-    : DmaVirtDevice(p), numHWQueues(p.numHWQueues), pioAddr(p.pioAddr),
++    : DmaVirtDevice(p), walker(p.walker),
++      numHWQueues(p.numHWQueues), pioAddr(p.pioAddr),
+       pioSize(PAGE_SIZE), pioDelay(10), pktProcessDelay(p.pktProcessDelay)
+ {
+     DPRINTF(HSAPacketProcessor, "%s:\n", __FUNCTION__);
+@@ -90,6 +93,15 @@ HSAPacketProcessor::~HSAPacketProcessor()
+ }
+ 
+ void
++HSAPacketProcessor::setGPUDevice(AMDGPUDevice *gpu_device)
++{
++    gpuDevice = gpu_device;
++
++    assert(walker);
++    walker->setDevRequestor(gpuDevice->vramRequestorId());
++}
++
++void
+ HSAPacketProcessor::unsetDeviceQueueDesc(uint64_t queue_id, int doorbellSize)
+ {
+     hwSchdlr->unregisterQueue(queue_id, doorbellSize);
+@@ -164,12 +176,20 @@ HSAPacketProcessor::read(Packet *pkt)
+ TranslationGenPtr
+ HSAPacketProcessor::translate(Addr vaddr, Addr size)
+ {
+-    // Grab the process and try to translate the virtual address with it; with
+-    // new extensions, it will likely be wrong to just arbitrarily grab context
+-    // zero.
+-    auto process = sys->threads[0]->getProcessPtr();
++    if (!FullSystem) {
++        // Grab the process and try to translate the virtual address with it;
++        // with new extensions, it will likely be wrong to just arbitrarily
++        // grab context zero.
++        auto process = sys->threads[0]->getProcessPtr();
++
++        return process->pTable->translateRange(vaddr, size);
++    }
+ 
+-    return process->pTable->translateRange(vaddr, size);
++    // In full system use the page tables setup by the kernel driver rather
++    // than the CPU page tables.
++    return TranslationGenPtr(
++        new AMDGPUVM::UserTranslationGen(&gpuDevice->getVM(), walker,
++                                         1 /* vmid */, vaddr, size));
+ }
+ 
+ /**
+diff --git a/src/dev/hsa/hsa_packet_processor.hh b/src/dev/hsa/hsa_packet_processor.hh
+index 5d6f773..65d1b44 100644
+--- a/src/dev/hsa/hsa_packet_processor.hh
++++ b/src/dev/hsa/hsa_packet_processor.hh
+@@ -55,6 +55,8 @@
+ namespace gem5
+ {
+ 
++class AMDGPUDevice;
++
+ // Ideally, each queue should store this status and
+ // the processPkt() should make decisions based on that
+ // status variable.
+@@ -254,6 +256,8 @@ class HSAPacketProcessor: public DmaVirtDevice
+     typedef void (DmaDevice::*DmaFnPtr)(Addr, int, Event*, uint8_t*, Tick);
+     GPUCommandProcessor *gpu_device;
+     HWScheduler *hwSchdlr;
++    AMDGPUDevice *gpuDevice;
++    VegaISA::Walker *walker;
+ 
+     // Structure to store the read values of dependency signals
+     // from shared memory. Also used for tracking the status of
+@@ -356,6 +360,7 @@ class HSAPacketProcessor: public DmaVirtDevice
+                             Addr offset = 0, uint64_t rd_idx = 0);
+     void unsetDeviceQueueDesc(uint64_t queue_id, int doorbellSize);
+     void setDevice(GPUCommandProcessor * dev);
++    void setGPUDevice(AMDGPUDevice *gpu_device);
+     void updateReadIndex(int, uint32_t);
+     void getCommandsFromHost(int pid, uint32_t rl_idx);
+     HWScheduler *hwScheduler() { return hwSchdlr; }
+diff --git a/src/gpu-compute/GPU.py b/src/gpu-compute/GPU.py
+index 99e7cd5..3e5fba6 100644
+--- a/src/gpu-compute/GPU.py
++++ b/src/gpu-compute/GPU.py
+@@ -37,6 +37,7 @@ from m5.objects.ClockedObject import ClockedObject
+ from m5.objects.Device import DmaVirtDevice
+ from m5.objects.LdsState import LdsState
+ from m5.objects.Process import EmulatedDriver
++from m5.objects.VegaGPUTLB import VegaPagetableWalker
+ 
+ class PrefetchType(Enum): vals = [
+     'PF_CU',
+@@ -272,6 +273,8 @@ class GPUCommandProcessor(DmaVirtDevice):
+     dispatcher = Param.GPUDispatcher('workgroup dispatcher for the GPU')
+ 
+     hsapp = Param.HSAPacketProcessor('PP attached to this device')
++    walker = Param.VegaPagetableWalker(VegaPagetableWalker(),
++            "Page table walker")
+ 
+ class StorageClassType(Enum): vals = [
+     'SC_SPILL',
+diff --git a/src/gpu-compute/gpu_command_processor.cc b/src/gpu-compute/gpu_command_processor.cc
+index 46a2004..9499d47 100644
+--- a/src/gpu-compute/gpu_command_processor.cc
++++ b/src/gpu-compute/gpu_command_processor.cc
+@@ -33,9 +33,11 @@
+ 
+ #include <cassert>
+ 
++#include "arch/amdgpu/vega/pagetable_walker.hh"
+ #include "base/chunk_generator.hh"
+ #include "debug/GPUCommandProc.hh"
+ #include "debug/GPUKernelInfo.hh"
++#include "dev/amdgpu/amdgpu_device.hh"
+ #include "gpu-compute/dispatcher.hh"
+ #include "mem/se_translating_port_proxy.hh"
+ #include "mem/translating_port_proxy.hh"
+@@ -50,7 +52,7 @@ namespace gem5
+ 
+ GPUCommandProcessor::GPUCommandProcessor(const Params &p)
+     : DmaVirtDevice(p), dispatcher(*p.dispatcher), _driver(nullptr),
+-      hsaPP(p.hsapp)
++      walker(p.walker), hsaPP(p.hsapp)
+ {
+     assert(hsaPP);
+     hsaPP->setDevice(this);
+@@ -357,6 +359,13 @@ GPUCommandProcessor::getAddrRanges() const
+ }
+ 
+ void
++GPUCommandProcessor::setGPUDevice(AMDGPUDevice *gpu_device)
++{
++    gpuDevice = gpu_device;
++    walker->setDevRequestor(gpuDevice->vramRequestorId());
++}
++
++void
+ GPUCommandProcessor::setShader(Shader *shader)
+ {
+     _shader = shader;
+diff --git a/src/gpu-compute/gpu_command_processor.hh b/src/gpu-compute/gpu_command_processor.hh
+index 332f2e0..1bc19c7 100644
+--- a/src/gpu-compute/gpu_command_processor.hh
++++ b/src/gpu-compute/gpu_command_processor.hh
+@@ -77,6 +77,7 @@ class GPUCommandProcessor : public DmaVirtDevice
+ 
+     HSAPacketProcessor& hsaPacketProc();
+ 
++    void setGPUDevice(AMDGPUDevice *gpu_device);
+     void setShader(Shader *shader);
+     Shader* shader();
+     GPUComputeDriver* driver();
+@@ -128,6 +129,8 @@ class GPUCommandProcessor : public DmaVirtDevice
+     Shader *_shader;
+     GPUDispatcher &dispatcher;
+     GPUComputeDriver *_driver;
++    AMDGPUDevice *gpuDevice;
++    VegaISA::Walker *walker;
+ 
+     // Typedefing dmaRead and dmaWrite function pointer
+     typedef void (DmaDevice::*DmaFnPtr)(Addr, int, Event*, uint8_t*, Tick);
+-- 
+1.8.3.1
+

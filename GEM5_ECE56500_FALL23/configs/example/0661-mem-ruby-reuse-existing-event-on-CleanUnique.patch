@@ -1,0 +1,84 @@
+From 12641069de95fe7c6bfff0d76e547b65ef3589a2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Wed, 2 Mar 2022 16:17:43 -0600
+Subject: [PATCH 661/757] mem-ruby: reuse existing event on CleanUnique
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reuse the existing MaintainCoherence event to schedule
+writebacks or cache fill after a CleanUnique.
+
+JIRA: https://gem5.atlassian.net/browse/GEM5-1195
+
+Change-Id: I127ebf78736b8312ccf2b18cf7c586eb5a77f373
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/57393
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/ruby/protocol/chi/CHI-cache-actions.sm | 33 +++++++-------------------
+ 1 file changed, 9 insertions(+), 24 deletions(-)
+
+diff --git a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+index d11b6e7..6fa13cb 100644
+--- a/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
++++ b/src/mem/ruby/protocol/chi/CHI-cache-actions.sm
+@@ -690,43 +690,28 @@ action(Finish_CleanUnique, desc="") {
+     tbe.updateDirOnCompAck := false;
+     assert(tbe.dataValid == false);
+     assert(tbe.is_stale);
++    tbe.is_stale := false;
+     tbe.actions.push(Event:SendCompUCRespStale);
+     tbe.actions.push(Event:WaitCompAck);
+-    tbe.is_stale := false;
++    tbe.actions.push(Event:TagArrayWrite);
+   } else {
+     // must be the only one in sharers map
+     assert(tbe.dir_sharers.count() == 1);
+     assert(tbe.dataUnique);
+ 
+-    tbe.actions.push(Event:SendCompUCResp);
+-    tbe.actions.push(Event:WaitCompAck);
+-
+-    // similar to Initiate_MaitainCoherence; writeback if the owner has data as
+-    // clean data and we have it dirty and cannot keep it
+-    bool fill_pipeline := tbe.dataValid && tbe.dataDirty;
+-    bool req_has_dirty := tbe.dir_ownerExists && (tbe.dir_owner == tbe.requestor);
+-    if (tbe.dataValid && tbe.dataDirty && tbe.dataToBeInvalid &&
+-        (req_has_dirty == false)) {
+-      fill_pipeline := false;
+-      if (is_HN) {
+-        tbe.actions.push(Event:SendWriteNoSnp);
+-      } else {
+-        tbe.actions.push(Event:SendWriteClean);
+-      }
+-      tbe.actions.push(Event:WriteBEPipe);
+-      tbe.actions.push(Event:SendWBData);
+-    }
+-
+     // needed by UpdateDirState_FromReqResp triggered by the expected CompAck
+     tbe.dataMaybeDirtyUpstream := true;
+     tbe.requestorToBeExclusiveOwner := true;
+     tbe.dir_ownerExists := false;
+ 
+-    if (fill_pipeline) {
+-      tbe.actions.push(Event:CheckCacheFill);
+-    }
++    tbe.actions.push(Event:SendCompUCResp);
++    tbe.actions.push(Event:WaitCompAck);
++
++    // Ensure we writeback or update the cache if the owner has data as
++    // clean data and we have it dirty.
++    // MaintainCoherence queues the TagArrayWrite
++    tbe.actions.push(Event:MaintainCoherence);
+   }
+-  tbe.actions.push(Event:TagArrayWrite);
+ }
+ 
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,30 @@
+From 2342c74a13c238e2530bae6c461e6dd2e27a8747 Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Wed, 15 Jun 2022 11:56:20 -0700
+Subject: [PATCH 728/757] python,misc: Update the resources URL to v22-0
+
+Change-Id: Ida4ee3f52a33fffcaccc8b2ee5b4ed002443f5aa
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/60530
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ ext/testlib/configuration.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ext/testlib/configuration.py b/ext/testlib/configuration.py
+index fd47e3b..cc40b0d 100644
+--- a/ext/testlib/configuration.py
++++ b/ext/testlib/configuration.py
+@@ -213,7 +213,7 @@ def define_defaults(defaults):
+                                                       os.pardir,
+                                                       os.pardir))
+     defaults.result_path = os.path.join(os.getcwd(), 'testing-results')
+-    defaults.resource_url = 'http://dist.gem5.org/dist/develop'
++    defaults.resource_url = 'http://dist.gem5.org/dist/v22-0'
+     defaults.resource_path = os.path.abspath(os.path.join(defaults.base_dir,
+                                             'tests',
+                                             'gem5',
+-- 
+1.8.3.1
+

@@ -1,0 +1,110 @@
+From f5fc1006c3d39b3a85c2f00b61caa1703777d7c8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tiago=20M=C3=BCck?= <tiago.muck@arm.com>
+Date: Mon, 14 Feb 2022 15:17:38 -0600
+Subject: [PATCH 253/757] cpu: fix issues with ruby's memtest
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If the size of the address range is smaller than the maximum number
+of outstanding requests allowed downstream, the tester will get stuck
+trying to find a unique address. This patch adds a check for this
+condition and forces the tester to wait for responses before
+trying to generate another request.
+
+Change-Id: Ie894a074cc4f8c7ad3d875dc21e8eb4f04562d72
+Signed-off-by: Tiago Mück <tiago.muck@arm.com>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/56811
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/cpu/testers/memtest/memtest.cc | 18 +++++++++++++++++-
+ src/cpu/testers/memtest/memtest.hh |  6 ++++++
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/src/cpu/testers/memtest/memtest.cc b/src/cpu/testers/memtest/memtest.cc
+index f229cab..7c256d8 100644
+--- a/src/cpu/testers/memtest/memtest.cc
++++ b/src/cpu/testers/memtest/memtest.cc
+@@ -88,6 +88,7 @@ MemTest::MemTest(const Params &p)
+       noResponseEvent([this]{ noResponse(); }, name()),
+       port("port", *this),
+       retryPkt(nullptr),
++      waitResponse(false),
+       size(p.size),
+       interval(p.interval),
+       percentReads(p.percent_reads),
+@@ -96,6 +97,7 @@ MemTest::MemTest(const Params &p)
+       requestorId(p.system->getRequestorId(this)),
+       blockSize(p.system->cacheLineSize()),
+       blockAddrMask(blockSize - 1),
++      sizeBlocks(size / blockSize),
+       baseAddr1(p.base_addr_1),
+       baseAddr2(p.base_addr_2),
+       uncacheAddr(p.uncacheable_base_addr),
+@@ -191,6 +193,12 @@ MemTest::completeRequest(PacketPtr pkt, bool functional)
+         reschedule(noResponseEvent, clockEdge(progressCheck));
+     else if (noResponseEvent.scheduled())
+         deschedule(noResponseEvent);
++
++    // schedule the next tick
++    if (waitResponse) {
++        waitResponse = false;
++        schedule(tickEvent, clockEdge(interval));
++    }
+ }
+ MemTest::MemTestStats::MemTestStats(statistics::Group *parent)
+       : statistics::Group(parent),
+@@ -205,8 +213,9 @@ MemTest::MemTestStats::MemTestStats(statistics::Group *parent)
+ void
+ MemTest::tick()
+ {
+-    // we should never tick if we are waiting for a retry
++    // we should never tick if we are waiting for a retry or response
+     assert(!retryPkt);
++    assert(!waitResponse);
+ 
+     // create a new request
+     unsigned cmd = random_mt.random(0, 100);
+@@ -216,6 +225,13 @@ MemTest::tick()
+     Request::Flags flags;
+     Addr paddr;
+ 
++    // halt until we clear outstanding requests, otherwise it won't be able to
++    // find a new unique address
++    if (outstandingAddrs.size() >= sizeBlocks) {
++        waitResponse = true;
++        return;
++    }
++
+     // generate a unique address
+     do {
+         unsigned offset = random_mt.random<unsigned>(0, size - 1);
+diff --git a/src/cpu/testers/memtest/memtest.hh b/src/cpu/testers/memtest/memtest.hh
+index 2e7824e..2dc1f13 100644
+--- a/src/cpu/testers/memtest/memtest.hh
++++ b/src/cpu/testers/memtest/memtest.hh
+@@ -120,6 +120,10 @@ class MemTest : public ClockedObject
+ 
+     PacketPtr retryPkt;
+ 
++    // Set if reached the maximum number of outstanding requests.
++    // Won't tick until a response is received.
++    bool waitResponse;
++
+     const unsigned size;
+ 
+     const Cycles interval;
+@@ -142,6 +146,8 @@ class MemTest : public ClockedObject
+ 
+     const Addr blockAddrMask;
+ 
++    const unsigned sizeBlocks;
++
+     /**
+      * Get the block aligned address.
+      *
+-- 
+1.8.3.1
+

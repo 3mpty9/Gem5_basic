@@ -1,0 +1,76 @@
+From ec32f6c6f03c96bd6d8a1c6e02c0e7938a3d0057 Mon Sep 17 00:00:00 2001
+From: Jiasen Huang <jiasen.hjs@alibaba-inc.com>
+Date: Fri, 31 Dec 2021 12:40:09 +0800
+Subject: [PATCH 089/757] mem-cache: Add switch on/off duplicate entries into
+ RMOB
+
+Change-Id: I394d7c852a439be5315c4755b091c8741e671ea3
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55083
+Reviewed-by: Daniel Carvalho <odanrc@yahoo.com.br>
+Maintainer: Daniel Carvalho <odanrc@yahoo.com.br>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/mem/cache/prefetch/Prefetcher.py                       |  2 ++
+ src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc | 11 +++++++++++
+ src/mem/cache/prefetch/spatio_temporal_memory_streaming.hh |  3 +++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/src/mem/cache/prefetch/Prefetcher.py b/src/mem/cache/prefetch/Prefetcher.py
+index 7d70488..024004e 100644
+--- a/src/mem/cache/prefetch/Prefetcher.py
++++ b/src/mem/cache/prefetch/Prefetcher.py
+@@ -488,6 +488,8 @@ class STeMSPrefetcher(QueuedPrefetcher):
+ 
+     region_miss_order_buffer_entries = Param.Unsigned(131072,
+         "Number of entries of the Region Miss Order Buffer")
++    add_duplicate_entries_to_rmob = Param.Bool(True,
++        "Add duplicate entries to RMOB")
+     reconstruction_entries = Param.Unsigned(256,
+         "Number of reconstruction entries")
+ 
+diff --git a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+index f610288..3c9b9eb 100644
+--- a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
++++ b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.cc
+@@ -56,6 +56,7 @@ STeMS::STeMS(const STeMSPrefetcherParams &p)
+                          ActiveGenerationTableEntry(
+                              spatialRegionSize / blkSize)),
+     rmob(p.region_miss_order_buffer_entries),
++    addDuplicateEntriesToRMOB(p.add_duplicate_entries_to_rmob),
+     lastTriggerCounter(0)
+ {
+     fatal_if(!isPowerOf2(spatialRegionSize),
+@@ -120,6 +121,16 @@ STeMS::addToRMOB(Addr sr_addr, Addr pst_addr, unsigned int delta)
+     rmob_entry.pstAddress = pst_addr;
+     rmob_entry.delta = delta;
+ 
++    if (!addDuplicateEntriesToRMOB) {
++        for (const auto& entry : rmob) {
++            if (entry.srAddress == sr_addr &&
++                entry.pstAddress == pst_addr &&
++                entry.delta == delta) {
++                return;
++            }
++        }
++    }
++
+     rmob.push_back(rmob_entry);
+ }
+ 
+diff --git a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.hh b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.hh
+index e5914b4..bee746c 100644
+--- a/src/mem/cache/prefetch/spatio_temporal_memory_streaming.hh
++++ b/src/mem/cache/prefetch/spatio_temporal_memory_streaming.hh
+@@ -175,6 +175,9 @@ class STeMS : public Queued
+     /** Region Miss Order Buffer (RMOB) */
+     CircularQueue<RegionMissOrderBufferEntry> rmob;
+ 
++    /** Add duplicate entries to RMOB  */
++    bool addDuplicateEntriesToRMOB;
++
+     /** Counter to keep the count of accesses between trigger accesses */
+     unsigned int lastTriggerCounter;
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,127 @@
+From 186ba925045abb12c62c16aedf48e51dde091dbf Mon Sep 17 00:00:00 2001
+From: Earl Ou <shunhsingou@google.com>
+Date: Mon, 3 Jan 2022 22:59:33 +0800
+Subject: [PATCH 123/757] fastmodel: make gem5 fastmodel build hermetic
+
+This CL makes fastmodel RPATH relative to $ORIGIN instead of absolute
+path. In this way we can move build folder (installing), without
+breaking gem5 run.
+
+Change-Id: I8b16d749252b982e45dfe779a5df931015a0e07d
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/55085
+Reviewed-by: Gabe Black <gabe.black@gmail.com>
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/arch/arm/fastmodel/SConscript        | 33 ++++++++++++++++++++++++--------
+ src/arch/arm/fastmodel/arm_fast_model.py | 12 ------------
+ 2 files changed, 25 insertions(+), 20 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index ccfc620..69749bf 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -81,7 +81,16 @@ pvlib_flavor = env['PVLIB_FLAVOR']
+ pvlib_lib_dir = pvlib_home.Dir('lib').Dir(pvlib_flavor)
+ 
+ simulation_engine_name = 'libMAXCOREInitSimulationEngine.3.so'
+-simulation_engine_lib = pvlib_lib_dir.File(simulation_engine_name)
++simulation_engine_lib = env.Command(
++            Dir(env['BUILDDIR']).File(simulation_engine_name),
++            pvlib_lib_dir.File(simulation_engine_name),
++            MakeAction("cp ${SOURCE} ${TARGET}", Transform('COPY')))
++
++arm_singleton_registry_name = 'arm_singleton_registry.so'
++arm_singleton_registry_lib = env.Command(
++            Dir(env['BUILDDIR']).File(arm_singleton_registry_name),
++            pvlib_lib_dir.File(arm_singleton_registry_name),
++            MakeAction("cp ${SOURCE} ${TARGET}", Transform('COPY')))
+ 
+ 
+ def staticify(env, name):
+@@ -95,9 +104,7 @@ def staticify(env, name):
+         full_name = Dir(path).File(static_name).get_abspath()
+         if os.path.isfile(full_name):
+             return File(full_name)
+-
+-    return name
+-
++    raise BuildError("Failed to find FM static lib: " + name)
+ 
+ # Adjust the build environment to support building in Fast Models.
+ 
+@@ -121,16 +128,20 @@ lib_paths = (
+     pvlib_home.Dir('Iris').Dir(pvlib_flavor),
+ )
+ env.Append(LIBPATH=lib_paths)
+-env.Append(RPATH=lib_paths)
+ 
+-fm_libs = (
++# Per ARM's 11.16 release note, a platform build with simgen automatically
++# copies libraries into the build target directory along with the other
++# dependencies. Therefore, we only need to add each simgen result into rpath and
++# no other shared librarires are required here.
++fm_static_libs = (
+     'components',
+     'pvbus',
+     'armctmodel',
+     'fmruntime',
+     'IrisSupport',
+ )
+-env.Append(LIBS=list(staticify(env, lib) for lib in fm_libs))
++env.Append(LIBS=list(staticify(env, lib) for lib in fm_static_libs))
++
+ system_libs = (
+     'atomic',
+     'dl',
+@@ -337,7 +348,8 @@ class ArmFastModelComponent(object):
+         self.headerpaths = [gen_dir]
+         self.libs = static_lib_nodes + shared_libs
+         self.libpaths = [simgen_dir]
+-        self.rpaths = [simgen_dir]
++        # Simgen also puts required share library under the project folder.
++        self.rpaths = [simgen_dir, project_file_dir]
+         self.log = gen_dir.File('build_%s.log' % tlc)
+         self.simgen_cmd = env.subst('${SIMGEN} -p %s --configuration %s -b ' +
+             '--verbose off --num-build-cpus 100 --build-dir %s >%s') % \
+@@ -364,6 +376,11 @@ class ArmFastModelComponent(object):
+         # but the difference is probably not significant.
+         env.SideEffect(next(license_cycle), lib_nodes[0])
+ 
++        # We need a copy of the simulation engine lib and arm_singleton_registry
++        # (introduced in 11.16) alongside the executable.
++        Depends(lib_nodes[0], simulation_engine_lib)
++        Depends(lib_nodes[0], arm_singleton_registry_lib)
++
+     def prepare_env(self, env):
+         env.Append(LIBPATH=self.libpaths)
+         env.AddLocalRPATH(*self.rpaths)
+diff --git a/src/arch/arm/fastmodel/arm_fast_model.py b/src/arch/arm/fastmodel/arm_fast_model.py
+index c9d1113..f11443d 100644
+--- a/src/arch/arm/fastmodel/arm_fast_model.py
++++ b/src/arch/arm/fastmodel/arm_fast_model.py
+@@ -42,21 +42,9 @@ def set_armlmd_license_file(force=False):
+ # 7.6 of the Fast Models User Guide.
+ 
+ def scx_initialize(id):
+-    # Change our working directory to where the simulation engine library
+-    # is so that the fast model code can find it. It looks in the binary
+-    # directory and in the current working directory, and we can change
+-    # the later. This avoids having to make copies of that library all
+-    # over the place.
+-    cwd = os.getcwd()
+-    os.chdir(os.path.join(buildEnv['PVLIB_HOME'], 'lib',
+-                          buildEnv['PVLIB_FLAVOR']))
+-
+     # Actually run scx_initialize.
+     _m5.arm_fast_model.scx_initialize(id)
+ 
+-    # Restore the previous working directory.
+-    os.chdir(cwd)
+-
+ def scx_load_application(instance, application):
+     _m5.arm_fast_model.scx_load_application(instance, application)
+ 
+-- 
+1.8.3.1
+

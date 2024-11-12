@@ -1,0 +1,53 @@
+From 67f1ec7f5bda492231c09e0949da4a669e913bcd Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabeblack@google.com>
+Date: Sat, 7 May 2022 00:51:19 -0700
+Subject: [PATCH 623/757] fastmodel: Make ArmFastModelComponent-s take a tags
+ parameter.
+
+ArmFastModelComponents must *minimally* be guarded by "arm fastmodel"
+tags, but may actually be covered by a more specific tag which is a
+subset of "arm fastmodel", for instance if they are controlled by a
+kconfig variable and may or may not be included in "gem5 lib"
+independently of other sources which are part of "arm fastmodel".
+
+The contents set up by ArmFastModelComponent are already guarded by a
+fixed tag, so this change just needs to plumb through the tag as
+specified when the ArmFastModelComponent is created instead.
+
+Change-Id: I619c31107acda378a5439718e32938843f024e74
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/59473
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ src/arch/arm/fastmodel/SConscript | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/arch/arm/fastmodel/SConscript b/src/arch/arm/fastmodel/SConscript
+index b8ee987..0e9d84e 100644
+--- a/src/arch/arm/fastmodel/SConscript
++++ b/src/arch/arm/fastmodel/SConscript
+@@ -304,7 +304,10 @@ for header in common_headers:
+     Command(header_target, header_src, Copy('${TARGET}', '${SOURCE}'))
+ 
+ class ArmFastModelComponent(object):
+-    def __init__(self, project_file, *extra_deps):
++    def __init__(self, project_file, *extra_deps, tags=None):
++        if not tags:
++            tags = ['arm fastmodel']
++        self.tags = tags
+         project_file = File(project_file)
+         project_file_dir = project_file.Dir('.')
+ 
+@@ -403,7 +406,7 @@ class ArmFastModelComponent(object):
+         env.Append(CPPPATH=self.headerpaths)
+         # Put these libraries earlier in the list by setting priority.
+         for lib in self.libs:
+-            SourceLib(lib, priority=1, tags='arm fastmodel')
++            SourceLib(lib, priority=1, tags=self.tags)
+ 
+     def simgen_builder(self, target, source, env):
+         cmd = self.simgen_cmd
+-- 
+1.8.3.1
+

@@ -1,0 +1,68 @@
+From 00fd6406623ff2a10399512341086e41dccb5ad3 Mon Sep 17 00:00:00 2001
+From: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Date: Mon, 11 Apr 2022 15:51:59 -0700
+Subject: [PATCH 551/757] stdlib, configs: Migrate riscv-ubuntu-run example to
+ Simulator
+
+Change-Id: Ie08fcf46139871bc98b9bf783d0b4d9913eace3e
+Signed-off-by: Hoa Nguyen <hoanguyen@ucdavis.edu>
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58790
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Reviewed-by: Bobby Bruce <bbruce@ucdavis.edu>
+Maintainer: Jason Lowe-Power <power.jg@gmail.com>
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ configs/example/gem5_library/riscv-ubuntu-run.py | 32 +++---------------------
+ 1 file changed, 3 insertions(+), 29 deletions(-)
+
+diff --git a/configs/example/gem5_library/riscv-ubuntu-run.py b/configs/example/gem5_library/riscv-ubuntu-run.py
+index d54fa90..1c95d3f 100644
+--- a/configs/example/gem5_library/riscv-ubuntu-run.py
++++ b/configs/example/gem5_library/riscv-ubuntu-run.py
+@@ -53,6 +53,7 @@ from gem5.components.processors.cpu_types import CPUTypes
+ from gem5.isas import ISA
+ from gem5.coherence_protocol import CoherenceProtocol
+ from gem5.resources.resource import Resource
++from gem5.simulate.simulator import Simulator
+ 
+ # This runs a check to ensure the gem5 binary is compiled for RISCV.
+ 
+@@ -116,32 +117,5 @@ board.set_kernel_disk_workload(
+ 
+ root = Root(full_system=True, system=board)
+ 
+-m5.instantiate()
+-
+-# We simulate the system till we encounter `m5_exit instruction encountered`.
+-
+-exit_event = m5.simulate()
+-
+-# We check whether the simulation ended with `m5_exit instruction encountered`
+-
+-if exit_event.getCause() == "m5_exit instruction encountered":
+-    # We acknowledge the user that the boot was successful.
+-
+-    print("Successfully completed booting!")
+-else:
+-    # `m5_exit instruction encountered` was never encountered. We exit the
+-    # program unsuccessfully.
+-
+-    print("The startup was not completed successfully!",)
+-    print(
+-    "Exiting @ tick {} because {}."\
+-        .format(m5.curTick(), exit_event.getCause())
+-    )
+-    exit(-1)
+-
+-# We are done with the simulation. We exit the program now.
+-
+-print(
+-"Exiting @ tick {} because {}."\
+-    .format(m5.curTick(), exit_event.getCause())
+-)
++simulator = Simulator(board=board)
++simulator.run()
+-- 
+1.8.3.1
+

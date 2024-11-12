@@ -1,0 +1,94 @@
+From 372601772c6e23aa617915e481d659d1baf35576 Mon Sep 17 00:00:00 2001
+From: Gabe Black <gabe.black@gmail.com>
+Date: Thu, 16 Dec 2021 02:35:45 -0800
+Subject: [PATCH 058/757] systemc: Update the testing framework to get it
+ working again.
+
+The systemc testing framework is not used regularly, and had bit rot and
+stopped working. This change updates it so that it runs again, and all
+previously passing tests pass again.
+
+These changes were mostly in the related SConscript now that top level
+targets are built a little differently and that the gem5 shared library
+is no longer stored in a special construction environment variable.
+verify.py also needed to be updated since warn() and info() lines now
+have file and line number information in them, throwing off pre diff
+filtering of gem5 outputs.
+
+Change-Id: Ifdcbd92eab8b9b2168c449bfbcebf52dbe1f016a
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/54324
+Maintainer: Gabe Black <gabe.black@gmail.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+Tested-by: kokoro <noreply+kokoro@google.com>
+---
+ src/systemc/tests/SConscript | 25 ++++++++-----------------
+ src/systemc/tests/verify.py  |  6 +++---
+ 2 files changed, 11 insertions(+), 20 deletions(-)
+
+diff --git a/src/systemc/tests/SConscript b/src/systemc/tests/SConscript
+index 7d544f2..fb916d2 100644
+--- a/src/systemc/tests/SConscript
++++ b/src/systemc/tests/SConscript
+@@ -63,7 +63,8 @@ if env['USE_SYSTEMC'] and GetOption('with_systemc_tests'):
+     test_dir = Dir('.')
+     class SystemCTestBin(Executable):
+         def __init__(self, test):
+-            super().__init__(test.target, *test.sources)
++            all_sources = test.sources + [with_tag('main')]
++            super().__init__(test.target, *all_sources)
+             self.reldir = test.reldir
+             self.test_deps = test.deps
+ 
+@@ -78,26 +79,16 @@ if env['USE_SYSTEMC'] and GetOption('with_systemc_tests'):
+ 
+             env.Append(CPPPATH=test_dir.Dir('include'))
+ 
+-            shared_lib_path = env['SHARED_LIB'][0].abspath
+-            sl_dir, sl_base = os.path.split(shared_lib_path)
+-            env.Append(LIBPATH=[sl_dir], LIBS=[sl_base])
++            env.Append(LIBPATH=['${BUILDDIR}'], LIBS=['gem5_${ENV_LABEL}'])
++            env.AddLocalRPATH('${BUILDDIR}')
++
++            env['OBJSUFFIX'] = '.sc' + env['OBJSUFFIX'][1:]
++            env['SHOBJSUFFIX'] = '.sc' + env['OBJSUFFIX'][1:]
+ 
+             super().declare_all(env)
+ 
+         def declare(self, env):
+-            env = env.Clone()
+-            sources = list(self.sources)
+-            for f in self.filters:
+-                sources += Source.all.apply_filter(f)
+-            objs = self.srcs_to_objs(env, sources)
+-            objs = objs + env['MAIN_OBJS']
+-            relpath = os.path.relpath(
+-                    env['SHARED_LIB'][0].dir.abspath,
+-                    self.path(env).dir.abspath)
+-            env.Append(LINKFLAGS=Split('-z origin'))
+-            env.Append(RPATH=[
+-                    env.Literal(os.path.join('\\$$ORIGIN', relpath))])
+-            test_bin = super().declare(env, objs)
++            test_bin, _u = super().declare(env)
+             test_dir = self.dir.Dir(self.reldir)
+             for dep in self.test_deps:
+                 env.Depends(test_bin, test_dir.File(dep))
+diff --git a/src/systemc/tests/verify.py b/src/systemc/tests/verify.py
+index 54b4633..818855a 100755
+--- a/src/systemc/tests/verify.py
++++ b/src/systemc/tests/verify.py
+@@ -277,9 +277,9 @@ class LogChecker(DiffingChecker):
+     test_filt = merge_filts(
+         r'^/.*:\d+: ',
+         r'^Global frequency set at \d* ticks per second\n',
+-        r'info: Entering event queue @ \d*\.  Starting simulation\.\.\.\n',
+-        r'warn: Ignoring request to set stack size\.\n',
+-        r'^warn: No dot file generated. Please install pydot ' +
++        r'.*info: Entering event queue @ \d*\.  Starting simulation\.\.\.\n',
++        r'.*warn: Ignoring request to set stack size\.\n',
++        r'^.*warn: No dot file generated. Please install pydot ' +
+         r'to generate the dot file and pdf.\n',
+         info_filt(804),
+         in_file_filt,
+-- 
+1.8.3.1
+

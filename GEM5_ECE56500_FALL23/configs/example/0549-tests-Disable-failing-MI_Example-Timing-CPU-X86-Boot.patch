@@ -1,0 +1,42 @@
+From 06881ae2a5c286351a1499fcc42d195918d440ac Mon Sep 17 00:00:00 2001
+From: "Bobby R. Bruce" <bbruce@ucdavis.edu>
+Date: Mon, 11 Apr 2022 09:52:09 -0700
+Subject: [PATCH 549/757] tests: Disable failing MI_Example/Timing CPU X86 Boot
+ Tests
+
+As noted in this jira issue:
+https://gem5.atlassian.net/browse/GEM5-1216, these tests are failing.
+We are going to disable them until we can figure out the root cause of
+this problem.
+
+Change-Id: I8511beaac0bae3c6d2a42af59035cc4620cd5bb2
+Reviewed-on: https://gem5-review.googlesource.com/c/public/gem5/+/58769
+Maintainer: Bobby Bruce <bbruce@ucdavis.edu>
+Tested-by: kokoro <noreply+kokoro@google.com>
+Reviewed-by: Jason Lowe-Power <power.jg@gmail.com>
+---
+ tests/gem5/x86-boot-tests/test_linux_boot.py | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/tests/gem5/x86-boot-tests/test_linux_boot.py b/tests/gem5/x86-boot-tests/test_linux_boot.py
+index 482cf16..ee9c257 100644
+--- a/tests/gem5/x86-boot-tests/test_linux_boot.py
++++ b/tests/gem5/x86-boot-tests/test_linux_boot.py
+@@ -261,10 +261,10 @@ run_map = {
+             8: False,  # Not Supported
+         },
+         "timing": {
+-            1: True,
+-            2: True,
+-            4: True,
+-            8: True,
++            1: False,  # MI_Example does not successfully boot with the Timing
++            2: False,  # Jira: https://gem5.atlassian.net/browse/GEM5-1216
++            4: False,
++            8: False,
+         },
+         "o3": {
+             1: False,  # Timeout
+-- 
+1.8.3.1
+
